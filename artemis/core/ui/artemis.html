@@ -1,0 +1,1006 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Artemis — AI Co-Pilot</title>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Rajdhani:wght@300;400;500;600&display=swap" rel="stylesheet" />
+<style>
+/* ═══════════════════════════════════════════
+   TOKENS E RESET
+═══════════════════════════════════════════ */
+:root {
+  --bg-deep:      #070d18;
+  --bg-panel:     #0b1525;
+  --bg-surface:   #0f1e35;
+  --bg-elevated:  #132440;
+  --accent:       #e87c2a;
+  --accent-glow:  #e87c2a88;
+  --accent-dim:   #8a4a18;
+  --cyan:         #38d9f5;
+  --cyan-glow:    #38d9f544;
+  --cyan-dim:     #1a6a7a;
+  --text-primary: #e8f4ff;
+  --text-muted:   #7a9ab5;
+  --text-dim:     #3d5a73;
+  --border:       #1c3352;
+  --border-glow:  #38d9f522;
+  --user-bubble:  #132f52;
+  --bot-bubble:   #1a2f0f;
+  --bot-accent:   #2a5a18;
+  --danger:       #e83a3a;
+  --success:      #3ae87c;
+  --grid-color:   #0e1e32;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: 'Rajdhani', sans-serif;
+  background: var(--bg-deep);
+  color: var(--text-primary);
+  height: 100vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+/* ── Grid de fundo ── */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image:
+    linear-gradient(var(--grid-color) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-color) 1px, transparent 1px);
+  background-size: 40px 40px;
+  opacity: 0.5;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ── Vinheta ── */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: radial-gradient(ellipse at center, transparent 40%, var(--bg-deep) 100%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ═══════════════════════════════════════════
+   LAYOUT
+═══════════════════════════════════════════ */
+.app {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  height: 100vh;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 24px;
+  background: linear-gradient(180deg, var(--bg-panel) 0%, transparent 100%);
+  border-bottom: 1px solid var(--border);
+  position: relative;
+}
+
+.header::after {
+  content: '';
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--cyan), var(--accent), transparent);
+  opacity: 0.6;
+}
+
+.logo-box {
+  width: 44px; height: 44px;
+  background: linear-gradient(135deg, var(--accent), #c05a10);
+  border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  font-family: 'Orbitron', monospace;
+  font-size: 20px;
+  font-weight: 900;
+  color: #fff;
+  box-shadow: 0 0 20px var(--accent-glow);
+  flex-shrink: 0;
+}
+
+.header-info h1 {
+  font-family: 'Orbitron', monospace;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: 2px;
+}
+
+.header-info p {
+  font-size: 12px;
+  color: var(--text-muted);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.status-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--danger);
+  margin-left: auto;
+  box-shadow: 0 0 8px var(--danger);
+  transition: all 0.4s;
+}
+.status-dot.online {
+  background: var(--success);
+  box-shadow: 0 0 8px var(--success);
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.5; }
+}
+
+.status-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+}
+
+/* ── Main layout ── */
+.main {
+  display: grid;
+  grid-template-columns: 1fr 340px;
+  overflow: hidden;
+  gap: 0;
+}
+
+/* ═══════════════════════════════════════════
+   PAINEL ESQUERDO — Avatar
+═══════════════════════════════════════════ */
+.avatar-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-panel);
+  border-right: 1px solid var(--border);
+  overflow: hidden;
+  padding: 30px;
+}
+
+/* Corner decorations */
+.corner {
+  position: absolute;
+  width: 30px; height: 30px;
+  border-color: var(--accent);
+  border-style: solid;
+  opacity: 0.7;
+}
+.corner.tl { top: 14px; left: 14px; border-width: 2px 0 0 2px; }
+.corner.tr { top: 14px; right: 14px; border-width: 2px 2px 0 0; }
+.corner.bl { bottom: 14px; left: 14px; border-width: 0 0 2px 2px; }
+.corner.br { bottom: 14px; right: 14px; border-width: 0 2px 2px 0; }
+
+/* Scan line effect */
+.avatar-panel::before {
+  content: '';
+  position: absolute;
+  top: -100%;
+  left: 0; right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--cyan), transparent);
+  animation: scan 4s linear infinite;
+  opacity: 0.4;
+}
+@keyframes scan {
+  0%   { top: -2px; }
+  100% { top: 100%; }
+}
+
+.avatar-container {
+  position: relative;
+  width: 320px;
+  height: 420px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Placeholder holográfico */
+.avatar-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid var(--border);
+  border-radius: 12px;
+  background: linear-gradient(180deg, var(--bg-surface) 0%, var(--bg-elevated) 100%);
+  position: relative;
+  overflow: hidden;
+}
+
+.avatar-placeholder::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at 50% 80%, var(--cyan-glow) 0%, transparent 70%);
+}
+
+.hologram-ring {
+  position: absolute;
+  bottom: 30px;
+  width: 180px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid var(--cyan);
+  box-shadow: 0 0 20px var(--cyan-glow), inset 0 0 20px var(--cyan-glow);
+  opacity: 0.6;
+  animation: ring-pulse 2.5s ease-in-out infinite;
+}
+.hologram-ring.ring2 {
+  width: 130px;
+  bottom: 36px;
+  opacity: 0.3;
+  animation-delay: 0.5s;
+}
+@keyframes ring-pulse {
+  0%, 100% { opacity: 0.5; transform: scaleX(1); }
+  50%       { opacity: 0.9; transform: scaleX(1.08); }
+}
+
+.avatar-icon {
+  font-size: 80px;
+  position: relative;
+  z-index: 1;
+  filter: drop-shadow(0 0 20px var(--cyan));
+  animation: float 3s ease-in-out infinite;
+}
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50%       { transform: translateY(-12px); }
+}
+
+.avatar-label {
+  position: absolute;
+  bottom: 16px;
+  font-family: 'Orbitron', monospace;
+  font-size: 11px;
+  color: var(--cyan);
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  opacity: 0.8;
+}
+
+/* Waveform (ativo quando falando) */
+.waveform {
+  display: flex;
+  gap: 3px;
+  align-items: center;
+  height: 40px;
+  margin-top: 20px;
+}
+.wave-bar {
+  width: 4px;
+  border-radius: 2px;
+  background: var(--cyan);
+  animation: wave-idle 1.2s ease-in-out infinite;
+  height: 8px;
+  opacity: 0.4;
+  transition: all 0.3s;
+}
+.wave-bar:nth-child(2)  { animation-delay: 0.1s; }
+.wave-bar:nth-child(3)  { animation-delay: 0.2s; }
+.wave-bar:nth-child(4)  { animation-delay: 0.3s; }
+.wave-bar:nth-child(5)  { animation-delay: 0.4s; }
+.wave-bar:nth-child(6)  { animation-delay: 0.3s; }
+.wave-bar:nth-child(7)  { animation-delay: 0.2s; }
+.wave-bar:nth-child(8)  { animation-delay: 0.1s; }
+
+@keyframes wave-idle {
+  0%, 100% { height: 6px; }
+  50%       { height: 10px; }
+}
+
+.waveform.active .wave-bar {
+  animation: wave-active 0.6s ease-in-out infinite;
+  opacity: 1;
+  background: var(--accent);
+}
+.waveform.active .wave-bar:nth-child(odd)  { animation-delay: 0.05s; }
+.waveform.active .wave-bar:nth-child(even) { animation-delay: 0.1s; }
+
+@keyframes wave-active {
+  0%, 100% { height: 8px; }
+  50%       { height: 36px; }
+}
+
+/* ═══════════════════════════════════════════
+   PAINEL DIREITO
+═══════════════════════════════════════════ */
+.right-panel {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-surface);
+  overflow: hidden;
+}
+
+/* ── Menu ── */
+.menu-section {
+  padding: 18px 16px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.menu-title {
+  font-family: 'Orbitron', monospace;
+  font-size: 12px;
+  letter-spacing: 3px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  margin-bottom: 12px;
+}
+
+.menu-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.menu-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-primary);
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  transition: all 0.2s;
+  position: relative;
+  overflow: hidden;
+}
+
+.menu-btn::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 0;
+  background: var(--accent);
+  opacity: 0.15;
+  transition: width 0.3s;
+}
+
+.menu-btn:hover {
+  border-color: var(--accent);
+  color: #fff;
+  box-shadow: 0 0 12px var(--accent-glow);
+}
+.menu-btn:hover::before { width: 100%; }
+
+.menu-btn .icon {
+  font-size: 16px;
+  flex-shrink: 0;
+  opacity: 0.8;
+}
+
+.menu-btn.active {
+  border-color: var(--accent);
+  background: #1a2a10;
+  box-shadow: 0 0 12px var(--accent-glow);
+}
+
+/* ── Chat Section ── */
+.chat-section {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 14px 16px 0;
+}
+
+.chat-title {
+  font-family: 'Orbitron', monospace;
+  font-size: 12px;
+  letter-spacing: 3px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  margin-bottom: 10px;
+}
+
+.chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-right: 4px;
+  scroll-behavior: smooth;
+}
+
+.chat-messages::-webkit-scrollbar { width: 4px; }
+.chat-messages::-webkit-scrollbar-track { background: transparent; }
+.chat-messages::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 2px;
+}
+.chat-messages::-webkit-scrollbar-thumb:hover { background: var(--cyan-dim); }
+
+.message {
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+  max-width: 100%;
+  animation: msg-in 0.25s ease;
+}
+@keyframes msg-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.message .sender {
+  font-family: 'Orbitron', monospace;
+  font-size: 10px;
+  letter-spacing: 1.5px;
+  margin-bottom: 4px;
+  text-transform: uppercase;
+}
+
+.message.user {
+  background: var(--user-bubble);
+  border: 1px solid #1e4070;
+  align-self: flex-end;
+  width: 100%;
+}
+.message.user .sender { color: var(--cyan); }
+
+.message.bot {
+  background: var(--bot-bubble);
+  border: 1px solid var(--bot-accent);
+  align-self: flex-start;
+  width: 100%;
+}
+.message.bot .sender { color: var(--accent); }
+
+.message.system-msg {
+  background: #1a1a2e;
+  border: 1px solid #2a2a4e;
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: center;
+  border-radius: 6px;
+}
+
+.message.system-msg .sender { display: none; }
+
+/* Cursor de digitação */
+.typing-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 14px;
+  background: var(--accent);
+  margin-left: 2px;
+  vertical-align: middle;
+  animation: blink 0.7s step-end infinite;
+}
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0; }
+}
+
+/* ── Input ── */
+.input-area {
+  padding: 12px 0 14px;
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+
+.input-wrapper {
+  flex: 1;
+  position: relative;
+}
+
+.chat-input {
+  width: 100%;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 14px;
+  color: var(--text-primary);
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 14px;
+  resize: none;
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+  max-height: 100px;
+  min-height: 40px;
+  line-height: 1.4;
+}
+.chat-input::placeholder { color: var(--text-dim); }
+.chat-input:focus {
+  border-color: var(--cyan-dim);
+  box-shadow: 0 0 10px var(--cyan-glow);
+}
+
+.send-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, var(--accent), #c05a10);
+  border: none;
+  color: #fff;
+  font-size: 18px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: all 0.2s;
+  box-shadow: 0 0 12px var(--accent-glow);
+}
+.send-btn:hover { transform: scale(1.05); box-shadow: 0 0 20px var(--accent-glow); }
+.send-btn:active { transform: scale(0.97); }
+.send-btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+
+/* ── Thinking indicator ── */
+.thinking {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  padding: 6px 0;
+}
+.thinking span {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+.thinking .dots span {
+  display: inline-block;
+  width: 4px; height: 4px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: dot-bounce 1.2s ease-in-out infinite;
+  margin: 0 1px;
+}
+.thinking .dots span:nth-child(2) { animation-delay: 0.2s; }
+.thinking .dots span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes dot-bounce {
+  0%, 80%, 100% { transform: scale(0.7); opacity: 0.4; }
+  40%           { transform: scale(1);   opacity: 1; }
+}
+
+/* ═══════════════════════════════════════════
+   MODAL de memória
+═══════════════════════════════════════════ */
+.modal-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.7);
+  z-index: 100;
+  align-items: center;
+  justify-content: center;
+}
+.modal-overlay.open { display: flex; }
+
+.modal {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 24px;
+  max-width: 480px;
+  width: 90%;
+  box-shadow: 0 0 40px rgba(0,0,0,0.6);
+  animation: modal-in 0.2s ease;
+}
+@keyframes modal-in {
+  from { opacity: 0; transform: scale(0.95); }
+  to   { opacity: 1; transform: scale(1); }
+}
+.modal h2 {
+  font-family: 'Orbitron', monospace;
+  font-size: 14px;
+  letter-spacing: 2px;
+  color: var(--accent);
+  margin-bottom: 16px;
+}
+.modal p { font-size: 13px; color: var(--text-muted); line-height: 1.6; }
+.modal-close {
+  margin-top: 20px;
+  display: block;
+  width: 100%;
+  padding: 10px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  border-radius: 8px;
+  cursor: pointer;
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 14px;
+  transition: border-color 0.2s;
+}
+.modal-close:hover { border-color: var(--accent); }
+
+/* ═══════════════════════════════════════════
+   TOAST NOTIFICATION
+═══════════════════════════════════════════ */
+.toast {
+  position: fixed;
+  bottom: 30px;
+  left: 50%;
+  transform: translateX(-50%) translateY(60px);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 20px;
+  font-size: 13px;
+  color: var(--text-primary);
+  z-index: 200;
+  transition: transform 0.3s, opacity 0.3s;
+  opacity: 0;
+}
+.toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
+
+/* ═══════════════════════════════════════════
+   RESPONSIVO
+═══════════════════════════════════════════ */
+@media (max-width: 900px) {
+  .main { grid-template-columns: 1fr; }
+  .avatar-panel { display: none; }
+}
+</style>
+</head>
+<body>
+
+<div class="app">
+  <!-- ═══ HEADER ═══ -->
+  <header class="header">
+    <div class="logo-box">A</div>
+    <div class="header-info">
+      <h1>ARTEMIS</h1>
+      <p>AI Co-Pilot · Local</p>
+    </div>
+    <div class="header-right">
+      <div class="status-dot" id="statusDot"></div>
+      <span class="status-label" id="statusLabel">Verificando...</span>
+    </div>
+  </header>
+
+  <!-- ═══ MAIN ═══ -->
+  <div class="main">
+
+    <!-- ─── PAINEL ESQUERDO ─── -->
+    <div class="avatar-panel">
+      <div class="corner tl"></div>
+      <div class="corner tr"></div>
+      <div class="corner bl"></div>
+      <div class="corner br"></div>
+
+      <div class="avatar-container">
+        <div class="avatar-placeholder">
+          <div class="avatar-icon">🤖</div>
+          <div class="hologram-ring"></div>
+          <div class="hologram-ring ring2"></div>
+          <span class="avatar-label">ARTEMIS v1.0</span>
+        </div>
+      </div>
+
+      <div class="waveform" id="waveform">
+        <div class="wave-bar"></div>
+        <div class="wave-bar"></div>
+        <div class="wave-bar"></div>
+        <div class="wave-bar"></div>
+        <div class="wave-bar"></div>
+        <div class="wave-bar"></div>
+        <div class="wave-bar"></div>
+        <div class="wave-bar"></div>
+      </div>
+    </div>
+
+    <!-- ─── PAINEL DIREITO ─── -->
+    <div class="right-panel">
+
+      <!-- Menu -->
+      <div class="menu-section">
+        <div class="menu-title">Co-Pilot Menu</div>
+        <div class="menu-buttons">
+          <button class="menu-btn" onclick="sendCommand('/modo foco')" id="focusBtn">
+            <span class="icon">🎯</span>
+            <span>Modo Foco</span>
+          </button>
+          <button class="menu-btn" onclick="sendCommand('/resumo')">
+            <span class="icon">📝</span>
+            <span>Gerar Resumo</span>
+          </button>
+          <button class="menu-btn" onclick="showMemory()">
+            <span class="icon">🧠</span>
+            <span>Ver Memória</span>
+          </button>
+          <button class="menu-btn" onclick="sendCommand('/reset')">
+            <span class="icon">🔄</span>
+            <span>Resetar Contexto</span>
+          </button>
+          <button class="menu-btn" onclick="saveSession()">
+            <span class="icon">💾</span>
+            <span>Salvar Sessão</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Chat -->
+      <div class="chat-section">
+        <div class="chat-title">Co-Pilot Interaction</div>
+
+        <div class="chat-messages" id="chatMessages">
+          <div class="message system-msg">
+            <div class="text">Conectando ao servidor local...</div>
+          </div>
+        </div>
+
+        <div class="input-area">
+          <div class="input-wrapper">
+            <textarea
+              class="chat-input"
+              id="chatInput"
+              placeholder="Pergunte para Artemis..."
+              rows="1"
+            ></textarea>
+          </div>
+          <button class="send-btn" id="sendBtn" onclick="sendMessage()">➤</button>
+        </div>
+      </div>
+
+    </div><!-- /right-panel -->
+  </div><!-- /main -->
+</div><!-- /app -->
+
+<!-- ═══ MODAL Memória ═══ -->
+<div class="modal-overlay" id="memoryModal" onclick="this.classList.remove('open')">
+  <div class="modal" onclick="event.stopPropagation()">
+    <h2>🧠 MEMÓRIA LONGA</h2>
+    <p id="memoryContent">Carregando...</p>
+    <button class="modal-close" onclick="document.getElementById('memoryModal').classList.remove('open')">Fechar</button>
+  </div>
+</div>
+
+<!-- ═══ TOAST ═══ -->
+<div class="toast" id="toast"></div>
+
+<script>
+/* ═══════════════════════════════════════════
+   ESTADO
+═══════════════════════════════════════════ */
+const API_BASE  = 'http://localhost:8000';
+let   isLoading = false;
+let   focusMode = false;
+
+/* ═══════════════════════════════════════════
+   UTILITÁRIOS
+═══════════════════════════════════════════ */
+const chatMessages = document.getElementById('chatMessages');
+const chatInput    = document.getElementById('chatInput');
+const sendBtn      = document.getElementById('sendBtn');
+const waveform     = document.getElementById('waveform');
+
+function scrollBottom() {
+  chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+function showToast(msg, duration = 2500) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), duration);
+}
+
+function addMessage(role, text) {
+  const div  = document.createElement('div');
+  div.className = `message ${role}`;
+
+  const label = role === 'user' ? 'Você' : role === 'bot' ? 'Artemis' : '';
+  if (label) div.innerHTML = `<div class="sender">${label}</div><div class="text"></div>`;
+  else       div.innerHTML = `<div class="text"></div>`;
+
+  div.querySelector('.text').textContent = text;
+  chatMessages.appendChild(div);
+  scrollBottom();
+  return div;
+}
+
+function setStatus(online) {
+  const dot   = document.getElementById('statusDot');
+  const label = document.getElementById('statusLabel');
+  dot.className   = `status-dot ${online ? 'online' : ''}`;
+  label.textContent = online ? 'Online' : 'Offline';
+}
+
+function setLoading(state) {
+  isLoading         = state;
+  sendBtn.disabled  = state;
+  chatInput.disabled = state;
+  waveform.classList.toggle('active', state);
+}
+
+/* ─── Auto-resize textarea ─── */
+chatInput.addEventListener('input', () => {
+  chatInput.style.height = 'auto';
+  chatInput.style.height = Math.min(chatInput.scrollHeight, 100) + 'px';
+});
+
+chatInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendMessage();
+  }
+});
+
+/* ═══════════════════════════════════════════
+   HEALTH CHECK
+═══════════════════════════════════════════ */
+async function checkHealth() {
+  try {
+    const r = await fetch(`${API_BASE}/health`, { signal: AbortSignal.timeout(3000) });
+    const d = await r.json();
+    const online = d.status === 'ok';
+    setStatus(online);
+
+    // Limpa mensagem inicial
+    chatMessages.innerHTML = '';
+    if (online) {
+      addMessage('system-msg', `✅ Artemis conectado · Modelo: ${d.model}`);
+    } else {
+      addMessage('system-msg', '❌ Ollama offline. Execute: ollama serve');
+    }
+    return online;
+  } catch {
+    setStatus(false);
+    chatMessages.innerHTML = '';
+    addMessage('system-msg', '❌ Servidor local offline. Execute: python server.py');
+    return false;
+  }
+}
+
+/* ═══════════════════════════════════════════
+   ENVIO DE MENSAGEM (com streaming SSE)
+═══════════════════════════════════════════ */
+async function sendMessage() {
+  const text = chatInput.value.trim();
+  if (!text || isLoading) return;
+
+  chatInput.value = '';
+  chatInput.style.height = 'auto';
+
+  addMessage('user', text);
+  setLoading(true);
+
+  // Bot message placeholder
+  const botDiv = document.createElement('div');
+  botDiv.className = 'message bot';
+  botDiv.innerHTML = '<div class="sender">Artemis</div><div class="text"><div class="thinking"><div class="dots"><span></span><span></span><span></span></div></div></div>';
+  chatMessages.appendChild(botDiv);
+  scrollBottom();
+
+  try {
+    const response = await fetch(`${API_BASE}/chat/stream`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ message: text }),
+    });
+
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+    const textEl = botDiv.querySelector('.text');
+    textEl.innerHTML = ''; // remove thinking dots
+
+    const cursor = document.createElement('span');
+    cursor.className = 'typing-cursor';
+    textEl.appendChild(cursor);
+
+    const reader  = response.body.getReader();
+    const decoder = new TextDecoder();
+    let   buffer  = '';
+    let   fullText = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        try {
+          const data = JSON.parse(line.slice(6));
+          if (data.token) {
+            fullText += data.token;
+            // Insert text before cursor
+            textEl.insertBefore(document.createTextNode(data.token), cursor);
+            scrollBottom();
+          }
+          if (data.done) cursor.remove();
+        } catch { /* skip malformed */ }
+      }
+    }
+
+    cursor.remove(); // garante que removeu
+  } catch (err) {
+    botDiv.querySelector('.text').textContent = `❌ Erro: ${err.message}`;
+  } finally {
+    setLoading(false);
+    chatInput.focus();
+  }
+}
+
+/* ═══════════════════════════════════════════
+   COMANDOS VIA MENU
+═══════════════════════════════════════════ */
+async function sendCommand(cmd) {
+  if (isLoading) return;
+  chatInput.value = cmd;
+  await sendMessage();
+
+  if (cmd === '/modo foco') {
+    focusMode = !focusMode;
+    document.getElementById('focusBtn').classList.toggle('active', focusMode);
+  }
+}
+
+async function saveSession() {
+  try {
+    const r = await fetch(`${API_BASE}/save`, { method: 'POST' });
+    const d = await r.json();
+    showToast(`💾 Salvo: ${d.saved}`);
+  } catch {
+    showToast('❌ Erro ao salvar sessão');
+  }
+}
+
+async function showMemory() {
+  try {
+    const r = await fetch(`${API_BASE}/memory`);
+    const d = await r.json();
+    document.getElementById('memoryContent').innerHTML = `
+      <strong style="color:var(--cyan)">Nome:</strong> ${d.name}<br><br>
+      <strong style="color:var(--cyan)">Perfil:</strong> ${d.profile}<br><br>
+      <strong style="color:var(--cyan)">Resumo:</strong><br>${d.summary}<br><br>
+      <strong style="color:var(--text-muted)">Sessões salvas:</strong> ${d.stats.sessions_stored}
+    `;
+  } catch {
+    document.getElementById('memoryContent').textContent = 'Servidor offline.';
+  }
+  document.getElementById('memoryModal').classList.add('open');
+}
+
+/* ═══════════════════════════════════════════
+   INIT
+═══════════════════════════════════════════ */
+checkHealth();
+setInterval(checkHealth, 30000); // ping a cada 30s
+chatInput.focus();
+</script>
+</body>
+</html>

@@ -1,0 +1,46 @@
+{
+  "timestamp": "20260512_210119",
+  "history": [
+    {
+      "role": "user",
+      "content": "oi"
+    },
+    {
+      "role": "assistant",
+      "content": "Olá. Como posso ajudar?"
+    },
+    {
+      "role": "user",
+      "content": "qual o seu nome?"
+    },
+    {
+      "role": "assistant",
+      "content": "Meu nome é Artemis. Sou seu assistente pessoal local."
+    },
+    {
+      "role": "user",
+      "content": "meu nome e Arthur"
+    },
+    {
+      "role": "assistant",
+      "content": "Certo, Arthur. É um prazer."
+    },
+    {
+      "role": "user",
+      "content": "oi"
+    },
+    {
+      "role": "assistant",
+      "content": "Olá, Arthur. Em que posso ajudar?"
+    },
+    {
+      "role": "user",
+      "content": "[Arquivo: Arthur Santos Ahl --Curriculo.pdf]\n```\nArthur Santos Ahl \nNascimento: 03/05/2000 \nEmail: Arthur_ahl@hotmail.com   \nTelefone: +55 31 9 9506-9956 \nLinkedIn: linkedin.com/in/arthursantosahl \nGitHub: github.com/xDynamo01 \nPortfólio: www.arthursantosahl.com \n \nResumo Profissional \nProfissional com perfil analítico e multidisciplinar, com formação em Medicina \nVeterinária e atualmente cursando Ciência da Computação. Possuo \nexperiência em organização de dados, suporte operacional, análise de \nsistemas digitais e avaliação de modelos de inteligência artificial. \nAtuo na avaliação humana de sistemas de IA generativa de áudio, analisando \ninteligibilidade, naturalidade da voz, prosódia e qualidade de outputs de \ndiferentes modelos, contribuindo para o treinamento e aprimoramento de \ntecnologias de dublagem baseadas em inteligência artificial. \nTambém possuo conhecimento na plataforma Salesforce (CRM), incluindo \norganização de dados e conceitos de automação de processos, além de \nexperiência com ferramentas como Excel, SQL e Power BI. Atualmente \ndesenvolvo projetos próprios de programação, incluindo a criação de um \nsistema CRM como forma de aprofundar conhecimentos em desenvolvimento \nde software e arquitetura de dados. \n \nFormação Acadêmica \nBacharelado em Ciência da Computação \nUNINTER \nInício: 2025 – Em andamento \nBacharelado em Medicina Veterinária \nUniBH \nConclusão: 2025 \n \n \nCompetências Principais \nTecnologia e Sistemas \n• Salesforce CRM (objetos, \nfluxos e automações) \n \n \n• Organização e estruturação \nde processos digitais \n• Avaliação e análise de \nsistemas baseados em IA \n\n• Documentação técnica e \nprocessos \n• Análise comparativa de \nsistemas \nDados e Ferramentas \n• Excel / Google Sheets \n(Intermediário) \n• SQL / MySQL (Básico a \nIntermediário) \n• Power BI (Básico) \n• Estruturação e tratamento de \ndados \n• Execução de scripts simples \n• Organização e validação de \ndados \nSuporte e Operações \n• Suporte operacional a \nsistemas digitais \n• Diagnóstico de problemas \ntécnicos \n• Atendimento e suporte ao \nusuário \n• Organização de fluxos de \ntrabalho \n• Acompanhamento de \nindicadores (KPIs) \nHabilidades Profissionais \n• Comunicação clara entre \nequipes \n• Organização e gestão de \ninformações \n• Pensamento analítico \n• Aprendizado rápido \n• Trabalho remoto e \ncolaboração entre equipes \n \n \nExperiência Profissional \nAI Audio Evaluation Specialist (Freelancer) \nRWS Group | Meta AI Research \n2026 \n• Avaliação humana (Human-in-the-Loop) de sistemas de dublagem \nbaseados em inteligência artificial. \n• Análise de inteligibilidade, naturalidade da voz, prosódia, \nmeaningfulness e qualidade geral de áudio. \n• Comparação entre outputs de diferentes modelos de IA (competitive \nbenchmarking). \n• Documentação estruturada de resultados seguindo protocolos técnicos. \n• Trabalho com dados sensíveis respeitando padrões de qualidade, ética e \nprivacidade. \n\n• Contribuição direta para treinamento e melhoria de modelos de IA \ngenerativa. \n \nAuxiliar Administrativo \nLuxSolar – Sabará/MG \n• Organização e controle de documentos administrativos. \n• Lançamento e conferência de notas fiscais e registros internos. \n• Validação de dados administrativos e controle de qualidade das \ninformações. \n• Apoio a processos internos seguindo padrões e prazos definidos. \nVendedor / Atendimento ao Cliente \nLuxSolar – Sabará/MG \n• Atendimento direto ao cliente e esclarecimento de dúvidas sobre \nprodutos. \n• Organização de registros e informações relacionadas a vendas. \n• Acompanhamento de metas e resultados comerciais. \n• Comunicação clara e foco em resolução de problemas. \n \nEstágios \nEstágio em Clínica Veterinária \nClínica MiaVida – Belo Horizonte/MG \n2022 \n• Apoio em atendimentos clínicos e acompanhamento de procedimentos \nveterinários. \n• Organização de registros clínicos e suporte operacional à equipe \nmédica. \n• Auxílio em rotinas de diagnóstico e atendimento a animais. \n \nEstágio em Produção Leiteira \nJerseyMinas – Exposição Megaleite \n2023 \n\n• Participação em atividades técnicas durante evento de exposição \nleiteira. \n• Apoio no manejo e acompanhamento de animais da raça Jersey. \n• Suporte à equipe técnica durante avaliações e organização das \natividades da exposição. \n \nProjetos Técnicos \nDesenvolvimento de CRM \nDesenvolvimento de um sistema CRM do zero como projeto de aprendizado \nem programação. \n• Estruturação de banco de dados, organização de clientes e fluxo de \ninformações. \n• Aplicação de conceitos de sistemas de gestão e organização de dados. \nFramework de Automação de Testes Web | Java, Selenium, TestNG \n• Desenvolvimento de framework para testes de regressão em aplicação \nweb de e-commerce. \n• Implementação de Page Object Model (POM). \n• Configuração de Integração Contínua com GitHub Actions. \n• Criação de planos e casos de teste detalhados. \nSistema de Teste de API REST | Postman, JavaScript, Newman \n• Criação de coleção de testes para API REST, validando status codes e \nschemas de resposta. \n• Automação da execução via Newman e integração ao pipeline de CI/CD. \n• Desenvolvimento de scripts para gerar relatórios. \nDashboard de Métricas de Qualidade | Power BI, SQL, MySQL \n• Projeto de dashboard interativo para visualizar métricas-chave de QA \n(taxa de passagem, densidade de bugs). \n• Conexão do Power BI a um banco de dados MySQL alimentado por \nresultados de execuções de testes automatizados. \nNeural Network from Scratch | Python \n• Implementação de rede neural totalmente do zero em Python, \ndemonstrando compreensão de matemática aplicada e retropropagação. \n\nAssistente I.A. com GUI | Python, Tkinter, Vosk (em andamento) \n• Assistente pessoal com interface gráfica em Tkinter e comandos de voz, \nintegrando IA (reconhecimento e síntese de fala) e automação de \ntarefas. \nStock Price Dashboard | React, Vite, Tailwind, Recharts \n• Dashboard web para visualização de preços de ações em tempo real via \nAPI, focado em consumo de APIs REST e data visualization. \n \nExperiência com Salesforce \n• Conhecimento funcional da plataforma Salesforce \n• Estruturação de objetos e organização de dados no CRM \n• Noções de automações e fluxos \n• Experiência com treinamento na plataforma Trailhead \n• Familiaridade com processos de CRM e gestão de clientes \n \nIdiomas \nPortuguês — Nativo \nInglês — Fluente \nEspanhol — Básico \nJaponês — Básico \nAlemão — Básico \n \nCertificações e Aprendizado \n• Salesforce Platform Basics \n• CRM Fundamentals \n• Data Management \n• Process Automation \n• Customer Relationship Management \n• AI-900 - Fundamentos de IA no Azure \n• Implementando Banco de Dados \n• Administrando Banco de Dados\n```\n\nvoce consegue analizar esse arquivo para mim?"
+    },
+    {
+      "role": "assistant",
+      "content": ""
+    }
+  ],
+  "summary": "Nenhuma sessão anterior registrada."
+}

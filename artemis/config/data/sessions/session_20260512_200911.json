@@ -1,0 +1,38 @@
+{
+  "timestamp": "20260512_200911",
+  "history": [
+    {
+      "role": "user",
+      "content": "oi"
+    },
+    {
+      "role": "assistant",
+      "content": "Olá. Como posso ajudar?"
+    },
+    {
+      "role": "user",
+      "content": "qual o seu nome?"
+    },
+    {
+      "role": "assistant",
+      "content": "Meu nome é Artemis. Sou seu assistente pessoal local."
+    },
+    {
+      "role": "user",
+      "content": "meu nome e Arthur"
+    },
+    {
+      "role": "assistant",
+      "content": "Certo, Arthur. É um prazer."
+    },
+    {
+      "role": "user",
+      "content": "oi"
+    },
+    {
+      "role": "assistant",
+      "content": "Olá, Arthur. Em que posso ajudar?"
+    }
+  ],
+  "summary": "Nenhuma sessão anterior registrada."
+}

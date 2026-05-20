@@ -1,0 +1,17 @@
+# ============================================================
+#  ARTEMIS — Dependências Python
+# ============================================================
+#  Instale com:  pip install -r requirements.txt
+
+requests>=2.31.0      # Comunicação com Ollama API
+fastapi>=0.110.0      # Servidor web (para a UI)
+uvicorn>=0.27.0       # ASGI server para FastAPI
+customtkinter>=5.2.0  # Interface gráfica desktop (gui.py)
+pypdf>=4.0.0          # Extração de texto de arquivos PDF
+
+# ── Opcionais (futuras expansões) ──────────────────────────
+# vosk                # Reconhecimento de voz offline
+# openai-whisper      # Transcrição de áudio (mais preciso)
+# pynput              # Hotkeys globais
+# python-telegram-bot # Integração Telegram
+# pyautogui           # Automações desktop

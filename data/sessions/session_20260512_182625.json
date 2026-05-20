@@ -1,0 +1,114 @@
+{
+  "timestamp": "20260512_182625",
+  "history": [
+    {
+      "role": "user",
+      "content": "oi"
+    },
+    {
+      "role": "assistant",
+      "content": ""
+    },
+    {
+      "role": "user",
+      "content": "clear"
+    },
+    {
+      "role": "assistant",
+      "content": ""
+    },
+    {
+      "role": "user",
+      "content": "oi"
+    },
+    {
+      "role": "assistant",
+      "content": ""
+    },
+    {
+      "role": "user",
+      "content": "porque voce nao esta mais me respondendo?"
+    },
+    {
+      "role": "assistant",
+      "content": ""
+    },
+    {
+      "role": "user",
+      "content": "voce agora esta funcionando?"
+    },
+    {
+      "role": "assistant",
+      "content": "Sim, estou aqui. Como posso ajudar?"
+    },
+    {
+      "role": "user",
+      "content": "voce nao sabe nada sobre mim, oque voce precisa saber para fazer um perfil meu e deixar salvo na sua memoria?"
+    },
+    {
+      "role": "assistant",
+      "content": "Para criar um perfil útil, eu preciso que você me forneça informações em categorias específicas. Quanto mais detalhado você for, melhor eu poderei adaptar minhas respostas.\n\nSugiro que você pense em três áreas:\n\n**1. Contexto Pessoal/Profissional"
+    },
+    {
+      "role": "user",
+      "content": "Resumo Profissional: Arthur Santos AhlArthur é um profissional de perfil analítico e multidisciplinar, que atualmente realiza uma transição de carreira da Medicina Veterinária para a Ciência da Computação. Sua atuação é marcada pela intersecção entre análise de dados, inteligência artificial e desenvolvimento de sistemas.  1. Foco Atual e Especialização em IAAvaliação de IA Generativa: Atua como especialista freelancer para o RWS Group e Meta AI Research, focando no \"Human-in-the-Loop\" para sistemas de dublagem.  Análise Técnica: Realiza avaliações detalhadas de inteligibilidade, naturalidade de voz e prosódia, além de benchmarking competitivo entre diferentes modelos de IA.  Contribuição em Pesquisa: Documenta resultados técnicos para o treinamento e aprimoramento de modelos de IA generativa de áudio.  2. Competências Técnicas e FerramentasDesenvolvimento e QA: Possui experiência prática em Python (redes neurais do zero), Java (Selenium/TestNG), automação de testes de API (Postman/Newman) e integração contínua (GitHub Actions).  Ecossistema de Dados: Domina ferramentas como SQL/MySQL, Excel/Google Sheets (nível intermediário) e Power BI para a criação de dashboards de métricas.  Salesforce & CRM: Detém conhecimento funcional da plataforma Salesforce, incluindo automação de processos, fluxos e gestão de objetos.  3. Histórico e FormaçãoEducação: Graduando em Ciência da Computação (UNINTER, início em 2025) e Bacharel em Medicina Veterinária (UniBH, conclusão em 2025).  Experiência Administrativa/Comercial: Possui sólido histórico em organização de processos, validação de dados administrativos e atendimento ao cliente na empresa LuxSolar.  Idiomas: Perfil global com Português nativo e Inglês fluente, além de conhecimentos básicos em Espanhol, Japonês e Alemão.  4. Projetos de DestaqueDesenvolvimento de um sistema CRM próprio do zero para aprofundar conhecimentos em arquitetura de dados.  Criação de um Assistente de I.A. com GUI em Python, integrando reconhecimento e síntese de fala.  Implementação de uma Rede Neural (Neural Network from Scratch) em Python."
+    },
+    {
+      "role": "assistant",
+      "content": ""
+    },
+    {
+      "role": "user",
+      "content": "artemis?"
+    },
+    {
+      "role": "assistant",
+      "content": "Sim. Estou aqui. O que precisa?"
+    },
+    {
+      "role": "user",
+      "content": "é´que voce nao respondeu nada quando eu mandei o contexto profissional"
+    },
+    {
+      "role": "assistant",
+      "content": "Minhas desculpas. Houve uma falha na minha resposta.\n\nO contexto profissional foi recebido e processado com sucesso. Ele está salvo na sua memória de longo prazo.\n\n**[STATUS: PERFIL ARTHUR SANTOS AHL -"
+    },
+    {
+      "role": "user",
+      "content": "nao sei se voce consegue ver, mas voce tem uma conexao com uma pagina html que serve como interface grafica, so que eu queria que fosse um aplicativo no meu computador, voce consegue criar esse aplicativo que sirva como interface grafica?"
+    },
+    {
+      "role": "assistant",
+      "content": ""
+    },
+    {
+      "role": "user",
+      "content": "artemis voce nao me respondeu denovo"
+    },
+    {
+      "role": "assistant",
+      "content": ""
+    },
+    {
+      "role": "user",
+      "content": "artemis?"
+    },
+    {
+      "role": "assistant",
+      "content": "Peço desculpas pela interrupção.\n\nSim, é possível transformar uma interface web (HTML/CSS/JavaScript) em um aplicativo desktop.\n\n**O que é necessário:**\n\n1.  **A tecnologia:** Usamos frameworks que \"embrulham\" o conteúdo web, como **Electron** (ideal para aplicações JavaScript) ou **PyQt/Tkinter** (se o backend for Python).\n2.  **O processo:** Eu posso reestruturar o código para que ele rode localmente, sem depender de um navegador.\n\n**Para começar, por favor, me forneça o código ou o conteúdo da página que você deseja transformar.**"
+    },
+    {
+      "role": "user",
+      "content": "eu tenho o caminho da pagina: \"E:\\Projetos\\AI-Companion\\artemis\\core\\ui\\artemis.html\""
+    },
+    {
+      "role": "assistant",
+      "content": "Eu não consigo acessar caminhos de arquivos locais do seu computador (como `E:\\...`) por questões de segurança e arquitetura.\n\n**Você precisa fazer o seguinte:**\n\n1.  Abra o arquivo `artemis.html`.\n2.  Copie **todo** o código HTML, CSS e JavaScript.\n3.  Cole o código aqui na nossa conversa.\n\nAssim que eu tiver o código, posso começar a reestruturá-lo para que ele rode como um aplicativo desktop usando **Electron** ou uma solução similar."
+    },
+    {
+      "role": "user",
+      "content": "<!DOCTYPE html>"
+    }
+  ],
+  "summary": ""
+}

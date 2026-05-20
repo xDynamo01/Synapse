@@ -1,0 +1,14 @@
+{
+  "timestamp": "20260512_194547",
+  "history": [
+    {
+      "role": "user",
+      "content": "E:\\Projetos\\AI-Companion\\data\\sessions\\session_20260512_182625.json porque voce nao esta usando a memoria das sessoes anteriores?"
+    },
+    {
+      "role": "assistant",
+      "content": "Eu não acesso arquivos diretamente do seu sistema operacional (como o caminho `E:\\...`).\n\nEu só processo e utilizo as informações de memória que são explicitamente passadas no contexto da nossa conversa, conforme"
+    }
+  ],
+  "summary": "Nenhuma sessão anterior registrada."
+}
