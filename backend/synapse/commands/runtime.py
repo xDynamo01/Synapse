@@ -13,6 +13,7 @@ from synapse.memory.store import MemoryStore
 from synapse.policies.effective import EffectivePolicyRuntime
 from synapse.tasks.runtime import TaskRuntime
 from synapse.tools.base import ToolRegistry
+from synapse.workers.agent_worker import AgentWorker
 
 
 @dataclass(frozen=True)
@@ -35,6 +36,7 @@ class CommandRuntime:
         tools: ToolRegistry,
         approvals: ApprovalManager,
         approval_resume: ApprovalResumeRuntime,
+        worker: AgentWorker,
     ):
         self.config = config
         self.agents = agents
@@ -45,6 +47,7 @@ class CommandRuntime:
         self.tools = tools
         self.approvals = approvals
         self.approval_resume = approval_resume
+        self.worker = worker
 
     def execute(
         self,
@@ -90,6 +93,12 @@ class CommandRuntime:
             return self._approve(context, argument_text)
         if command == "/reject":
             return self._reject(context, argument_text)
+        if command == "/inbox":
+            return self._inbox(context, argument_text)
+        if command == "/process-inbox":
+            return self._process_inbox(context, argument_text)
+        if command == "/worker-status":
+            return self._worker_status()
 
         return CommandResult(command=command, status="error", output=f"Unknown command: {command}")
 
@@ -108,6 +117,9 @@ class CommandRuntime:
             "/approvals",
             "/approve",
             "/reject",
+            "/inbox",
+            "/process-inbox",
+            "/worker-status",
         ]
         return CommandResult(
             command="/help",
@@ -328,6 +340,47 @@ class CommandRuntime:
             status="ok",
             output=f"Rejected {approval_id}.",
             data={"approval": asdict(approval)},
+        )
+
+    def _inbox(self, context: PermissionContext, argument_text: str) -> CommandResult:
+        agent_id = argument_text.strip().lower()
+        if not agent_id:
+            return CommandResult(
+                command="/inbox",
+                status="error",
+                output="Usage: /inbox <agent_id>",
+            )
+        messages = [asdict(message) for message in self.worker.list_inbox(context, agent_id)]
+        return CommandResult(
+            command="/inbox",
+            status="ok",
+            output=f"{len(messages)} inbox message(s) for {agent_id}.",
+            data={"messages": messages},
+        )
+
+    def _process_inbox(self, context: PermissionContext, argument_text: str) -> CommandResult:
+        agent_id = argument_text.strip().lower()
+        if not agent_id:
+            return CommandResult(
+                command="/process-inbox",
+                status="error",
+                output="Usage: /process-inbox <agent_id>",
+            )
+        results = [asdict(result) for result in self.worker.process_inbox(context, agent_id)]
+        return CommandResult(
+            command="/process-inbox",
+            status="ok",
+            output=f"Processed {len(results)} inbox message(s) for {agent_id}.",
+            data={"results": results},
+        )
+
+    def _worker_status(self) -> CommandResult:
+        status = asdict(self.worker.status())
+        return CommandResult(
+            command="/worker-status",
+            status="ok",
+            output="Worker status loaded.",
+            data={"worker": status},
         )
 
     def _default_agent_id(self) -> str:

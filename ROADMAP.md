@@ -97,6 +97,9 @@ Status: partial foundation complete.
 - Device-aware approval validation.
 - Approval resume flow after approval.
 - Approval API endpoints for pending, approve, and reject.
+- Agent Worker inbox processing.
+- Worker commands `/inbox`, `/process-inbox`, and `/worker-status`.
+- Worker API endpoints for inbox processing and status.
 
 Pending:
 
@@ -107,6 +110,24 @@ Pending:
 - Sandbox strategy for risky tools.
 - Multi-step tool planning and model follow-up after tool observations.
 - Session message update after resumed tool execution.
+
+## 5B. Agent Worker / Inbox Processing
+
+Status: complete foundation.
+
+- Runtime-owned pending inbox processing.
+- Message status flow: `pending -> read -> processed` or `failed`.
+- Worker uses `ContextLoader`, `AgentRuntime`, `EffectivePolicyRuntime`, and `AgentCommunication`.
+- Optional replies are controlled by effective policy and delegation rules.
+- Worker events for inbox checks, start, processed, and failed.
+
+Pending:
+
+- Background scheduler/queue.
+- Retry policy.
+- Thread/conversation IDs for request-response chains.
+- Worker concurrency controls.
+- Rich worker observability and correlation IDs.
 
 ## 5A. Chat Runtime
 

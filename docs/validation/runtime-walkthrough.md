@@ -289,7 +289,7 @@ Risks:
 - Message file write is not atomic.
 - There is no delivery retry model.
 - There is no separate outbox for Artemis.
-- Agent permissions in `CONFIG.yaml` are not the source of truth for `PermissionManager`; permissions still come from `config/permissions.yaml`.
+- Agent permissions in `CONFIG.yaml` are combined with the global permission ceiling by `EffectivePolicyRuntime`.
 
 Technical validation:
 
@@ -302,7 +302,11 @@ Status: executable.
 
 Components:
 
+- `AgentWorker`
 - `AgentCommunication`
+- `ContextLoader`
+- `AgentRuntime`
+- `EffectivePolicyRuntime`
 - `AgentRegistry`
 - `PermissionManager`
 - `EventBus`
@@ -312,7 +316,11 @@ Files read:
 
 - `agents/researcher/messages/<message_id>.yaml`
 - `agents/researcher/CONFIG.yaml`
+- `agents/researcher/SOUL.md`
+- `agents/researcher/MEMORY.md`
+- `agents/researcher/SKILLS.md`
 - `config/permissions.yaml`
+- `config/approval_policy.yaml`
 
 Files written:
 
@@ -322,17 +330,18 @@ Files written:
 Events generated:
 
 - `permission.decision`
+- `worker.inbox_checked`
+- `worker.message_processing_started`
 - `agent.message.status_changed` when message becomes `read`
 
 Risks:
 
-- Receiving means listing/reading message records; no background inbox processing exists.
-- No agent loop automatically reacts to pending messages.
+- Receiving is executable through `AgentWorker`, but still requires command/API invocation.
+- No scheduler automatically reacts to pending messages yet.
 
 Technical validation:
 
-- `runtime.communication.list_messages(researcher, "researcher")` returned the pending message.
-- `mark_read(...)` changed status to `read` and emitted an event.
+- `runtime.worker.process_inbox(..., "researcher")` lists pending messages and marks the message `read`.
 
 ### 7. Researcher responds
 
@@ -340,7 +349,11 @@ Status: executable.
 
 Components:
 
+- `AgentWorker`
 - `AgentCommunication`
+- `ContextLoader`
+- `AgentRuntime`
+- `EffectivePolicyRuntime`
 - `AgentRegistry`
 - `PermissionManager`
 - `EventBus`
@@ -349,6 +362,9 @@ Components:
 Files read:
 
 - `agents/researcher/CONFIG.yaml`
+- `agents/researcher/SOUL.md`
+- `agents/researcher/MEMORY.md`
+- `agents/researcher/SKILLS.md`
 - `agents/artemis/CONFIG.yaml`
 - `config/permissions.yaml`
 
@@ -362,17 +378,18 @@ Files written:
 Events generated:
 
 - `permission.decision`
+- `worker.message_processed`
 - `agent.message.sent`
 - `agent.message.status_changed` when the original request becomes `processed`
 
 Risks:
 
-- Response is manually invoked by runtime calls. There is no autonomous Researcher processing loop.
+- Response is produced by `AgentWorker` using `AgentRuntime`; invocation is explicit, not scheduled.
 - The request/response relationship exists through shared `task_id`, not a formal conversation thread id.
 
 Technical validation:
 
-- Researcher sent a structured response to Artemis.
+- Researcher can send a structured response to Artemis when effective policy allows autonomous messaging.
 - The original Researcher message was marked `processed`.
 
 ### 8. Artemis receives the response
@@ -668,14 +685,14 @@ Technical validation:
 
 ## Complete System Flow
 
-1. Runtime starts and loads config, permissions, event bus, identities, agents, memory, tasks, tools, approvals, effective policy runtime, context loader, command runtime, and device registry.
+1. Runtime starts and loads config, permissions, event bus, identities, agents, memory, tasks, tools, approvals, effective policy runtime, context loader, agent worker, command runtime, and device registry.
 2. A chat turn with Artemis is persisted under `chats/sessions/` through `ChatRuntime`.
 3. `ContextLoader` loads global memory, Artemis identity, Artemis effective policy, Artemis memory, skills, relevant tasks, and recent session history.
 4. Artemis reads global and agent memory through runtime-owned services, not direct file access.
 5. Artemis creates a persisted task through `TaskRuntime`.
 6. Artemis sends a structured message to Researcher through `AgentCommunication`.
-7. Researcher lists pending messages and marks the request as read.
-8. Researcher sends a structured response to Artemis and marks the request processed.
+7. `AgentWorker` lists Researcher pending messages and marks the request as read.
+8. `AgentWorker` loads Researcher context/policy, runs `AgentRuntime`, optionally sends a structured response to Artemis, and marks the request processed.
 9. Artemis lists received messages and marks the response read.
 10. Artemis completes the task through `TaskRuntime`.
 11. `EventBus` records permission decisions, task events, message events, tool events, approval events, context load, chat events, and runtime starts.
@@ -708,6 +725,7 @@ sequenceDiagram
     participant Memory as "MemoryStore"
     participant Tasks as "TaskRuntime"
     participant A2A as "AgentCommunication"
+    participant Worker as "AgentWorker"
     participant Researcher
     participant Context as "ContextLoader"
     participant Events as "EventBus"
@@ -744,12 +762,17 @@ sequenceDiagram
     A2A->>Files: "append researcher/INBOX.md"
     A2A->>Files: "write researcher/messages/<message>.yaml"
     A2A->>Events: "agent.message.sent"
-    Researcher->>A2A: "list_messages + mark_read"
+    Worker->>A2A: "list pending researcher messages + mark_read"
     A2A->>Events: "agent.message.status_changed"
-    Researcher->>A2A: "send response(to artemis)"
+    Worker->>Context: "load researcher context"
+    Worker->>Policy: "resolve researcher policy"
+    Worker->>Researcher: "AgentRuntime.run(message body)"
+    Worker->>A2A: "optional response(to artemis)"
     A2A->>Files: "append artemis/INBOX.md"
     A2A->>Files: "write artemis/messages/<response>.yaml"
     A2A->>Events: "agent.message.sent"
+    Worker->>A2A: "mark original processed or failed"
+    Worker->>Events: "worker.message_processed or worker.message_failed"
     Artemis->>A2A: "mark response read"
     A2A->>Events: "agent.message.status_changed"
     Artemis->>Tasks: "update_task(completed)"
@@ -776,8 +799,8 @@ sequenceDiagram
 1C. Effective Agent Policy exists, but is still coarse-grained.
     It centralizes global permissions, agent config, identity preferences, approval policy, and device constraints. Resource-scoped filesystem/project/model rules and policy schema migrations are still missing.
 
-2. No autonomous agent worker loop exists.
-   Artemis and Researcher can run through `ChatRuntime`/`AgentRuntime`, but they do not autonomously process inboxes or run scheduled work.
+2. Agent Worker exists, but no autonomous scheduler loop exists.
+   Inbox processing can be triggered through runtime commands or API. There is no background queue, retry policy, or continuous scheduler yet.
 
 3. Persistent chat/session log exists, but is basic.
    Sessions persist under `data/chats/sessions/`, but there is no schema version, attachment model, retention policy, or search.
@@ -788,8 +811,8 @@ sequenceDiagram
 5. Message threading is incomplete.
    Request and response share `task_id`, but there is no formal thread/conversation id.
 
-6. Agent inbox processing is manual.
-   Pending messages are not picked up by a scheduler or background worker.
+6. Agent inbox processing is explicit.
+   Pending messages are processed by `AgentWorker` when commanded. They are not picked up by a scheduler or queue yet.
 
 7. Task and message writes are not atomic.
    Crashes during update can leave inconsistent state.
@@ -814,6 +837,7 @@ Priority 1:
 - Add schema versioning and validation tooling for effective policy inputs.
 - Add multi-step tool observation and final model follow-up.
 - Add approval notifications, remote-safe approval workflows, and session message updates after resume.
+- Add worker retry policy and queue/scheduler before homelab autonomous mode.
 
 Priority 2:
 

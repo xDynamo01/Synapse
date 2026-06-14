@@ -20,6 +20,7 @@ Client/UI
       -> Tool System
       -> Tool Router
       -> Approval Manager
+      -> Agent Worker
       -> Command Runtime
       -> Device Registry
 ```
@@ -360,6 +361,34 @@ Agent messages have:
 
 Every message creation or status change emits an event.
 
+## Agent Worker
+
+`AgentWorker` processes pending agent inbox messages without adding a UI, scheduler, or autonomous background loop.
+
+Worker flow:
+
+```text
+AgentWorker
+  -> AgentCommunication.list_messages(status=pending)
+  -> AgentCommunication.mark_read()
+  -> ContextLoader.load()
+  -> AgentRuntime.run()
+  -> optional AgentCommunication.send_agent_message()
+  -> AgentCommunication.mark_processed() or mark_failed()
+  -> EventBus
+```
+
+The worker uses the destination agent as the runtime actor (`actor_type=agent`). Tool calls produced during inbox processing go through the normal `AgentRuntime -> EffectivePolicyRuntime -> ToolRouter -> PermissionManager -> ApprovalManager` path.
+
+Autonomous replies are conservative. The worker only sends a reply to the original sender when `send_agent_message` is allowed by `AgentEffectivePolicy` and the agent can delegate or explicitly prefers `send_agent_message`. Agents that cannot delegate do not send autonomous messages unless their effective policy makes that behavior explicit.
+
+Worker events:
+
+- `worker.inbox_checked`
+- `worker.message_processing_started`
+- `worker.message_processed`
+- `worker.message_failed`
+
 ## Command Runtime
 
 `CommandRuntime` is a runtime client boundary for text commands. It does not own business logic; it delegates to runtime services and tools.
@@ -379,6 +408,9 @@ Supported commands:
 - `/approvals`
 - `/approve <approval_id>`
 - `/reject <approval_id>`
+- `/inbox <agent_id>`
+- `/process-inbox <agent_id>`
+- `/worker-status`
 
 This runtime exists before UI so desktop, API, mobile, scheduler, and future voice input can share command behavior.
 
@@ -404,6 +436,12 @@ Approval API endpoints:
 - `GET /approvals/pending`
 - `POST /approvals/{approval_id}/approve`
 - `POST /approvals/{approval_id}/reject`
+
+Worker API endpoints:
+
+- `GET /agents/{agent_id}/inbox`
+- `POST /agents/{agent_id}/process-inbox`
+- `GET /workers/status`
 
 ## Tool Contract
 

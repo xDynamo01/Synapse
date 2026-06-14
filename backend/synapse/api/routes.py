@@ -72,6 +72,45 @@ def list_agents(request: Request) -> list[dict[str, Any]]:
     return [asdict(agent) for agent in runtime.agents.list_agents()]
 
 
+@router.get("/agents/{agent_id}/inbox")
+def list_agent_inbox(
+    agent_id: str,
+    request: Request,
+    status: str | None = None,
+    x_actor_id: str | None = Header(default=None),
+    x_actor_type: str | None = Header(default=None),
+    x_device_id: str | None = Header(default=None),
+) -> list[dict[str, Any]]:
+    runtime = runtime_from(request)
+    context = context_from(runtime, x_actor_id, x_actor_type, x_device_id)
+    try:
+        return [asdict(message) for message in runtime.worker.list_inbox(context, agent_id, status)]
+    except Exception as exc:
+        raise api_error(exc) from exc
+
+
+@router.post("/agents/{agent_id}/process-inbox")
+def process_agent_inbox(
+    agent_id: str,
+    request: Request,
+    x_actor_id: str | None = Header(default=None),
+    x_actor_type: str | None = Header(default=None),
+    x_device_id: str | None = Header(default=None),
+) -> list[dict[str, Any]]:
+    runtime = runtime_from(request)
+    context = context_from(runtime, x_actor_id, x_actor_type, x_device_id)
+    try:
+        return [asdict(result) for result in runtime.worker.process_inbox(context, agent_id)]
+    except Exception as exc:
+        raise api_error(exc) from exc
+
+
+@router.get("/workers/status")
+def worker_status(request: Request) -> dict[str, Any]:
+    runtime = runtime_from(request)
+    return asdict(runtime.worker.status())
+
+
 @router.get("/events")
 def list_events(request: Request, limit: int = 100) -> list[dict[str, Any]]:
     runtime = runtime_from(request)
