@@ -14,6 +14,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "backend"))
 from synapse.chat.runtime import ChatMessage, ChatTurnResult
 from synapse.core.app import create_runtime
 from synapse.core.config import Settings
+from synapse.core.exceptions import PermissionDenied
 from synapse.core.permissions import PermissionContext
 
 
@@ -243,8 +244,17 @@ class ChatRuntimeTests(unittest.TestCase):
             def __init__(self) -> None:
                 self.chat = FakeChat()
 
-            def context(self, actor_id: str | None = None, actor_type: str = "user"):
-                return PermissionContext(actor_id=actor_id or "fallback", actor_type=actor_type)
+            def context(
+                self,
+                actor_id: str | None = None,
+                actor_type: str = "user",
+                device_id: str | None = None,
+            ):
+                return PermissionContext(
+                    actor_id=actor_id or "fallback",
+                    actor_type=actor_type,
+                    device_id=device_id,
+                )
 
         fake_runtime = FakeRuntime()
         app = FastAPI()
@@ -286,7 +296,7 @@ class ChatRuntimeTests(unittest.TestCase):
         self.assertEqual(tool_results[0]["request"]["name"], "read_file")
         self.assertTrue(tool_results[0]["success"])
         self.assertIn("Chat runtime test memory", tool_results[0]["result"]["content"])
-        self.assertIn("read_file:ok", result.response)
+        self.assertIn("read_file:executed", result.response)
 
     def test_agent_tool_call_read_file_without_permission_is_blocked(self) -> None:
         permissions = [
@@ -395,6 +405,183 @@ class ChatRuntimeTests(unittest.TestCase):
         tool_results = payload["message"]["metadata"]["tool_results"]
         self.assertTrue(tool_results[0]["success"])
         self.assertIn("Chat runtime test memory", tool_results[0]["result"]["content"])
+
+    def test_low_risk_tool_executes_without_approval(self) -> None:
+        directory, _, runtime = runtime_in_tempdir()
+        self.addCleanup(directory.cleanup)
+
+        result = runtime.chat.send_message(
+            runtime.context(),
+            "artemis",
+            "tool:list_directory path=memory",
+        )
+
+        tool_result = result.message.metadata["tool_results"][0]
+        self.assertEqual(tool_result["status"], "executed")
+        self.assertTrue(tool_result["success"])
+        self.assertEqual(runtime.approvals.list_pending(), [])
+
+    def test_high_risk_tool_creates_pending_approval_and_does_not_execute(self) -> None:
+        directory, _, runtime = runtime_in_tempdir()
+        self.addCleanup(directory.cleanup)
+
+        result = runtime.chat.send_message(
+            runtime.context(),
+            "artemis",
+            "tool:write_file path=projects/high-risk.txt content=blocked",
+        )
+
+        tool_result = result.message.metadata["tool_results"][0]
+        self.assertEqual(tool_result["status"], "awaiting_approval")
+        self.assertFalse(tool_result["success"])
+        approval_id = tool_result["approval_id"]
+        approval = runtime.approvals.get_status(approval_id)
+        self.assertEqual(approval.status, "pending")
+        self.assertEqual(approval.risk_level, "high")
+        self.assertFalse(runtime.data_dir.resolve("projects/high-risk.txt").exists())
+
+    def test_approved_request_allows_high_risk_tool_execution(self) -> None:
+        directory, _, runtime = runtime_in_tempdir()
+        self.addCleanup(directory.cleanup)
+
+        first = runtime.chat.send_message(
+            runtime.context(),
+            "artemis",
+            "tool:write_file path=projects/approved.txt content=approved",
+        )
+        approval_id = first.message.metadata["tool_results"][0]["approval_id"]
+        runtime.approvals.approve(runtime.context(), approval_id)
+
+        second = runtime.chat.send_message(
+            runtime.context(),
+            "artemis",
+            f"tool:write_file path=projects/approved.txt content=approved approval_id={approval_id}",
+        )
+
+        tool_result = second.message.metadata["tool_results"][0]
+        self.assertEqual(tool_result["status"], "executed")
+        self.assertTrue(tool_result["success"])
+        self.assertEqual(
+            runtime.data_dir.resolve("projects/approved.txt").read_text(encoding="utf-8"),
+            "approved",
+        )
+
+    def test_rejected_request_blocks_high_risk_tool_execution(self) -> None:
+        directory, _, runtime = runtime_in_tempdir()
+        self.addCleanup(directory.cleanup)
+
+        first = runtime.chat.send_message(
+            runtime.context(),
+            "artemis",
+            "tool:write_file path=projects/rejected.txt content=rejected",
+        )
+        approval_id = first.message.metadata["tool_results"][0]["approval_id"]
+        runtime.approvals.reject(runtime.context(), approval_id)
+
+        second = runtime.chat.send_message(
+            runtime.context(),
+            "artemis",
+            f"tool:write_file path=projects/rejected.txt content=rejected approval_id={approval_id}",
+        )
+
+        tool_result = second.message.metadata["tool_results"][0]
+        self.assertEqual(tool_result["status"], "failed")
+        self.assertFalse(tool_result["success"])
+        self.assertIn("rejected", tool_result["error"])
+        self.assertFalse(runtime.data_dir.resolve("projects/rejected.txt").exists())
+
+    def test_approval_events_are_emitted(self) -> None:
+        directory, _, runtime = runtime_in_tempdir()
+        self.addCleanup(directory.cleanup)
+
+        result = runtime.chat.send_message(
+            runtime.context(),
+            "artemis",
+            "tool:write_file path=projects/events.txt content=events",
+        )
+        approval_id = result.message.metadata["tool_results"][0]["approval_id"]
+        runtime.approvals.approve(runtime.context(), approval_id)
+        second = runtime.chat.send_message(
+            runtime.context(),
+            "artemis",
+            f"tool:write_file path=projects/events.txt content=events approval_id={approval_id}",
+        )
+
+        event_types = [event.type for event in runtime.events.tail(limit=120)]
+        self.assertIn("approval.requested", event_types)
+        self.assertIn("approval.approved", event_types)
+        self.assertIn("tool.requested", event_types)
+        self.assertIn("tool.permission_checked", event_types)
+        self.assertIn("tool.executed", event_types)
+        self.assertEqual(second.message.metadata["tool_results"][0]["status"], "executed")
+
+    def test_command_runtime_approvals_lists_pending(self) -> None:
+        directory, _, runtime = runtime_in_tempdir()
+        self.addCleanup(directory.cleanup)
+
+        runtime.chat.send_message(
+            runtime.context(),
+            "artemis",
+            "tool:write_file path=projects/pending.txt content=pending",
+        )
+        result = runtime.commands.execute(runtime.context(), "/approvals")
+
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(len(result.data["approvals"]), 1)
+        self.assertEqual(result.data["approvals"][0]["status"], "pending")
+
+    def test_command_runtime_approve_changes_status(self) -> None:
+        directory, _, runtime = runtime_in_tempdir()
+        self.addCleanup(directory.cleanup)
+
+        first = runtime.chat.send_message(
+            runtime.context(),
+            "artemis",
+            "tool:write_file path=projects/command-approved.txt content=ok",
+        )
+        approval_id = first.message.metadata["tool_results"][0]["approval_id"]
+        result = runtime.commands.execute(runtime.context(), f"/approve {approval_id}")
+
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(runtime.approvals.get_status(approval_id).status, "approved")
+
+    def test_command_runtime_reject_changes_status(self) -> None:
+        directory, _, runtime = runtime_in_tempdir()
+        self.addCleanup(directory.cleanup)
+
+        first = runtime.chat.send_message(
+            runtime.context(),
+            "artemis",
+            "tool:write_file path=projects/command-rejected.txt content=no",
+        )
+        approval_id = first.message.metadata["tool_results"][0]["approval_id"]
+        result = runtime.commands.execute(runtime.context(), f"/reject {approval_id}")
+
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(runtime.approvals.get_status(approval_id).status, "rejected")
+
+    def test_device_without_permission_cannot_approve(self) -> None:
+        directory, _, runtime = runtime_in_tempdir()
+        self.addCleanup(directory.cleanup)
+
+        first = runtime.chat.send_message(
+            runtime.context(),
+            "artemis",
+            "tool:write_file path=projects/device-denied.txt content=denied",
+        )
+        approval_id = first.message.metadata["tool_results"][0]["approval_id"]
+        runtime.devices.register_device(
+            "viewer",
+            trusted=True,
+            permissions=["view_notifications"],
+            actor_id="local_owner",
+        )
+        context = runtime.context(actor_id="local_owner", actor_type="user", device_id="viewer")
+
+        with self.assertRaises(PermissionDenied):
+            runtime.commands.execute(context, f"/approve {approval_id}")
+
+        self.assertEqual(runtime.approvals.get_status(approval_id).status, "pending")
 
 
 if __name__ == "__main__":

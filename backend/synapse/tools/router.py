@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Iterable
 
+from synapse.approvals.manager import ApprovalManager
 from synapse.core.events import EventBus
 from synapse.core.exceptions import PermissionDenied, SynapseError
 from synapse.core.permissions import PermissionContext, PermissionManager
@@ -15,10 +16,12 @@ class ToolRouter:
         self,
         registry: ToolRegistry,
         permissions: PermissionManager,
+        approvals: ApprovalManager,
         event_bus: EventBus,
     ):
         self.registry = registry
         self.permissions = permissions
+        self.approvals = approvals
         self.event_bus = event_bus
 
     def execute_plan(
@@ -63,8 +66,17 @@ class ToolRouter:
                             f"to use tool {call.name}"
                         ),
                     )
+            approval_result = self._approval_result_if_required(context, call, spec.risk_level)
+            if approval_result:
+                return approval_result
             result = self.registry.execute(call.name, context, call.arguments)
-            tool_result = ToolCallResult(request=call, success=True, result=result)
+            tool_result = ToolCallResult(
+                request=call,
+                success=True,
+                status="executed",
+                result=result,
+                approval_id=call.approval_id,
+            )
             self.event_bus.emit(
                 "tool.executed",
                 context.actor_id,
@@ -90,6 +102,44 @@ class ToolRouter:
         except Exception as exc:
             return self._failed_result(context, call, exc)
 
+    def _approval_result_if_required(
+        self,
+        context: PermissionContext,
+        call: ToolCallRequest,
+        risk_level: str,
+    ) -> ToolCallResult | None:
+        if call.approval_id:
+            self.approvals.assert_approved_for_tool(
+                approval_id=call.approval_id,
+                agent_id=context.actor_id,
+                tool_name=call.name,
+                tool_args=call.arguments,
+                risk_level=risk_level,
+            )
+            return None
+
+        if not self.approvals.requires_approval(
+            agent_id=context.actor_id,
+            risk_level=risk_level,
+            permission_explicitly_granted=True,
+        ):
+            return None
+
+        approval = self.approvals.create_request(
+            context=context,
+            tool_name=call.name,
+            tool_args=call.arguments,
+            risk_level=risk_level,
+            reason=f"Tool {call.name} risk level {risk_level} requires human approval.",
+        )
+        return ToolCallResult(
+            request=call,
+            success=False,
+            status="awaiting_approval",
+            result={"approval_id": approval.id, "approval_status": approval.status},
+            approval_id=approval.id,
+        )
+
     def _failed_result(
         self,
         context: PermissionContext,
@@ -110,4 +160,4 @@ class ToolRouter:
         )
         if isinstance(exc, SynapseError):
             error = str(exc)
-        return ToolCallResult(request=call, success=False, error=error)
+        return ToolCallResult(request=call, success=False, status="failed", error=error)

@@ -6,6 +6,7 @@ from synapse.agents.communication import AgentCommunication
 from synapse.agents.presence import PresenceStore
 from synapse.agents.registry import AgentRegistry
 from synapse.agents.runtime import AgentRuntime
+from synapse.approvals.manager import ApprovalManager
 from synapse.auth.devices import DeviceRegistry
 from synapse.chat.runtime import ChatRuntime
 from synapse.commands.runtime import CommandRuntime
@@ -35,6 +36,7 @@ class RuntimeContainer:
     communication: AgentCommunication
     presence: PresenceStore
     devices: DeviceRegistry
+    approvals: ApprovalManager
     memory: MemoryStore
     context_loader: ContextLoader
     tasks: TaskRuntime
@@ -43,10 +45,16 @@ class RuntimeContainer:
     commands: CommandRuntime
     chat: ChatRuntime
 
-    def context(self, actor_id: str | None = None, actor_type: str = "user") -> PermissionContext:
+    def context(
+        self,
+        actor_id: str | None = None,
+        actor_type: str = "user",
+        device_id: str | None = None,
+    ) -> PermissionContext:
         return PermissionContext(
             actor_id=actor_id or self.settings.default_actor_id,
             actor_type=actor_type,
+            device_id=device_id,
         )
 
 
@@ -63,14 +71,15 @@ def create_runtime(settings: Settings | None = None) -> RuntimeContainer:
     communication = AgentCommunication(data_dir, agents, permissions, events)
     presence = PresenceStore(data_dir, events)
     devices = DeviceRegistry(data_dir, events)
+    approvals = ApprovalManager(data_dir, permissions, devices, events)
     memory = MemoryStore(data_dir, permissions, events)
     tasks = TaskRuntime(data_dir, permissions, events)
     context_loader = ContextLoader(data_dir, permissions, events, agents, tasks)
     tools = ToolRegistry(permissions, events)
     register_builtin_tools(tools, data_dir, communication, tasks)
-    tool_router = ToolRouter(tools, permissions, events)
+    tool_router = ToolRouter(tools, permissions, approvals, events)
     agent_runtime = AgentRuntime(agents, models, tools, tool_router, events)
-    commands = CommandRuntime(config, agents, memory, tasks, tools)
+    commands = CommandRuntime(config, agents, memory, tasks, tools, approvals)
     chat = ChatRuntime(data_dir, events, context_loader, agent_runtime, commands)
 
     events.emit("runtime.started", settings.default_actor_id, {"data_dir": str(data_dir.root)})
@@ -87,6 +96,7 @@ def create_runtime(settings: Settings | None = None) -> RuntimeContainer:
         communication=communication,
         presence=presence,
         devices=devices,
+        approvals=approvals,
         memory=memory,
         context_loader=context_loader,
         tasks=tasks,

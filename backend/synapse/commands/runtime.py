@@ -4,6 +4,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from synapse.agents.registry import AgentRegistry
+from synapse.approvals.manager import ApprovalManager
 from synapse.core.config import ConfigStore
 from synapse.core.permissions import PermissionContext
 from synapse.memory.store import MemoryStore
@@ -27,12 +28,14 @@ class CommandRuntime:
         memory: MemoryStore,
         tasks: TaskRuntime,
         tools: ToolRegistry,
+        approvals: ApprovalManager,
     ):
         self.config = config
         self.agents = agents
         self.memory = memory
         self.tasks = tasks
         self.tools = tools
+        self.approvals = approvals
 
     def execute(
         self,
@@ -68,11 +71,29 @@ class CommandRuntime:
             return self._remember(context, argument_text)
         if command == "/search":
             return self._search(context, argument_text)
+        if command == "/approvals":
+            return self._approvals()
+        if command == "/approve":
+            return self._approve(context, argument_text)
+        if command == "/reject":
+            return self._reject(context, argument_text)
 
         return CommandResult(command=command, status="error", output=f"Unknown command: {command}")
 
     def _help(self) -> CommandResult:
-        commands = ["/help", "/agents", "/tasks", "/memory", "/call", "/task", "/remember", "/search"]
+        commands = [
+            "/help",
+            "/agents",
+            "/tasks",
+            "/memory",
+            "/call",
+            "/task",
+            "/remember",
+            "/search",
+            "/approvals",
+            "/approve",
+            "/reject",
+        ]
         return CommandResult(
             command="/help",
             status="ok",
@@ -202,6 +223,45 @@ class CommandRuntime:
             status=status,
             output=result.get("message", "Search executed."),
             data={"search": result},
+        )
+
+    def _approvals(self) -> CommandResult:
+        pending = [asdict(approval) for approval in self.approvals.list_pending()]
+        return CommandResult(
+            command="/approvals",
+            status="ok",
+            output=f"{len(pending)} pending approval(s)",
+            data={"approvals": pending},
+        )
+
+    def _approve(self, context: PermissionContext, approval_id: str) -> CommandResult:
+        if not approval_id:
+            return CommandResult(
+                command="/approve",
+                status="error",
+                output="Usage: /approve <approval_id>",
+            )
+        approval = self.approvals.approve(context, approval_id)
+        return CommandResult(
+            command="/approve",
+            status="ok",
+            output=f"Approved {approval_id}.",
+            data={"approval": asdict(approval)},
+        )
+
+    def _reject(self, context: PermissionContext, approval_id: str) -> CommandResult:
+        if not approval_id:
+            return CommandResult(
+                command="/reject",
+                status="error",
+                output="Usage: /reject <approval_id>",
+            )
+        approval = self.approvals.reject(context, approval_id)
+        return CommandResult(
+            command="/reject",
+            status="ok",
+            output=f"Rejected {approval_id}.",
+            data={"approval": asdict(approval)},
         )
 
     def _default_agent_id(self) -> str:

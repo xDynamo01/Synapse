@@ -39,8 +39,8 @@ def runtime_from(request: Request):
     return request.app.state.runtime
 
 
-def context_from(runtime, actor_id: str | None, actor_type: str | None):
-    return runtime.context(actor_id=actor_id, actor_type=actor_type or "user")
+def context_from(runtime, actor_id: str | None, actor_type: str | None, device_id: str | None = None):
+    return runtime.context(actor_id=actor_id, actor_type=actor_type or "user", device_id=device_id)
 
 
 def api_error(exc: Exception) -> HTTPException:
@@ -100,9 +100,10 @@ def execute_tool(
     request: Request,
     x_actor_id: str | None = Header(default=None),
     x_actor_type: str | None = Header(default=None),
+    x_device_id: str | None = Header(default=None),
 ) -> dict[str, Any]:
     runtime = runtime_from(request)
-    context = context_from(runtime, x_actor_id, x_actor_type)
+    context = context_from(runtime, x_actor_id, x_actor_type, x_device_id)
     try:
         return runtime.tools.execute(tool_name, context, payload.arguments)
     except Exception as exc:
@@ -115,9 +116,10 @@ def create_task(
     request: Request,
     x_actor_id: str | None = Header(default=None),
     x_actor_type: str | None = Header(default=None),
+    x_device_id: str | None = Header(default=None),
 ) -> dict[str, Any]:
     runtime = runtime_from(request)
-    context = context_from(runtime, x_actor_id, x_actor_type)
+    context = context_from(runtime, x_actor_id, x_actor_type, x_device_id)
     try:
         task = runtime.tasks.create_task(context, payload.title, payload.description, payload.metadata)
         return asdict(task)
@@ -132,9 +134,10 @@ def send_agent_message(
     request: Request,
     x_actor_id: str | None = Header(default=None),
     x_actor_type: str | None = Header(default=None),
+    x_device_id: str | None = Header(default=None),
 ) -> dict[str, Any]:
     runtime = runtime_from(request)
-    context = context_from(runtime, x_actor_id, x_actor_type)
+    context = context_from(runtime, x_actor_id, x_actor_type, x_device_id)
     try:
         message = runtime.communication.send_agent_message(
             context=context,
@@ -155,9 +158,10 @@ def chat(
     request: Request,
     x_actor_id: str | None = Header(default=None),
     x_actor_type: str | None = Header(default=None),
+    x_device_id: str | None = Header(default=None),
 ) -> dict[str, Any]:
     runtime = runtime_from(request)
-    context = context_from(runtime, x_actor_id, x_actor_type)
+    context = context_from(runtime, x_actor_id, x_actor_type, x_device_id)
     try:
         result = runtime.chat.send_message(
             context=context,

@@ -17,6 +17,7 @@ Client/UI
       -> Task Runtime
       -> Tool System
       -> Tool Router
+      -> Approval Manager
       -> Command Runtime
       -> Device Registry
 ```
@@ -138,6 +139,7 @@ Tool calling flow:
 AgentRuntime
   -> ToolRouter
   -> PermissionManager
+  -> ApprovalManager (when risk policy requires it)
   -> ToolRegistry.execute()
   -> Tool implementation
   -> EventBus
@@ -151,6 +153,51 @@ AgentRuntime
 - `tool.failed`
 
 Tool calls use the agent as the permission actor (`actor_type=agent`). This means a user chatting with an agent does not automatically grant that agent the user's permissions.
+
+Each tool has a `risk_level`:
+
+- `low`
+- `medium`
+- `high`
+- `critical`
+
+Default risk examples:
+
+- `list_directory`: low
+- `read_file`: low
+- `create_task`: low
+- `send_agent_message`: medium
+- `write_file`: high
+
+The approval policy lives in:
+
+```text
+data/config/approval_policy.yaml
+```
+
+Default policy requires approval for `high` and `critical` tools. Explicit tool permission does not bypass approval by default.
+
+Approval requests are persisted under:
+
+```text
+data/approvals/<approval_id>.yaml
+```
+
+Approval statuses:
+
+- `pending`
+- `approved`
+- `rejected`
+- `expired`
+
+Approval events:
+
+- `approval.requested`
+- `approval.approved`
+- `approval.rejected`
+- `approval.expired`
+
+When a tool requires approval, `ToolRouter` returns a `ToolCallResult` with `status="awaiting_approval"` and does not call `ToolRegistry.execute()`. If the same tool call is retried with an approved `approval_id`, `ToolRouter` validates the approval against agent, tool, risk level, and arguments before executing.
 
 Current supported structured tool calls:
 
@@ -220,6 +267,9 @@ Supported commands:
 - `/task <title> --agent <agent>`
 - `/remember <text>`
 - `/search <query>`
+- `/approvals`
+- `/approve <approval_id>`
+- `/reject <approval_id>`
 
 This runtime exists before UI so desktop, API, mobile, scheduler, and future voice input can share command behavior.
 
@@ -237,6 +287,8 @@ data/devices/
 ```
 
 Each record stores `device_id`, `trusted`, `revoked`, permissions, metadata, and timestamps. Device permissions are persisted but are not yet enforced by `PermissionManager`.
+
+Approval commands use device records when `PermissionContext.device_id` is present. A device must be trusted, not revoked, and have `approve_actions` or another configured approval permission.
 
 ## Tool Contract
 

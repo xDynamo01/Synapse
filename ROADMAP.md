@@ -53,13 +53,17 @@ Status: partial foundation complete.
 - Agent Runtime -> Tool Router -> Permission Manager -> ToolRegistry flow.
 - Initial tool-call support for `read_file`, `list_directory`, `create_task`, and `send_agent_message`.
 - Tool-call events for requested, permission checked, executed, and failed.
+- Human Approval Gate for high/critical risk tools.
+- Persisted approval requests.
+- Approval commands `/approvals`, `/approve`, and `/reject`.
+- Device-aware approval validation.
 
 Pending:
 
 - Resource-scoped filesystem permissions.
 - OpenAPI/MCP bridge adapters.
 - Tool execution audit correlation beyond event type.
-- Approval-required tool calls.
+- Rich approval UI/mobile workflow.
 - Sandbox strategy for risky tools.
 - Multi-step tool planning and model follow-up after tool observations.
 

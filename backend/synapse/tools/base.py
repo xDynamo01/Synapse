@@ -13,6 +13,7 @@ class ToolSpec:
     name: str
     description: str
     permission: str
+    risk_level: str = "low"
 
 
 class Tool(Protocol):

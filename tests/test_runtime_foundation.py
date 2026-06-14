@@ -252,8 +252,17 @@ class RuntimeFoundationTests(unittest.TestCase):
             def __init__(self) -> None:
                 self.tasks = FakeTasks()
 
-            def context(self, actor_id: str | None = None, actor_type: str = "user"):
-                return PermissionContext(actor_id=actor_id or "fallback", actor_type=actor_type)
+            def context(
+                self,
+                actor_id: str | None = None,
+                actor_type: str = "user",
+                device_id: str | None = None,
+            ):
+                return PermissionContext(
+                    actor_id=actor_id or "fallback",
+                    actor_type=actor_type,
+                    device_id=device_id,
+                )
 
         fake_runtime = FakeRuntime()
         app = FastAPI()

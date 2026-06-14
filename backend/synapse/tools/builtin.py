@@ -16,6 +16,7 @@ class ReadFileTool:
         name="read_file",
         description="Read a UTF-8 text file inside DATA_DIR.",
         permission="filesystem.read",
+        risk_level="low",
     )
 
     def __init__(self, data_dir: DataDir):
@@ -31,6 +32,7 @@ class WriteFileTool:
         name="write_file",
         description="Write or append a UTF-8 text file inside DATA_DIR.",
         permission="filesystem.write",
+        risk_level="high",
     )
 
     def __init__(self, data_dir: DataDir):
@@ -54,6 +56,7 @@ class ListDirectoryTool:
         name="list_directory",
         description="List files and directories inside DATA_DIR.",
         permission="filesystem.list",
+        risk_level="low",
     )
 
     def __init__(self, data_dir: DataDir):
@@ -75,6 +78,7 @@ class SearchFilesTool:
         name="search_files",
         description="Search text files inside DATA_DIR by pattern and optional query.",
         permission="filesystem.search",
+        risk_level="low",
     )
 
     def __init__(self, data_dir: DataDir):
@@ -111,6 +115,7 @@ class WebSearchTool:
         name="web_search",
         description="Search the web through a configured provider.",
         permission="web.search",
+        risk_level="medium",
     )
 
     def run(self, context: PermissionContext, **kwargs: Any) -> dict[str, Any]:
@@ -130,6 +135,7 @@ class SendAgentMessageTool:
         name="send_agent_message",
         description="Send a persistent message to another agent inbox.",
         permission="agents.message",
+        risk_level="medium",
     )
 
     def __init__(self, communication: AgentCommunication):
@@ -152,6 +158,7 @@ class CreateTaskTool:
         name="create_task",
         description="Create a persistent task in DATA_DIR/tasks/active.",
         permission="tasks.create",
+        risk_level="low",
     )
 
     def __init__(self, task_runtime: TaskRuntime):
@@ -172,6 +179,7 @@ class UpdateTaskTool:
         name="update_task",
         description="Update a persistent task status or metadata.",
         permission="tasks.update",
+        risk_level="medium",
     )
 
     def __init__(self, task_runtime: TaskRuntime):

@@ -56,6 +56,7 @@ data/library/**
 data/tasks/active/*.json
 data/tasks/completed/*.json
 data/tasks/failed/*.json
+data/approvals/**
 data/agents/*/messages/**
 data/devices/trusted/*.yaml
 data/devices/untrusted/*.yaml

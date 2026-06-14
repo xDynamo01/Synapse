@@ -13,6 +13,7 @@ REQUIRED_DIRECTORIES = (
     "tasks/active",
     "tasks/completed",
     "tasks/failed",
+    "approvals",
     "logs",
     "library",
     "chats",
@@ -36,6 +37,17 @@ SEED_FILES = {
         "- coordinate_tasks\n- route_messages\n- use_core_tools\n"
     ),
     "agents/orchestrator/INBOX.md": "# Inbox\n",
+    "config/approval_policy.yaml": (
+        "{\n"
+        '  "approval": {\n'
+        '    "required_risk_levels": ["high", "critical"],\n'
+        '    "bypass_agents": [],\n'
+        '    "approver_device_permissions": ["approve_actions"],\n'
+        '    "explicit_permission_bypasses_approval": false,\n'
+        '    "default_expires_minutes": null\n'
+        "  }\n"
+        "}\n"
+    ),
 }
 
 
@@ -74,4 +86,3 @@ class DataDir:
         with path.open("a", encoding="utf-8") as handle:
             handle.write(text)
         return path
-

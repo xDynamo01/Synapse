@@ -123,6 +123,6 @@ class AgentRuntime:
     ) -> str:
         summaries = []
         for item in tool_results:
-            status = "ok" if item.success else "failed"
+            status = item.status
             summaries.append(f"{item.request.name}:{status}")
         return f"{response.content}\nTool results: {', '.join(summaries)}"

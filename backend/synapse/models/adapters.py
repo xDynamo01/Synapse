@@ -48,7 +48,9 @@ class MockModelAdapter:
         tool_name = command.removeprefix("tool:").strip()
         if not tool_name:
             return None
-        return ToolCallRequest(name=tool_name, arguments=self._parse_arguments(argument_text))
+        arguments = self._parse_arguments(argument_text)
+        approval_id = arguments.pop("approval_id", None)
+        return ToolCallRequest(name=tool_name, arguments=arguments, approval_id=approval_id)
 
     @staticmethod
     def _parse_arguments(argument_text: str) -> dict[str, str]:

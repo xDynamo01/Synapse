@@ -1,0 +1,9 @@
+{
+  "approval": {
+    "required_risk_levels": ["high", "critical"],
+    "bypass_agents": [],
+    "approver_device_permissions": ["approve_actions"],
+    "explicit_permission_bypasses_approval": false,
+    "default_expires_minutes": null
+  }
+}
