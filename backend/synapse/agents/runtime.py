@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from synapse.agents.identity import AgentIdentityRuntime
 from synapse.agents.registry import AgentRegistry
 from synapse.context.loader import LoadedContext
 from synapse.core.events import EventBus
@@ -28,12 +29,14 @@ class AgentRuntime:
     def __init__(
         self,
         agents: AgentRegistry,
+        identities: AgentIdentityRuntime,
         models: ModelRouter,
         tools: ToolRegistry,
         tool_router: ToolRouter,
         event_bus: EventBus,
     ):
         self.agents = agents
+        self.identities = identities
         self.models = models
         self.tools = tools
         self.tool_router = tool_router
@@ -50,7 +53,8 @@ class AgentRuntime:
         original_message_id: str | None = None,
     ) -> AgentRunResult:
         agent = self.agents.get(agent_id)
-        allowed_tools = self._allowed_tools(agent.permissions)
+        identity = self.identities.load_identity(agent_id)
+        allowed_tools = self._allowed_tools(agent.permissions, identity.forbidden_tools)
         self.event_bus.emit(
             "agent.run.started",
             context.actor_id,
@@ -58,6 +62,8 @@ class AgentRuntime:
                 "agent_id": agent_id,
                 "tool_calling": "supported",
                 "allowed_tools": [tool["name"] for tool in allowed_tools],
+                "role": identity.role,
+                "can_delegate": identity.can_delegate,
             },
         )
         model_response = self.models.generate(
@@ -76,6 +82,34 @@ class AgentRuntime:
                 autonomy=context.autonomy,
             )
             plan = ToolCallPlan(calls=model_response.tool_calls)
+            blocked_results = []
+            allowed_calls = []
+            forbidden = set(identity.forbidden_tools)
+            for call in plan.calls:
+                if call.name in forbidden:
+                    blocked_results.append(
+                        ToolCallResult(
+                            request=call,
+                            success=False,
+                            status="blocked",
+                            error=f"Tool is forbidden for agent {agent.id}: {call.name}",
+                        )
+                    )
+                    self.event_bus.emit(
+                        "tool.failed",
+                        context.actor_id,
+                        {
+                            "tool_call_id": call.id,
+                            "tool": call.name,
+                            "success": False,
+                            "error": f"Tool is forbidden for agent {agent.id}: {call.name}",
+                            "error_type": "ForbiddenTool",
+                            "blocked_before_router": True,
+                        },
+                    )
+                else:
+                    allowed_calls.append(call)
+            plan = ToolCallPlan(calls=allowed_calls)
             tool_results = self.tool_router.execute_plan(
                 tool_context,
                 plan,
@@ -84,6 +118,7 @@ class AgentRuntime:
                 project_id=project_id,
                 original_message_id=original_message_id,
             )
+            tool_results = [*blocked_results, *tool_results]
             final_response = self._response_after_tools(model_response, tool_results)
         result = AgentRunResult(
             agent_id=agent_id,
@@ -104,13 +139,19 @@ class AgentRuntime:
         )
         return result
 
-    def _allowed_tools(self, permissions: list[str]) -> list[dict[str, Any]]:
+    def _allowed_tools(
+        self,
+        permissions: list[str],
+        forbidden_tools: list[str],
+    ) -> list[dict[str, Any]]:
         permission_set = set(permissions)
+        forbidden = set(forbidden_tools)
         specs = self.tools.list_specs()
         allowed = [
             asdict(spec)
             for spec in specs
-            if "*" in permission_set or spec.permission in permission_set
+            if ("*" in permission_set or spec.permission in permission_set)
+            and spec.name not in forbidden
         ]
         return allowed
 

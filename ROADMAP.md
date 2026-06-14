@@ -21,6 +21,7 @@ Status: complete.
 Status: complete.
 
 - Structured `ContextLoader`.
+- Agent Identity Runtime / SOUL Runtime.
 - Structured agent-to-agent messages.
 - Human-readable `INBOX.md` projection.
 - Initial device registry.
@@ -32,7 +33,25 @@ Status: complete foundation, integrated with Chat Runtime.
 
 - Slash command parser.
 - Runtime-backed `/call`, `/task`, `/remember`, `/search`.
+- Runtime-backed `/agent <id>` and `/agents detail`.
 - No duplicated command business logic in UI.
+
+## 3A. Agent Identity Runtime
+
+Status: complete foundation.
+
+- Structured `AgentIdentity`.
+- SOUL/CONFIG/SKILLS loading and validation.
+- Identity exposed to `ContextLoader`.
+- Agent Runtime respects `preferred_tools` and blocks `forbidden_tools`.
+- Base agents: Artemis, Researcher, Atlas, Hermes, Vigil.
+
+Pending:
+
+- Rich identity editing workflow.
+- Schema versioning for agent configs.
+- Runtime validation for autonomy profiles beyond manual mode.
+- Identity migration tooling.
 
 ## 4. Model Integration
 

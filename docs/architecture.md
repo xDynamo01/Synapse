@@ -11,6 +11,7 @@ Client/UI
       -> Core: config, data dir, permissions, events, model routing
       -> Chat Runtime
       -> Memory System
+      -> Agent Identity Runtime
       -> Context Loader
       -> Agent Runtime
       -> Model Adapters
@@ -84,6 +85,7 @@ The load order is fixed:
 
 The returned object separates:
 
+- `agent_identity`: structured operational identity loaded from `SOUL.md`, `CONFIG.yaml`, and `SKILLS.md`
 - `memory`: global, user, system, and agent memory
 - `identity`: agent soul and skills
 - `project`: project description and project memory
@@ -127,11 +129,49 @@ Chat events:
 `AgentRuntime` receives:
 
 - agent id
+- structured `AgentIdentity`
 - structured loaded context
 - user message
 - allowed tool specs
 
 It delegates response generation to `ModelRouter`. When a model response includes structured tool calls, `AgentRuntime` does not execute tools directly. It sends them to `ToolRouter`.
+
+Before tool routing, `AgentRuntime` enforces `AgentIdentity.forbidden_tools`. A forbidden tool is blocked before `ToolRouter`, `PermissionManager`, and `ApprovalManager` are reached.
+
+## Agent Identity Runtime
+
+`AgentIdentityRuntime` is responsible for loading and validating operational agent identity.
+
+It reads:
+
+- `agents/<agent_id>/SOUL.md`: identity narrative and operational rules
+- `agents/<agent_id>/CONFIG.yaml`: operation, model, permissions, autonomy, structured identity fields
+- `agents/<agent_id>/SKILLS.md`: capabilities
+
+It does not read `MEMORY.md`; memory remains separate.
+
+Structured identity fields:
+
+- `id`
+- `name`
+- `role`
+- `description`
+- `can_delegate`
+- `focus_areas`
+- `preferred_tools`
+- `forbidden_tools`
+- `default_model`
+- `autonomy_profile`
+- `communication_style`
+- `operational_rules`
+
+Base agents:
+
+- Artemis: orchestrator, can delegate, planning/coordination/briefings
+- Researcher: research specialist, cannot delegate, forbids `write_file`
+- Atlas: knowledge librarian, cannot delegate, forbids autonomous messaging and writes
+- Hermes: communication specialist, cannot delegate, forbids future `send_email`
+- Vigil: perception/security specialist, cannot delegate, forbids future `camera_control`
 
 Tool calling flow:
 

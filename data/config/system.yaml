@@ -2,7 +2,7 @@
   "system": {
     "name": "Synapse V2",
     "mode": "local",
-    "default_agent_id": "orchestrator"
+    "default_agent_id": "artemis"
   },
   "models": {
     "default_provider": "ollama",
@@ -18,4 +18,3 @@
     }
   }
 }
-

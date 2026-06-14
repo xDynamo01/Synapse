@@ -7,7 +7,7 @@ Scope: validate whether the current Synapse foundation works as a system. No pro
 Update: after the Chat Runtime and Model Adapter step, the previous "user talks to Artemis" architectural gap is partially closed. A real runtime flow now exists for:
 
 ```text
-User -> ChatRuntime -> ContextLoader -> AgentRuntime -> ModelRouter/ModelAdapter -> response -> events/logs/session
+User -> ChatRuntime -> ContextLoader -> AgentIdentityRuntime -> AgentRuntime -> ModelRouter/ModelAdapter -> response -> events/logs/session
 ```
 
 Remaining non-goals: no UI, no voice, no avatar, no communication integration, no perception runtime, no mobile approval UI, and no autonomous multi-step agent loop.
@@ -28,6 +28,7 @@ The runtime services used were the existing services:
 - `TaskRuntime`
 - `AgentCommunication`
 - `EventBus`
+- `AgentIdentityRuntime`
 - `ContextLoader`
 - `PermissionManager`
 
@@ -77,6 +78,8 @@ context.loaded
 
 Important limitation in the original validation: conversation could only be represented as session history. Current status: `ChatRuntime` now persists sessions under `chats/sessions/` and uses `ContextLoader` for non-command turns. Model responses can now request controlled tool calls through `ToolRouter`; high/critical risk calls create persisted approval requests before execution. Once approved, the runtime can resume and execute the saved tool call without the user resending it. Multi-step planning and streaming remain out of scope.
 
+Agent identity status: agents now load structured operational identity through `AgentIdentityRuntime`. Artemis, Researcher, Atlas, Hermes, and Vigil exist as base agents in `DATA_DIR`, each with distinct roles, focus areas, preferred tools, forbidden tools, communication styles, and operational rules.
+
 ## Step-by-Step Walkthrough
 
 ### 1. User talks to Artemis
@@ -87,6 +90,7 @@ Components:
 
 - `ChatRuntime`
 - `ContextLoader`
+- `AgentIdentityRuntime`
 - `AgentRuntime`
 - `ModelRouter`
 - `MockModelAdapter` for deterministic tests, or configured model adapter
@@ -102,6 +106,7 @@ Files read:
 - `memory/USER.md`
 - `memory/MEMORY.md`
 - `agents/artemis/SOUL.md`
+- `agents/artemis/CONFIG.yaml`
 - `agents/artemis/MEMORY.md`
 - `agents/artemis/SKILLS.md`
 - existing `chats/sessions/<session_id>.json` if the session already exists
@@ -120,6 +125,7 @@ Events generated:
 - `context.loaded`
 - `chat.context_loaded`
 - `agent.run.started`
+- forbidden tool blocking before `ToolRouter`, when applicable
 - `tool.requested`, when applicable
 - `tool.permission_checked`, when applicable
 - `approval.requested`, when risk policy requires approval
@@ -134,6 +140,7 @@ Risks:
 
 - Chat history is persisted as session state, but it must remain separate from memory.
 - Tool calling is controlled, permission-gated, and approval-gated for high/critical risk tools, but only supports simple single-pass execution.
+- Agents now have distinct identities, but identity schema versioning and editing workflows are not implemented.
 - Real model execution depends on configured adapters; deterministic tests use `MockModelAdapter`.
 
 Architectural gap:
@@ -198,7 +205,7 @@ Events generated:
 Risks:
 
 - The runtime can read agent memory, but there is no higher-level memory policy for summarization, conflict resolution, or compaction.
-- Artemis must already exist as an agent directory and config. The default repository currently bootstraps `orchestrator`, not Artemis.
+- Artemis now exists as a base bootstrap agent. Older `DATA_DIR` instances created before the identity runtime may need a bootstrap/migration pass.
 
 Technical validation:
 
@@ -647,19 +654,20 @@ Technical validation:
 
 ## Complete System Flow
 
-1. Runtime starts and loads config, permissions, event bus, agents, memory, tasks, tools, context loader, command runtime, and device registry.
-2. A session with Artemis can currently be represented as transient history, but not persisted as real chat.
-3. Artemis reads global and agent memory through `MemoryStore`.
-4. Artemis creates a persisted task through `TaskRuntime`.
-5. Artemis sends a structured message to Researcher through `AgentCommunication`.
-6. Researcher lists pending messages and marks the request as read.
-7. Researcher sends a structured response to Artemis and marks the request processed.
-8. Artemis lists received messages and marks the response read.
-9. Artemis completes the task through `TaskRuntime`.
-10. `EventBus` records permission decisions, task events, message events, context load, and runtime starts.
-11. `ContextLoader` reconstructs typed context from memory, identity, relevant tasks, and transient history.
-12. Runtime is recreated against the same `DATA_DIR`.
-13. Tasks, messages, inbox projections, memory, and event log remain available.
+1. Runtime starts and loads config, permissions, event bus, identities, agents, memory, tasks, tools, approvals, context loader, command runtime, and device registry.
+2. A chat turn with Artemis is persisted under `chats/sessions/` through `ChatRuntime`.
+3. `ContextLoader` loads global memory, Artemis identity, Artemis memory, skills, relevant tasks, and recent session history.
+4. Artemis reads global and agent memory through runtime-owned services, not direct file access.
+5. Artemis creates a persisted task through `TaskRuntime`.
+6. Artemis sends a structured message to Researcher through `AgentCommunication`.
+7. Researcher lists pending messages and marks the request as read.
+8. Researcher sends a structured response to Artemis and marks the request processed.
+9. Artemis lists received messages and marks the response read.
+10. Artemis completes the task through `TaskRuntime`.
+11. `EventBus` records permission decisions, task events, message events, tool events, approval events, context load, chat events, and runtime starts.
+12. `ContextLoader` reconstructs typed context from memory, identity, relevant tasks, and session history.
+13. Runtime is recreated against the same `DATA_DIR`.
+14. Tasks, messages, inbox projections, memory, identity files, chat sessions, approvals, and event log remain available.
 
 With controlled tool calling, steps 4 and 5 can also be initiated by a model-produced `ToolCallRequest`. For low-risk tools, execution path is:
 
@@ -681,6 +689,7 @@ sequenceDiagram
     participant User
     participant Artemis
     participant Runtime
+    participant Identity as "AgentIdentityRuntime"
     participant Memory as "MemoryStore"
     participant Tasks as "TaskRuntime"
     participant A2A as "AgentCommunication"
@@ -689,7 +698,12 @@ sequenceDiagram
     participant Events as "EventBus"
     participant Files as "DATA_DIR"
 
-    User->>Artemis: "Session history (no Chat Runtime yet)"
+    User->>Runtime: "POST/chat or ChatRuntime.chat"
+    Runtime->>Context: "load context for artemis"
+    Context->>Identity: "load_identity(artemis)"
+    Identity->>Files: "read SOUL.md, CONFIG.yaml, SKILLS.md"
+    Context->>Files: "read memory and recent session history"
+    Runtime->>Artemis: "run with structured identity and context"
     Artemis->>Memory: "read_global(MEMORY.md)"
     Memory->>Events: "permission.decision"
     Memory->>Files: "read memory/MEMORY.md"
@@ -738,8 +752,11 @@ sequenceDiagram
 1A. Approval Gate exists, but has no UI/mobile approval surface.
     Approval can be managed through runtime commands and API endpoints only.
 
-2. No LLM/agent execution loop exists.
-   Artemis and Researcher do not autonomously reason, call tools, or process inboxes.
+1B. Agent Identity Runtime exists, but has no schema version, editor, or migration workflow.
+    SOUL, CONFIG, and SKILLS are loaded separately and exposed to runtime context, but identity records are still file-authored and manually maintained.
+
+2. No autonomous agent worker loop exists.
+   Artemis and Researcher can run through `ChatRuntime`/`AgentRuntime`, but they do not autonomously process inboxes or run scheduled work.
 
 3. Persistent chat/session log exists, but is basic.
    Sessions persist under `data/chats/sessions/`, but there is no schema version, attachment model, retention policy, or search.
@@ -756,14 +773,14 @@ sequenceDiagram
 7. Task and message writes are not atomic.
    Crashes during update can leave inconsistent state.
 
-8. Artemis and Researcher are not bootstrap agents.
-   The current repository ships only `orchestrator`. The validation had to seed Artemis and Researcher in a temporary `DATA_DIR`.
+8. Base agents now exist, but older data directories may not have them.
+   Artemis, Researcher, Atlas, Hermes, and Vigil are seeded for new `DATA_DIR` instances. Existing local directories created earlier need an explicit bootstrap or migration path.
 
 9. Permission source is split.
    Agent config declares permissions, but `PermissionManager` enforces permissions from `config/permissions.yaml`.
 
 10. No persisted state migration/versioning exists.
-    YAML message records and JSON task records have no schema version.
+    YAML message records, identity configs, chat sessions, approvals, and JSON task records have no schema version.
 
 ## Correction Priorities
 
@@ -772,6 +789,7 @@ Priority 1:
 - Add message thread/conversation ids for agent-to-agent exchanges.
 - Make task and message writes atomic.
 - Add schema versioning for chat sessions, tasks, and messages.
+- Add schema versioning and validation tooling for agent identity files.
 - Add multi-step tool observation and final model follow-up.
 - Add approval notifications, remote-safe approval workflows, and session message updates after resume.
 
@@ -785,7 +803,7 @@ Priority 3:
 
 - Connect agent `CONFIG.yaml` permissions to `PermissionManager` or document the single source of truth more strictly.
 - Add a diagnostic application log separate from domain event log.
-- Add bootstrap agent templates for Artemis and Researcher only when product design requires them.
+- Add identity editing and review workflows before allowing non-technical users to modify base agents.
 
 Priority 4:
 

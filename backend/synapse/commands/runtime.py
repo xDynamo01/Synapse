@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from synapse.agents.identity import AgentIdentityRuntime
 from synapse.agents.registry import AgentRegistry
 from synapse.approvals.manager import ApprovalManager
 from synapse.approvals.resume import ApprovalResumeRuntime
@@ -26,6 +27,7 @@ class CommandRuntime:
         self,
         config: ConfigStore,
         agents: AgentRegistry,
+        identities: AgentIdentityRuntime,
         memory: MemoryStore,
         tasks: TaskRuntime,
         tools: ToolRegistry,
@@ -34,6 +36,7 @@ class CommandRuntime:
     ):
         self.config = config
         self.agents = agents
+        self.identities = identities
         self.memory = memory
         self.tasks = tasks
         self.tools = tools
@@ -61,7 +64,9 @@ class CommandRuntime:
         if command == "/help":
             return self._help()
         if command == "/agents":
-            return self._agents()
+            return self._agents(argument_text)
+        if command == "/agent":
+            return self._agent(argument_text)
         if command == "/tasks":
             return self._tasks()
         if command == "/memory":
@@ -87,6 +92,7 @@ class CommandRuntime:
         commands = [
             "/help",
             "/agents",
+            "/agent",
             "/tasks",
             "/memory",
             "/call",
@@ -104,13 +110,42 @@ class CommandRuntime:
             data={"commands": commands},
         )
 
-    def _agents(self) -> CommandResult:
+    def _agents(self, argument_text: str = "") -> CommandResult:
+        if argument_text.strip().lower() == "detail":
+            identities = [
+                agent_identity.to_dict()
+                for agent_identity in [
+                    self.identities.load_identity(agent.id) for agent in self.agents.list_agents()
+                ]
+            ]
+            return CommandResult(
+                command="/agents",
+                status="ok",
+                output=f"{len(identities)} agent identity record(s)",
+                data={"agents": identities},
+            )
         agents = [asdict(agent) for agent in self.agents.list_agents()]
         return CommandResult(
             command="/agents",
             status="ok",
             output=f"{len(agents)} agent(s)",
             data={"agents": agents},
+        )
+
+    def _agent(self, argument_text: str) -> CommandResult:
+        agent_id = argument_text.strip()
+        if not agent_id:
+            return CommandResult(
+                command="/agent",
+                status="error",
+                output="Usage: /agent <id>",
+            )
+        identity = self.identities.load_identity(agent_id.lower())
+        return CommandResult(
+            command="/agent",
+            status="ok",
+            output=f"{identity.name}: {identity.role}",
+            data={"agent": identity.to_dict()},
         )
 
     def _tasks(self) -> CommandResult:

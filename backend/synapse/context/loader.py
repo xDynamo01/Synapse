@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from synapse.agents.identity import AgentIdentityRuntime
 from synapse.agents.registry import AgentRegistry
 from synapse.core.data_dir import DataDir
 from synapse.core.events import EventBus
@@ -41,6 +42,7 @@ class HistoryContext:
 class LoadedContext:
     agent_id: str
     project_id: str | None
+    agent_identity: dict[str, Any]
     memory: list[ContextSection]
     identity: list[ContextSection]
     project: list[ContextSection]
@@ -52,6 +54,7 @@ class LoadedContext:
         return {
             "agent_id": self.agent_id,
             "project_id": self.project_id,
+            "agent_identity": self.agent_identity,
             "memory": [asdict(item) for item in self.memory],
             "identity": [asdict(item) for item in self.identity],
             "project": [asdict(item) for item in self.project],
@@ -68,12 +71,14 @@ class ContextLoader:
         permissions: PermissionManager,
         event_bus: EventBus,
         agents: AgentRegistry,
+        identities: AgentIdentityRuntime,
         tasks: TaskRuntime,
     ):
         self.data_dir = data_dir
         self.permissions = permissions
         self.event_bus = event_bus
         self.agents = agents
+        self.identities = identities
         self.tasks = tasks
 
     def load(
@@ -86,6 +91,7 @@ class ContextLoader:
     ) -> LoadedContext:
         self.permissions.require(context, "filesystem.read")
         self.agents.get(agent_id)
+        agent_identity = self.identities.load_identity(agent_id).to_dict()
 
         order = 0
         memory: list[ContextSection] = []
@@ -154,6 +160,7 @@ class ContextLoader:
         loaded = LoadedContext(
             agent_id=agent_id,
             project_id=project_id,
+            agent_identity=agent_identity,
             memory=memory,
             identity=identity,
             project=project,

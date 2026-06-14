@@ -11,7 +11,37 @@
       "agents.message",
       "tasks.create",
       "tasks.update"
+    ],
+    "agent:artemis": [
+      "filesystem.read",
+      "filesystem.write",
+      "filesystem.list",
+      "filesystem.search",
+      "web.search",
+      "agents.message",
+      "tasks.create",
+      "tasks.update"
+    ],
+    "agent:researcher": [
+      "filesystem.read",
+      "filesystem.list",
+      "web.search",
+      "agents.message"
+    ],
+    "agent:atlas": [
+      "filesystem.read",
+      "filesystem.list",
+      "filesystem.search"
+    ],
+    "agent:hermes": [
+      "filesystem.read",
+      "agents.message",
+      "tasks.create"
+    ],
+    "agent:vigil": [
+      "filesystem.read",
+      "agents.message",
+      "tasks.create"
     ]
   }
 }
-
