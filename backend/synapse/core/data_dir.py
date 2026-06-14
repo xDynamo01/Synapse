@@ -14,6 +14,7 @@ REQUIRED_DIRECTORIES = (
     "tasks/completed",
     "tasks/failed",
     "approvals",
+    "jobs",
     "logs",
     "library",
     "chats",

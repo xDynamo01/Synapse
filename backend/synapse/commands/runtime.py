@@ -11,6 +11,7 @@ from synapse.core.config import ConfigStore
 from synapse.core.permissions import PermissionContext
 from synapse.memory.store import MemoryStore
 from synapse.policies.effective import EffectivePolicyRuntime
+from synapse.scheduler.runtime import SchedulerRuntime
 from synapse.tasks.runtime import TaskRuntime
 from synapse.tools.base import ToolRegistry
 from synapse.workers.agent_worker import AgentWorker
@@ -37,6 +38,7 @@ class CommandRuntime:
         approvals: ApprovalManager,
         approval_resume: ApprovalResumeRuntime,
         worker: AgentWorker,
+        scheduler: SchedulerRuntime,
     ):
         self.config = config
         self.agents = agents
@@ -48,6 +50,7 @@ class CommandRuntime:
         self.approvals = approvals
         self.approval_resume = approval_resume
         self.worker = worker
+        self.scheduler = scheduler
 
     def execute(
         self,
@@ -99,6 +102,14 @@ class CommandRuntime:
             return self._process_inbox(context, argument_text)
         if command == "/worker-status":
             return self._worker_status()
+        if command == "/jobs":
+            return self._jobs(argument_text)
+        if command == "/enqueue-inbox":
+            return self._enqueue_inbox(context, argument_text)
+        if command == "/run-jobs":
+            return self._run_jobs(context)
+        if command == "/cancel-job":
+            return self._cancel_job(context, argument_text)
 
         return CommandResult(command=command, status="error", output=f"Unknown command: {command}")
 
@@ -120,6 +131,10 @@ class CommandRuntime:
             "/inbox",
             "/process-inbox",
             "/worker-status",
+            "/jobs",
+            "/enqueue-inbox",
+            "/run-jobs",
+            "/cancel-job",
         ]
         return CommandResult(
             command="/help",
@@ -381,6 +396,61 @@ class CommandRuntime:
             status="ok",
             output="Worker status loaded.",
             data={"worker": status},
+        )
+
+    def _jobs(self, argument_text: str = "") -> CommandResult:
+        status = argument_text.strip() or None
+        jobs = [asdict(job) for job in self.scheduler.list_jobs(status=status)]
+        return CommandResult(
+            command="/jobs",
+            status="ok",
+            output=f"{len(jobs)} job(s).",
+            data={"jobs": jobs},
+        )
+
+    def _enqueue_inbox(self, context: PermissionContext, argument_text: str) -> CommandResult:
+        agent_id = argument_text.strip().lower()
+        if not agent_id:
+            return CommandResult(
+                command="/enqueue-inbox",
+                status="error",
+                output="Usage: /enqueue-inbox <agent_id>",
+            )
+        job = self.scheduler.enqueue(
+            context,
+            "process_agent_inbox",
+            {"agent_id": agent_id},
+        )
+        return CommandResult(
+            command="/enqueue-inbox",
+            status="ok",
+            output=f"Enqueued inbox processing for {agent_id}.",
+            data={"job": asdict(job)},
+        )
+
+    def _run_jobs(self, context: PermissionContext) -> CommandResult:
+        jobs = [asdict(job) for job in self.scheduler.run_all_pending(context)]
+        return CommandResult(
+            command="/run-jobs",
+            status="ok",
+            output=f"Ran {len(jobs)} job(s).",
+            data={"jobs": jobs},
+        )
+
+    def _cancel_job(self, context: PermissionContext, argument_text: str) -> CommandResult:
+        job_id = argument_text.strip()
+        if not job_id:
+            return CommandResult(
+                command="/cancel-job",
+                status="error",
+                output="Usage: /cancel-job <job_id>",
+            )
+        job = self.scheduler.cancel_job(context, job_id)
+        return CommandResult(
+            command="/cancel-job",
+            status="ok",
+            output=f"Cancelled job {job_id}.",
+            data={"job": asdict(job)},
         )
 
     def _default_agent_id(self) -> str:

@@ -35,6 +35,15 @@ class ChatRequest(BaseModel):
     session_id: str | None = None
 
 
+class JobRequest(BaseModel):
+    type: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+    priority: int = 100
+    max_attempts: int = 3
+    scheduled_for: str | None = None
+    correlation_id: str | None = None
+
+
 def runtime_from(request: Request):
     return request.app.state.runtime
 
@@ -115,6 +124,71 @@ def worker_status(request: Request) -> dict[str, Any]:
 def list_events(request: Request, limit: int = 100) -> list[dict[str, Any]]:
     runtime = runtime_from(request)
     return [asdict(event) for event in runtime.events.tail(limit=limit)]
+
+
+@router.get("/jobs")
+def list_jobs(request: Request, status: str | None = None) -> list[dict[str, Any]]:
+    runtime = runtime_from(request)
+    try:
+        return [asdict(job) for job in runtime.scheduler.list_jobs(status=status)]
+    except Exception as exc:
+        raise api_error(exc) from exc
+
+
+@router.post("/jobs")
+def enqueue_job(
+    payload: JobRequest,
+    request: Request,
+    x_actor_id: str | None = Header(default=None),
+    x_actor_type: str | None = Header(default=None),
+    x_device_id: str | None = Header(default=None),
+) -> dict[str, Any]:
+    runtime = runtime_from(request)
+    context = context_from(runtime, x_actor_id, x_actor_type, x_device_id)
+    try:
+        job = runtime.scheduler.enqueue(
+            context=context,
+            job_type=payload.type,
+            payload=payload.payload,
+            priority=payload.priority,
+            max_attempts=payload.max_attempts,
+            scheduled_for=payload.scheduled_for,
+            correlation_id=payload.correlation_id,
+        )
+        return asdict(job)
+    except Exception as exc:
+        raise api_error(exc) from exc
+
+
+@router.post("/jobs/run")
+def run_jobs(
+    request: Request,
+    x_actor_id: str | None = Header(default=None),
+    x_actor_type: str | None = Header(default=None),
+    x_device_id: str | None = Header(default=None),
+) -> list[dict[str, Any]]:
+    runtime = runtime_from(request)
+    context = context_from(runtime, x_actor_id, x_actor_type, x_device_id)
+    try:
+        return [asdict(job) for job in runtime.scheduler.run_all_pending(context)]
+    except Exception as exc:
+        raise api_error(exc) from exc
+
+
+@router.post("/jobs/{job_id}/cancel")
+def cancel_job(
+    job_id: str,
+    request: Request,
+    x_actor_id: str | None = Header(default=None),
+    x_actor_type: str | None = Header(default=None),
+    x_device_id: str | None = Header(default=None),
+) -> dict[str, Any]:
+    runtime = runtime_from(request)
+    context = context_from(runtime, x_actor_id, x_actor_type, x_device_id)
+    try:
+        return asdict(runtime.scheduler.cancel_job(context, job_id))
+    except Exception as exc:
+        raise api_error(exc) from exc
 
 
 @router.get("/tasks")

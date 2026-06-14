@@ -100,6 +100,9 @@ Status: partial foundation complete.
 - Agent Worker inbox processing.
 - Worker commands `/inbox`, `/process-inbox`, and `/worker-status`.
 - Worker API endpoints for inbox processing and status.
+- Local-first scheduler queue under `jobs/`.
+- Scheduler commands `/jobs`, `/enqueue-inbox`, `/run-jobs`, and `/cancel-job`.
+- Scheduler API endpoints for enqueue, list, run, and cancel.
 
 Pending:
 
@@ -124,10 +127,28 @@ Status: complete foundation.
 Pending:
 
 - Background scheduler/queue.
-- Retry policy.
+- Backoff retry policy.
 - Thread/conversation IDs for request-response chains.
 - Worker concurrency controls.
 - Rich worker observability and correlation IDs.
+
+## 5C. Background Scheduler / Queue
+
+Status: complete foundation.
+
+- Persistent job model under `DATA_DIR/jobs`.
+- Job lifecycle: `pending`, `running`, `completed`, `failed`, `cancelled`.
+- Runtime operations for enqueue, list, get, cancel, run next, run all pending, and retry failed.
+- Initial `process_agent_inbox` job type integrated with `AgentWorker`.
+- Job events for enqueued, started, completed, failed, cancelled, and retried.
+
+Pending:
+
+- Always-on homelab runner process.
+- Backoff and scheduled retry policy.
+- Concurrent worker locks.
+- Job dependency/chaining model.
+- Retention/cleanup policy for old jobs.
 
 ## 5A. Chat Runtime
 

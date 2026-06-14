@@ -21,6 +21,7 @@ Client/UI
       -> Tool Router
       -> Approval Manager
       -> Agent Worker
+      -> Scheduler Runtime
       -> Command Runtime
       -> Device Registry
 ```
@@ -42,6 +43,7 @@ data/
     active/
     completed/
     failed/
+  jobs/
   logs/
   library/
   chats/
@@ -363,7 +365,7 @@ Every message creation or status change emits an event.
 
 ## Agent Worker
 
-`AgentWorker` processes pending agent inbox messages without adding a UI, scheduler, or autonomous background loop.
+`AgentWorker` processes pending agent inbox messages without adding a UI or autonomous always-on loop.
 
 Worker flow:
 
@@ -389,6 +391,47 @@ Worker events:
 - `worker.message_processed`
 - `worker.message_failed`
 
+## Background Scheduler / Queue
+
+`SchedulerRuntime` is the local-first background work boundary. It does not require an external database, broker, or daemon. Jobs are persisted as structured records under:
+
+```text
+data/jobs/<job_id>.yaml
+```
+
+Job statuses:
+
+- `pending`
+- `running`
+- `completed`
+- `failed`
+- `cancelled`
+
+Scheduler operations:
+
+- `enqueue`
+- `list_jobs`
+- `get_job`
+- `cancel_job`
+- `run_next`
+- `run_all_pending`
+- `retry_failed`
+
+Initial job type:
+
+- `process_agent_inbox`: calls `AgentWorker.process_inbox()` with payload `{ "agent_id": "<agent>" }`
+
+Job events:
+
+- `job.enqueued`
+- `job.started`
+- `job.completed`
+- `job.failed`
+- `job.cancelled`
+- `job.retried`
+
+The scheduler is intentionally pull-driven at this stage. Commands, API, tests, or a future homelab daemon can call `run_next` or `run_all_pending`; no always-on loop is started by default.
+
 ## Command Runtime
 
 `CommandRuntime` is a runtime client boundary for text commands. It does not own business logic; it delegates to runtime services and tools.
@@ -411,6 +454,10 @@ Supported commands:
 - `/inbox <agent_id>`
 - `/process-inbox <agent_id>`
 - `/worker-status`
+- `/jobs`
+- `/enqueue-inbox <agent_id>`
+- `/run-jobs`
+- `/cancel-job <job_id>`
 
 This runtime exists before UI so desktop, API, mobile, scheduler, and future voice input can share command behavior.
 
@@ -442,6 +489,13 @@ Worker API endpoints:
 - `GET /agents/{agent_id}/inbox`
 - `POST /agents/{agent_id}/process-inbox`
 - `GET /workers/status`
+
+Scheduler API endpoints:
+
+- `GET /jobs`
+- `POST /jobs`
+- `POST /jobs/run`
+- `POST /jobs/{job_id}/cancel`
 
 ## Tool Contract
 

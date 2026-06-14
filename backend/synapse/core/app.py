@@ -20,6 +20,8 @@ from synapse.core.model_router import ModelRouter
 from synapse.core.permissions import PermissionContext, PermissionManager
 from synapse.memory.store import MemoryStore
 from synapse.policies.effective import EffectivePolicyRuntime
+from synapse.scheduler.queue import JobQueue
+from synapse.scheduler.runtime import SchedulerRuntime
 from synapse.tasks.runtime import TaskRuntime
 from synapse.tools.base import ToolRegistry
 from synapse.tools.builtin import register_builtin_tools
@@ -50,6 +52,7 @@ class RuntimeContainer:
     tools: ToolRegistry
     tool_router: ToolRouter
     worker: AgentWorker
+    scheduler: SchedulerRuntime
     commands: CommandRuntime
     chat: ChatRuntime
 
@@ -90,6 +93,8 @@ def create_runtime(settings: Settings | None = None) -> RuntimeContainer:
     tool_router = ToolRouter(tools, permissions, approvals, events)
     agent_runtime = AgentRuntime(agents, policies, models, tool_router, events)
     worker = AgentWorker(communication, context_loader, agent_runtime, policies, events)
+    job_queue = JobQueue(data_dir)
+    scheduler = SchedulerRuntime(job_queue, worker, events)
     approval_resume = ApprovalResumeRuntime(approvals, tool_router, policies)
     commands = CommandRuntime(
         config,
@@ -102,6 +107,7 @@ def create_runtime(settings: Settings | None = None) -> RuntimeContainer:
         approvals,
         approval_resume,
         worker,
+        scheduler,
     )
     chat = ChatRuntime(data_dir, events, context_loader, agent_runtime, commands)
 
@@ -129,6 +135,7 @@ def create_runtime(settings: Settings | None = None) -> RuntimeContainer:
         tools=tools,
         tool_router=tool_router,
         worker=worker,
+        scheduler=scheduler,
         commands=commands,
         chat=chat,
     )
