@@ -1,0 +1,13 @@
+services:
+  synapse-api:
+    build: .
+    ports:
+      - "8717:8717"
+    environment:
+      SYNAPSE_DATA_DIR: /data
+      SYNAPSE_HOST: 0.0.0.0
+      SYNAPSE_PORT: 8717
+    volumes:
+      - ./data:/data
+    restart: unless-stopped
+

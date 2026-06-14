@@ -1,0 +1,21 @@
+{
+  "system": {
+    "name": "Synapse V2",
+    "mode": "local",
+    "default_agent_id": "orchestrator"
+  },
+  "models": {
+    "default_provider": "ollama",
+    "providers": {
+      "ollama": {
+        "base_url": "http://127.0.0.1:11434",
+        "model": "llama3.1"
+      },
+      "openai_compatible": {
+        "base_url": null,
+        "model": null
+      }
+    }
+  }
+}
+

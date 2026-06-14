@@ -1,0 +1,19 @@
+{
+  "id": "orchestrator",
+  "name": "Orchestrator",
+  "role": "Coordinates Synapse runtime activity.",
+  "preferred_model": "ollama/llama3.1",
+  "autonomy": "manual",
+  "skills": ["coordinate_tasks", "route_messages", "use_core_tools"],
+  "permissions": [
+    "filesystem.read",
+    "filesystem.write",
+    "filesystem.list",
+    "filesystem.search",
+    "web.search",
+    "agents.message",
+    "tasks.create",
+    "tasks.update"
+  ]
+}
+

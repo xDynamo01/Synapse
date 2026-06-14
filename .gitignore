@@ -1,0 +1,64 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+secrets.*
+
+# Node, React, and future Tauri desktop app
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.npm/
+.pnpm-store/
+frontend/dist/
+frontend/build/
+frontend/.vite/
+src-tauri/target/
+target/
+
+# Local IDE/editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Runtime-local DATA_DIR state. Keep bootstrap templates, ignore generated/local state.
+data/logs/**
+data/chats/**
+data/library/**
+data/tasks/active/*.json
+data/tasks/completed/*.json
+data/tasks/failed/*.json
+data/agents/*/messages/**
+data/devices/trusted/*.yaml
+data/devices/untrusted/*.yaml
+data/devices/revoked/*.yaml
+data/projects/**
+data/skills/**

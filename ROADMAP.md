@@ -1,0 +1,159 @@
+# Synapse V2 Roadmap
+
+This roadmap tracks technical phases only. Product UI, voice, avatar, perception, and communication features should not start until their runtime boundaries are ready.
+
+## 1. Core Foundation
+
+Status: complete.
+
+- `DATA_DIR` bootstrap.
+- Core configuration.
+- Event bus.
+- Permission manager.
+- Agent registry.
+- Model router placeholder.
+- Tool registry.
+- Task runtime.
+- FastAPI adapter.
+
+## 2. Foundation Hardening
+
+Status: complete.
+
+- Structured `ContextLoader`.
+- Structured agent-to-agent messages.
+- Human-readable `INBOX.md` projection.
+- Initial device registry.
+- Tests for permission, persistence, context loading, and command behavior.
+
+## 3. Runtime Commands
+
+Status: complete foundation, integrated with Chat Runtime.
+
+- Slash command parser.
+- Runtime-backed `/call`, `/task`, `/remember`, `/search`.
+- No duplicated command business logic in UI.
+
+## 4. Model Integration
+
+Status: partial foundation complete.
+
+- Mock provider adapter for deterministic tests.
+- Ollama provider adapter with simple `/api/chat` support.
+- OpenAI-compatible adapter boundary prepared.
+- Model route selection per agent.
+- Streaming response contract: pending.
+- Model errors and retry policy: pending.
+
+## 5. Tool Expansion
+
+Status: pending.
+
+- Resource-scoped filesystem permissions.
+- OpenAPI/MCP bridge adapters.
+- Tool execution audit correlation.
+- Approval-required tool calls.
+- Sandbox strategy for risky tools.
+
+## 5A. Chat Runtime
+
+Status: complete foundation.
+
+- Runtime-owned user-to-agent turn flow.
+- ContextLoader integration.
+- AgentRuntime integration.
+- Session persistence under `chats/sessions`.
+- Slash command delegation.
+- Chat events.
+
+Pending:
+
+- Chat session API hardening.
+- Streaming.
+- Message attachments.
+- Tool calling loop.
+
+## 6. Communication Runtime
+
+Status: pending.
+
+- Email and chat integration boundary.
+- Draft vs send permission separation.
+- Message ingestion events.
+- Agent review workflow.
+
+## 7. Presence Runtime
+
+Status: pending.
+
+- Durable agent presence state.
+- Activity transitions.
+- Mission Control event feed contract.
+- Background runtime status.
+
+## 8. Voice Runtime
+
+Status: pending.
+
+- STT/TTS abstraction.
+- Wake word boundary.
+- Audio routing.
+- Voice input mapped to runtime commands.
+
+## 9. Avatar Runtime
+
+Status: pending.
+
+- Avatar state projection from agent events.
+- Expression and animation state.
+- Lip sync boundary.
+- No agent logic inside avatar layer.
+
+## 10. Perception Runtime
+
+Status: pending.
+
+- Camera/sensor registry.
+- Hardware access through runtime only.
+- Perception events for agents.
+- Device/resource permission checks.
+
+## 11. API Hardening
+
+Status: pending.
+
+- Local auth/session layer.
+- Device-aware authorization.
+- Remote-safe headers and audit trail.
+- Rate limits and request correlation IDs.
+- Health checks.
+
+## 12. Desktop UI
+
+Status: pending.
+
+- Runtime client only.
+- Chat/command surface.
+- Agents, Brain, Mission Control, Library, Models.
+- Persistent docking/split layouts.
+
+## 13. Mobile Companion
+
+Status: pending.
+
+- Notifications.
+- Approval flows.
+- Agent chat.
+- Briefings.
+- Task and event monitoring.
+
+## 14. Homelab Mode
+
+Status: pending.
+
+- Background worker.
+- Scheduler.
+- Queue.
+- Watchers.
+- Backup/restore.
+- VPN/tunnel deployment guidance.

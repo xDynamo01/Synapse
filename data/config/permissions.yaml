@@ -1,0 +1,17 @@
+{
+  "subjects": {
+    "local_owner": ["*"],
+    "user:local_owner": ["*"],
+    "agent:orchestrator": [
+      "filesystem.read",
+      "filesystem.write",
+      "filesystem.list",
+      "filesystem.search",
+      "web.search",
+      "agents.message",
+      "tasks.create",
+      "tasks.update"
+    ]
+  }
+}
+
