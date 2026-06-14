@@ -18,6 +18,8 @@ from synapse.core.data_dir import DataDir
 from synapse.core.events import EventBus
 from synapse.core.model_router import ModelRouter
 from synapse.core.permissions import PermissionContext, PermissionManager
+from synapse.daemon.runner import DaemonRunner
+from synapse.daemon.status import DaemonStatusStore
 from synapse.memory.store import MemoryStore
 from synapse.policies.effective import EffectivePolicyRuntime
 from synapse.scheduler.queue import JobQueue
@@ -53,6 +55,7 @@ class RuntimeContainer:
     tool_router: ToolRouter
     worker: AgentWorker
     scheduler: SchedulerRuntime
+    daemon: DaemonRunner
     commands: CommandRuntime
     chat: ChatRuntime
 
@@ -95,6 +98,7 @@ def create_runtime(settings: Settings | None = None) -> RuntimeContainer:
     worker = AgentWorker(communication, context_loader, agent_runtime, policies, events)
     job_queue = JobQueue(data_dir)
     scheduler = SchedulerRuntime(job_queue, worker, events)
+    daemon = DaemonRunner(scheduler, DaemonStatusStore(data_dir), events)
     approval_resume = ApprovalResumeRuntime(approvals, tool_router, policies)
     commands = CommandRuntime(
         config,
@@ -108,6 +112,7 @@ def create_runtime(settings: Settings | None = None) -> RuntimeContainer:
         approval_resume,
         worker,
         scheduler,
+        daemon,
     )
     chat = ChatRuntime(data_dir, events, context_loader, agent_runtime, commands)
 
@@ -136,6 +141,7 @@ def create_runtime(settings: Settings | None = None) -> RuntimeContainer:
         tool_router=tool_router,
         worker=worker,
         scheduler=scheduler,
+        daemon=daemon,
         commands=commands,
         chat=chat,
     )

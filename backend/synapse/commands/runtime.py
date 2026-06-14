@@ -9,6 +9,7 @@ from synapse.approvals.manager import ApprovalManager
 from synapse.approvals.resume import ApprovalResumeRuntime
 from synapse.core.config import ConfigStore
 from synapse.core.permissions import PermissionContext
+from synapse.daemon.runner import DaemonRunner
 from synapse.memory.store import MemoryStore
 from synapse.policies.effective import EffectivePolicyRuntime
 from synapse.scheduler.runtime import SchedulerRuntime
@@ -39,6 +40,7 @@ class CommandRuntime:
         approval_resume: ApprovalResumeRuntime,
         worker: AgentWorker,
         scheduler: SchedulerRuntime,
+        daemon: DaemonRunner,
     ):
         self.config = config
         self.agents = agents
@@ -51,6 +53,7 @@ class CommandRuntime:
         self.approval_resume = approval_resume
         self.worker = worker
         self.scheduler = scheduler
+        self.daemon = daemon
 
     def execute(
         self,
@@ -110,6 +113,10 @@ class CommandRuntime:
             return self._run_jobs(context)
         if command == "/cancel-job":
             return self._cancel_job(context, argument_text)
+        if command == "/daemon-status":
+            return self._daemon_status()
+        if command == "/daemon-run-once":
+            return self._daemon_run_once(context)
 
         return CommandResult(command=command, status="error", output=f"Unknown command: {command}")
 
@@ -135,6 +142,8 @@ class CommandRuntime:
             "/enqueue-inbox",
             "/run-jobs",
             "/cancel-job",
+            "/daemon-status",
+            "/daemon-run-once",
         ]
         return CommandResult(
             command="/help",
@@ -451,6 +460,24 @@ class CommandRuntime:
             status="ok",
             output=f"Cancelled job {job_id}.",
             data={"job": asdict(job)},
+        )
+
+    def _daemon_status(self) -> CommandResult:
+        status = asdict(self.daemon.status())
+        return CommandResult(
+            command="/daemon-status",
+            status="ok",
+            output="Daemon status loaded.",
+            data={"daemon": status},
+        )
+
+    def _daemon_run_once(self, context: PermissionContext) -> CommandResult:
+        status = self.daemon.run_once(context)
+        return CommandResult(
+            command="/daemon-run-once",
+            status="ok",
+            output=f"Daemon tick completed with {len(status.last_jobs_run)} job(s).",
+            data={"daemon": asdict(status)},
         )
 
     def _default_agent_id(self) -> str:

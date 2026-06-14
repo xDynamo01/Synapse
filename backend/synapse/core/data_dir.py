@@ -15,6 +15,7 @@ REQUIRED_DIRECTORIES = (
     "tasks/failed",
     "approvals",
     "jobs",
+    "daemon",
     "logs",
     "library",
     "chats",

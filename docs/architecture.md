@@ -22,6 +22,7 @@ Client/UI
       -> Approval Manager
       -> Agent Worker
       -> Scheduler Runtime
+      -> Daemon Runner
       -> Command Runtime
       -> Device Registry
 ```
@@ -44,6 +45,8 @@ data/
     completed/
     failed/
   jobs/
+  daemon/
+    status.yaml
   logs/
   library/
   chats/
@@ -432,6 +435,35 @@ Job events:
 
 The scheduler is intentionally pull-driven at this stage. Commands, API, tests, or a future homelab daemon can call `run_next` or `run_all_pending`; no always-on loop is started by default.
 
+## Synapse Daemon / Background Runner
+
+`DaemonRunner` is the first local background cycle runner. It provides deterministic single-cycle execution through `run_once()` and a simple `start_loop(interval_seconds)` boundary for future CLI/service use.
+
+Daemon status is persisted under:
+
+```text
+data/daemon/status.yaml
+```
+
+Status fields:
+
+- `running`
+- `last_tick_at`
+- `total_ticks`
+- `last_error`
+- `last_jobs_run`
+- `started_at`
+- `stopped_at`
+
+Each daemon cycle:
+
+1. emits `daemon.tick`
+2. calls `SchedulerRuntime.run_all_pending()`
+3. records jobs executed in persisted status
+4. catches runtime errors and emits `daemon.error`
+
+The runtime exposes `run_once()` through commands and API. It does not start a persistent process automatically.
+
 ## Command Runtime
 
 `CommandRuntime` is a runtime client boundary for text commands. It does not own business logic; it delegates to runtime services and tools.
@@ -458,6 +490,8 @@ Supported commands:
 - `/enqueue-inbox <agent_id>`
 - `/run-jobs`
 - `/cancel-job <job_id>`
+- `/daemon-status`
+- `/daemon-run-once`
 
 This runtime exists before UI so desktop, API, mobile, scheduler, and future voice input can share command behavior.
 
@@ -496,6 +530,11 @@ Scheduler API endpoints:
 - `POST /jobs`
 - `POST /jobs/run`
 - `POST /jobs/{job_id}/cancel`
+
+Daemon API endpoints:
+
+- `GET /daemon/status`
+- `POST /daemon/run-once`
 
 ## Tool Contract
 

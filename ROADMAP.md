@@ -103,6 +103,9 @@ Status: partial foundation complete.
 - Local-first scheduler queue under `jobs/`.
 - Scheduler commands `/jobs`, `/enqueue-inbox`, `/run-jobs`, and `/cancel-job`.
 - Scheduler API endpoints for enqueue, list, run, and cancel.
+- Initial Synapse Daemon / Background Runner.
+- Daemon commands `/daemon-status` and `/daemon-run-once`.
+- Daemon API endpoints for status and deterministic single-cycle execution.
 
 Pending:
 
@@ -149,6 +152,23 @@ Pending:
 - Concurrent worker locks.
 - Job dependency/chaining model.
 - Retention/cleanup policy for old jobs.
+
+## 5D. Synapse Daemon / Background Runner
+
+Status: complete foundation.
+
+- `DaemonRunner` with deterministic `run_once()`.
+- Basic `start_loop(interval_seconds)` boundary for future CLI/service use.
+- Persisted daemon status under `daemon/status.yaml`.
+- Daemon events for tick and controlled errors.
+- Commands and API for status and run-once.
+
+Pending:
+
+- Production CLI/service wrapper.
+- Process supervision/systemd/Windows service integration.
+- Graceful shutdown across process boundaries.
+- Locking when multiple daemon instances target the same `DATA_DIR`.
 
 ## 5A. Chat Runtime
 
@@ -244,11 +264,11 @@ Status: pending.
 
 ## 14. Homelab Mode
 
-Status: pending.
+Status: foundation in progress.
 
-- Background worker.
-- Scheduler.
-- Queue.
+- Background worker: foundation complete.
+- Scheduler/queue: foundation complete.
+- Daemon runner: foundation complete.
 - Watchers.
 - Backup/restore.
 - VPN/tunnel deployment guidance.

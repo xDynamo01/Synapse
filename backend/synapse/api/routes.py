@@ -120,6 +120,27 @@ def worker_status(request: Request) -> dict[str, Any]:
     return asdict(runtime.worker.status())
 
 
+@router.get("/daemon/status")
+def daemon_status(request: Request) -> dict[str, Any]:
+    runtime = runtime_from(request)
+    return asdict(runtime.daemon.status())
+
+
+@router.post("/daemon/run-once")
+def daemon_run_once(
+    request: Request,
+    x_actor_id: str | None = Header(default=None),
+    x_actor_type: str | None = Header(default=None),
+    x_device_id: str | None = Header(default=None),
+) -> dict[str, Any]:
+    runtime = runtime_from(request)
+    context = context_from(runtime, x_actor_id, x_actor_type, x_device_id)
+    try:
+        return asdict(runtime.daemon.run_once(context))
+    except Exception as exc:
+        raise api_error(exc) from exc
+
+
 @router.get("/events")
 def list_events(request: Request, limit: int = 100) -> list[dict[str, Any]]:
     runtime = runtime_from(request)
