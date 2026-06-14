@@ -8,6 +8,7 @@ from synapse.agents.registry import AgentRegistry
 from synapse.core.data_dir import DataDir
 from synapse.core.events import EventBus
 from synapse.core.permissions import PermissionContext, PermissionManager
+from synapse.policies.effective import EffectivePolicyRuntime
 from synapse.tasks.runtime import Task, TaskRuntime
 
 
@@ -43,6 +44,7 @@ class LoadedContext:
     agent_id: str
     project_id: str | None
     agent_identity: dict[str, Any]
+    agent_policy: dict[str, Any]
     memory: list[ContextSection]
     identity: list[ContextSection]
     project: list[ContextSection]
@@ -55,6 +57,7 @@ class LoadedContext:
             "agent_id": self.agent_id,
             "project_id": self.project_id,
             "agent_identity": self.agent_identity,
+            "agent_policy": self.agent_policy,
             "memory": [asdict(item) for item in self.memory],
             "identity": [asdict(item) for item in self.identity],
             "project": [asdict(item) for item in self.project],
@@ -72,6 +75,7 @@ class ContextLoader:
         event_bus: EventBus,
         agents: AgentRegistry,
         identities: AgentIdentityRuntime,
+        policies: EffectivePolicyRuntime,
         tasks: TaskRuntime,
     ):
         self.data_dir = data_dir
@@ -79,6 +83,7 @@ class ContextLoader:
         self.event_bus = event_bus
         self.agents = agents
         self.identities = identities
+        self.policies = policies
         self.tasks = tasks
 
     def load(
@@ -92,6 +97,7 @@ class ContextLoader:
         self.permissions.require(context, "filesystem.read")
         self.agents.get(agent_id)
         agent_identity = self.identities.load_identity(agent_id).to_dict()
+        agent_policy = self.policies.resolve(context, agent_id).to_dict()
 
         order = 0
         memory: list[ContextSection] = []
@@ -161,6 +167,7 @@ class ContextLoader:
             agent_id=agent_id,
             project_id=project_id,
             agent_identity=agent_identity,
+            agent_policy=agent_policy,
             memory=memory,
             identity=identity,
             project=project,

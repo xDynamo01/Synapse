@@ -3,14 +3,13 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from synapse.agents.identity import AgentIdentityRuntime
 from synapse.agents.registry import AgentRegistry
 from synapse.context.loader import LoadedContext
 from synapse.core.events import EventBus
 from synapse.core.model_router import ModelRouter
 from synapse.core.permissions import PermissionContext
 from synapse.models.types import ModelResponse
-from synapse.tools.base import ToolRegistry
+from synapse.policies.effective import EffectivePolicyRuntime
 from synapse.tools.calls import ToolCallPlan, ToolCallResult
 from synapse.tools.router import ToolRouter
 
@@ -29,16 +28,14 @@ class AgentRuntime:
     def __init__(
         self,
         agents: AgentRegistry,
-        identities: AgentIdentityRuntime,
+        policies: EffectivePolicyRuntime,
         models: ModelRouter,
-        tools: ToolRegistry,
         tool_router: ToolRouter,
         event_bus: EventBus,
     ):
         self.agents = agents
-        self.identities = identities
+        self.policies = policies
         self.models = models
-        self.tools = tools
         self.tool_router = tool_router
         self.event_bus = event_bus
 
@@ -53,8 +50,8 @@ class AgentRuntime:
         original_message_id: str | None = None,
     ) -> AgentRunResult:
         agent = self.agents.get(agent_id)
-        identity = self.identities.load_identity(agent_id)
-        allowed_tools = self._allowed_tools(agent.permissions, identity.forbidden_tools)
+        policy = self.policies.resolve(context, agent_id)
+        allowed_tools = policy.allowed_tool_specs
         self.event_bus.emit(
             "agent.run.started",
             context.actor_id,
@@ -62,8 +59,7 @@ class AgentRuntime:
                 "agent_id": agent_id,
                 "tool_calling": "supported",
                 "allowed_tools": [tool["name"] for tool in allowed_tools],
-                "role": identity.role,
-                "can_delegate": identity.can_delegate,
+                "policy": policy.to_dict(),
             },
         )
         model_response = self.models.generate(
@@ -84,15 +80,16 @@ class AgentRuntime:
             plan = ToolCallPlan(calls=model_response.tool_calls)
             blocked_results = []
             allowed_calls = []
-            forbidden = set(identity.forbidden_tools)
+            forbidden = set(policy.forbidden_tools)
             for call in plan.calls:
                 if call.name in forbidden:
+                    error = f"Tool is forbidden by agent policy for {agent.id}: {call.name}"
                     blocked_results.append(
                         ToolCallResult(
                             request=call,
                             success=False,
                             status="blocked",
-                            error=f"Tool is forbidden for agent {agent.id}: {call.name}",
+                            error=error,
                         )
                     )
                     self.event_bus.emit(
@@ -102,8 +99,8 @@ class AgentRuntime:
                             "tool_call_id": call.id,
                             "tool": call.name,
                             "success": False,
-                            "error": f"Tool is forbidden for agent {agent.id}: {call.name}",
-                            "error_type": "ForbiddenTool",
+                            "error": error,
+                            "error_type": "AgentEffectivePolicy",
                             "blocked_before_router": True,
                         },
                     )
@@ -117,6 +114,7 @@ class AgentRuntime:
                 session_id=session_id,
                 project_id=project_id,
                 original_message_id=original_message_id,
+                policy=policy,
             )
             tool_results = [*blocked_results, *tool_results]
             final_response = self._response_after_tools(model_response, tool_results)
@@ -138,22 +136,6 @@ class AgentRuntime:
             },
         )
         return result
-
-    def _allowed_tools(
-        self,
-        permissions: list[str],
-        forbidden_tools: list[str],
-    ) -> list[dict[str, Any]]:
-        permission_set = set(permissions)
-        forbidden = set(forbidden_tools)
-        specs = self.tools.list_specs()
-        allowed = [
-            asdict(spec)
-            for spec in specs
-            if ("*" in permission_set or spec.permission in permission_set)
-            and spec.name not in forbidden
-        ]
-        return allowed
 
     @staticmethod
     def _model_metadata(response: ModelResponse) -> dict[str, Any]:

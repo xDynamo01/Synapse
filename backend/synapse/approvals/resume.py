@@ -2,14 +2,21 @@ from __future__ import annotations
 
 from synapse.approvals.manager import ApprovalManager
 from synapse.core.permissions import PermissionContext
+from synapse.policies.effective import EffectivePolicyRuntime
 from synapse.tools.calls import ToolCallRequest, ToolCallResult
 from synapse.tools.router import ToolRouter
 
 
 class ApprovalResumeRuntime:
-    def __init__(self, approvals: ApprovalManager, tool_router: ToolRouter):
+    def __init__(
+        self,
+        approvals: ApprovalManager,
+        tool_router: ToolRouter,
+        policies: EffectivePolicyRuntime,
+    ):
         self.approvals = approvals
         self.tool_router = tool_router
+        self.policies = policies
 
     def approve_and_resume(
         self,
@@ -42,10 +49,12 @@ class ApprovalResumeRuntime:
             device_id=context.device_id,
             autonomy=context.autonomy,
         )
+        policy = self.policies.resolve(context, approval.agent_id)
         return self.tool_router.execute_call(
             tool_context,
             call,
             session_id=approval.session_id,
             original_message_id=approval.original_message_id,
             project_id=approval.project_id,
+            policy=policy,
         )

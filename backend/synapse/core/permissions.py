@@ -33,26 +33,62 @@ class PermissionManager:
     def __init__(self, data_dir: Path, event_bus: EventBus):
         self.data_dir = data_dir
         self.event_bus = event_bus
-        self.subjects = self._load_subjects()
+        self.subjects, self.denies = self._load_permissions()
 
-    def _load_subjects(self) -> dict[str, set[str]]:
+    def _load_permissions(self) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
         path = self.data_dir / "config" / "permissions.yaml"
         raw = load_structured_file(path)
         subjects = raw.get("subjects", {})
+        denies = raw.get("denies", {})
         if not isinstance(subjects, dict):
-            return {}
+            subjects = {}
+        if not isinstance(denies, dict):
+            denies = {}
 
         normalized: dict[str, set[str]] = {}
         for subject, permissions in subjects.items():
             if isinstance(permissions, list):
                 normalized[str(subject)] = {str(item) for item in permissions}
-        return normalized
+            elif isinstance(permissions, dict):
+                normalized[str(subject)] = {
+                    str(item) for item in permissions.get("allow", [])
+                }
 
-    def is_allowed(self, context: PermissionContext, permission: str) -> PermissionDecision:
+        normalized_denies: dict[str, set[str]] = {}
+        for subject, permissions in denies.items():
+            if isinstance(permissions, list):
+                normalized_denies[str(subject)] = {str(item) for item in permissions}
+        for subject, permissions in subjects.items():
+            if isinstance(permissions, dict):
+                normalized_denies[str(subject)] = {
+                    str(item) for item in permissions.get("deny", [])
+                }
+        return normalized, normalized_denies
+
+    def permissions_for(self, context: PermissionContext) -> set[str]:
         permissions: set[str] = set()
         for key in context.subject_keys:
             permissions.update(self.subjects.get(key, set()))
+        return permissions
 
+    def denied_permissions_for(self, context: PermissionContext) -> set[str]:
+        permissions: set[str] = set()
+        for key in context.subject_keys:
+            permissions.update(self.denies.get(key, set()))
+        return permissions
+
+    def is_allowed(self, context: PermissionContext, permission: str) -> PermissionDecision:
+        denied_permissions = self.denied_permissions_for(context)
+        if "*" in denied_permissions or permission in denied_permissions:
+            return PermissionDecision(
+                allowed=False,
+                permission=permission,
+                actor_id=context.actor_id,
+                actor_type=context.actor_type,
+                reason="explicit_deny",
+            )
+
+        permissions = self.permissions_for(context)
         if "*" in permissions or permission in permissions:
             return PermissionDecision(
                 allowed=True,
@@ -87,4 +123,3 @@ class PermissionManager:
                 f"{context.actor_type}:{context.actor_id} lacks permission {permission}"
             )
         return decision
-

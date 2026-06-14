@@ -7,7 +7,7 @@ Scope: validate whether the current Synapse foundation works as a system. No pro
 Update: after the Chat Runtime and Model Adapter step, the previous "user talks to Artemis" architectural gap is partially closed. A real runtime flow now exists for:
 
 ```text
-User -> ChatRuntime -> ContextLoader -> AgentIdentityRuntime -> AgentRuntime -> ModelRouter/ModelAdapter -> response -> events/logs/session
+User -> ChatRuntime -> ContextLoader -> AgentIdentityRuntime -> EffectivePolicyRuntime -> AgentRuntime -> ModelRouter/ModelAdapter -> response -> events/logs/session
 ```
 
 Remaining non-goals: no UI, no voice, no avatar, no communication integration, no perception runtime, no mobile approval UI, and no autonomous multi-step agent loop.
@@ -29,6 +29,7 @@ The runtime services used were the existing services:
 - `AgentCommunication`
 - `EventBus`
 - `AgentIdentityRuntime`
+- `EffectivePolicyRuntime`
 - `ContextLoader`
 - `PermissionManager`
 
@@ -80,6 +81,8 @@ Important limitation in the original validation: conversation could only be repr
 
 Agent identity status: agents now load structured operational identity through `AgentIdentityRuntime`. Artemis, Researcher, Atlas, Hermes, and Vigil exist as base agents in `DATA_DIR`, each with distinct roles, focus areas, preferred tools, forbidden tools, communication styles, and operational rules.
 
+Effective policy status: `EffectivePolicyRuntime` now resolves the single policy object used by `AgentRuntime`, `ToolRouter`, `ApprovalResumeRuntime`, `ContextLoader`, and `/policy`. It combines global permissions, agent `CONFIG.yaml`, `AgentIdentity`, approval policy, and optional device constraints.
+
 ## Step-by-Step Walkthrough
 
 ### 1. User talks to Artemis
@@ -91,6 +94,7 @@ Components:
 - `ChatRuntime`
 - `ContextLoader`
 - `AgentIdentityRuntime`
+- `EffectivePolicyRuntime`
 - `AgentRuntime`
 - `ModelRouter`
 - `MockModelAdapter` for deterministic tests, or configured model adapter
@@ -109,6 +113,9 @@ Files read:
 - `agents/artemis/CONFIG.yaml`
 - `agents/artemis/MEMORY.md`
 - `agents/artemis/SKILLS.md`
+- `config/permissions.yaml`
+- `config/approval_policy.yaml`
+- optional `devices/<state>/<device_id>.yaml`
 - existing `chats/sessions/<session_id>.json` if the session already exists
 
 Files written:
@@ -141,6 +148,7 @@ Risks:
 - Chat history is persisted as session state, but it must remain separate from memory.
 - Tool calling is controlled, permission-gated, and approval-gated for high/critical risk tools, but only supports simple single-pass execution.
 - Agents now have distinct identities, but identity schema versioning and editing workflows are not implemented.
+- Agent policy is centralized, but resource-scoped filesystem and per-project policy rules are still missing.
 - Real model execution depends on configured adapters; deterministic tests use `MockModelAdapter`.
 
 Architectural gap:
@@ -517,6 +525,7 @@ Components:
 
 - `ContextLoader`
 - `AgentRegistry`
+- `EffectivePolicyRuntime`
 - `TaskRuntime`
 - `PermissionManager`
 - `EventBus`
@@ -528,8 +537,11 @@ Files read:
 - `memory/USER.md`
 - `memory/MEMORY.md`
 - `agents/artemis/SOUL.md`
+- `agents/artemis/CONFIG.yaml`
 - `agents/artemis/MEMORY.md`
 - `agents/artemis/SKILLS.md`
+- `config/permissions.yaml`
+- `config/approval_policy.yaml`
 - `tasks/completed/<task_id>.json`
 
 Files written:
@@ -555,9 +567,11 @@ history item
 history item
 ```
 
+The structured context also includes `agent_policy`, which is resolved outside the ordered memory/history sections.
+
 Risks:
 
-- Chat history is correctly separate from memory, but there is no chat session persistence yet.
+- Chat history is correctly separate from memory and persisted as session history, not memory.
 - Relevant tasks are detected through free-form metadata.
 - Project context was not part of this specific walkthrough because no project was created.
 
@@ -654,9 +668,9 @@ Technical validation:
 
 ## Complete System Flow
 
-1. Runtime starts and loads config, permissions, event bus, identities, agents, memory, tasks, tools, approvals, context loader, command runtime, and device registry.
+1. Runtime starts and loads config, permissions, event bus, identities, agents, memory, tasks, tools, approvals, effective policy runtime, context loader, command runtime, and device registry.
 2. A chat turn with Artemis is persisted under `chats/sessions/` through `ChatRuntime`.
-3. `ContextLoader` loads global memory, Artemis identity, Artemis memory, skills, relevant tasks, and recent session history.
+3. `ContextLoader` loads global memory, Artemis identity, Artemis effective policy, Artemis memory, skills, relevant tasks, and recent session history.
 4. Artemis reads global and agent memory through runtime-owned services, not direct file access.
 5. Artemis creates a persisted task through `TaskRuntime`.
 6. Artemis sends a structured message to Researcher through `AgentCommunication`.
@@ -665,21 +679,21 @@ Technical validation:
 9. Artemis lists received messages and marks the response read.
 10. Artemis completes the task through `TaskRuntime`.
 11. `EventBus` records permission decisions, task events, message events, tool events, approval events, context load, chat events, and runtime starts.
-12. `ContextLoader` reconstructs typed context from memory, identity, relevant tasks, and session history.
+12. `ContextLoader` reconstructs typed context from memory, identity, effective policy, relevant tasks, and session history.
 13. Runtime is recreated against the same `DATA_DIR`.
 14. Tasks, messages, inbox projections, memory, identity files, chat sessions, approvals, and event log remain available.
 
 With controlled tool calling, steps 4 and 5 can also be initiated by a model-produced `ToolCallRequest`. For low-risk tools, execution path is:
 
 ```text
-AgentRuntime -> ToolRouter -> PermissionManager -> ToolRegistry -> Tool implementation
+AgentRuntime -> EffectivePolicyRuntime -> ToolRouter -> PermissionManager -> ToolRegistry -> Tool implementation
 ```
 
 For high/critical tools, approval and resume path is:
 
 ```text
-AgentRuntime -> ToolRouter -> PermissionManager -> ApprovalManager(pending)
-/approve -> ApprovalResumeRuntime -> ToolRouter -> PermissionManager -> ToolRegistry -> ApprovalManager(resumed)
+AgentRuntime -> EffectivePolicyRuntime -> ToolRouter -> PermissionManager -> ApprovalManager(pending)
+/approve -> ApprovalResumeRuntime -> EffectivePolicyRuntime -> ToolRouter -> PermissionManager -> ToolRegistry -> ApprovalManager(resumed)
 ```
 
 ## Execution Diagram
@@ -690,6 +704,7 @@ sequenceDiagram
     participant Artemis
     participant Runtime
     participant Identity as "AgentIdentityRuntime"
+    participant Policy as "EffectivePolicyRuntime"
     participant Memory as "MemoryStore"
     participant Tasks as "TaskRuntime"
     participant A2A as "AgentCommunication"
@@ -702,8 +717,10 @@ sequenceDiagram
     Runtime->>Context: "load context for artemis"
     Context->>Identity: "load_identity(artemis)"
     Identity->>Files: "read SOUL.md, CONFIG.yaml, SKILLS.md"
+    Context->>Policy: "resolve(artemis)"
+    Policy->>Files: "read permissions, CONFIG.yaml, approval policy, device"
     Context->>Files: "read memory and recent session history"
-    Runtime->>Artemis: "run with structured identity and context"
+    Runtime->>Artemis: "run with structured policy and context"
     Artemis->>Memory: "read_global(MEMORY.md)"
     Memory->>Events: "permission.decision"
     Memory->>Files: "read memory/MEMORY.md"
@@ -713,6 +730,7 @@ sequenceDiagram
     Tasks->>Files: "write tasks/active/<task>.json"
     Tasks->>Events: "task.created"
     Artemis->>Runtime: "model tool call request"
+    Runtime->>Policy: "resolve effective policy"
     Runtime->>Events: "tool.requested"
     Runtime->>Events: "tool.permission_checked"
     Runtime->>Events: "approval.requested when high/critical"
@@ -755,6 +773,9 @@ sequenceDiagram
 1B. Agent Identity Runtime exists, but has no schema version, editor, or migration workflow.
     SOUL, CONFIG, and SKILLS are loaded separately and exposed to runtime context, but identity records are still file-authored and manually maintained.
 
+1C. Effective Agent Policy exists, but is still coarse-grained.
+    It centralizes global permissions, agent config, identity preferences, approval policy, and device constraints. Resource-scoped filesystem/project/model rules and policy schema migrations are still missing.
+
 2. No autonomous agent worker loop exists.
    Artemis and Researcher can run through `ChatRuntime`/`AgentRuntime`, but they do not autonomously process inboxes or run scheduled work.
 
@@ -776,8 +797,8 @@ sequenceDiagram
 8. Base agents now exist, but older data directories may not have them.
    Artemis, Researcher, Atlas, Hermes, and Vigil are seeded for new `DATA_DIR` instances. Existing local directories created earlier need an explicit bootstrap or migration path.
 
-9. Permission source is split.
-   Agent config declares permissions, but `PermissionManager` enforces permissions from `config/permissions.yaml`.
+9. Policy source is centralized, but not resource-scoped.
+   `EffectivePolicyRuntime` combines agent config with global permissions, but rules are still permission-string based rather than scoped to paths, projects, models, or specific devices.
 
 10. No persisted state migration/versioning exists.
     YAML message records, identity configs, chat sessions, approvals, and JSON task records have no schema version.
@@ -790,6 +811,7 @@ Priority 1:
 - Make task and message writes atomic.
 - Add schema versioning for chat sessions, tasks, and messages.
 - Add schema versioning and validation tooling for agent identity files.
+- Add schema versioning and validation tooling for effective policy inputs.
 - Add multi-step tool observation and final model follow-up.
 - Add approval notifications, remote-safe approval workflows, and session message updates after resume.
 
@@ -801,7 +823,7 @@ Priority 2:
 
 Priority 3:
 
-- Connect agent `CONFIG.yaml` permissions to `PermissionManager` or document the single source of truth more strictly.
+- Add resource-scoped policy rules for files, projects, tools, devices, and model access.
 - Add a diagnostic application log separate from domain event log.
 - Add identity editing and review workflows before allowing non-technical users to modify base agents.
 

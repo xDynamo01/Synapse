@@ -12,6 +12,7 @@ Client/UI
       -> Chat Runtime
       -> Memory System
       -> Agent Identity Runtime
+      -> Effective Policy Runtime
       -> Context Loader
       -> Agent Runtime
       -> Model Adapters
@@ -53,18 +54,56 @@ The runtime creates missing directories and seed files during bootstrap. New sto
 
 ## Permission Flow
 
-Every tool has one required permission string. `ToolRegistry.execute()` checks the current `PermissionContext` before calling tool code.
+Every tool has one required permission string. For agent tools, authorization is resolved through `EffectivePolicyRuntime` before execution. `ToolRegistry.execute()` still checks the current `PermissionContext` before calling tool code as a final guard.
 
 ```text
-API request or runtime action
-  -> PermissionContext
-  -> ToolRegistry
+Agent action
+  -> AgentEffectivePolicy
+  -> ToolRouter
   -> PermissionManager.require()
+  -> ApprovalManager when required
+  -> ToolRegistry.execute()
   -> Tool.run()
   -> EventBus.emit()
 ```
 
 Direct service methods that can mutate state also call `PermissionManager`. This keeps the invariant intact even when a future scheduler or background worker bypasses HTTP.
+
+## Effective Agent Policy
+
+`EffectivePolicyRuntime` resolves the operational policy for each agent. The runtime should consult this policy instead of making scattered decisions about permissions, tools, autonomy, approval, or device constraints.
+
+Inputs:
+
+- global permissions from `data/config/permissions.yaml`
+- explicit global denies from `data/config/permissions.yaml`
+- agent `CONFIG.yaml`
+- structured `AgentIdentity`
+- approval policy from `data/config/approval_policy.yaml`
+- optional device context from `PermissionContext.device_id`
+
+Precedence:
+
+1. explicit blocks always win
+2. approval policy may require approval even when a tool is allowed
+3. agent `CONFIG.yaml` can restrict or request permissions only inside the global ceiling
+4. global permissions define the maximum permission ceiling
+5. `AgentIdentity` provides behavior preferences, not authorization by itself
+6. device constraints can restrict the result further
+
+The resolved `AgentEffectivePolicy` includes:
+
+- `allowed_tools`
+- `forbidden_tools`
+- `preferred_tools`
+- `autonomy_profile`
+- `approval_required_for`
+- `can_delegate`
+- `default_model`
+- optional `risk_overrides`
+- optional `device_constraints`
+
+`ContextLoader` includes the policy as `agent_policy`. `AgentRuntime` uses the policy when exposing tool specs to models and when handling tool calls. `ToolRouter` validates the policy again when a policy is provided, so approval resume and direct router calls use the same gate.
 
 ## Context Loader
 
@@ -86,6 +125,7 @@ The load order is fixed:
 The returned object separates:
 
 - `agent_identity`: structured operational identity loaded from `SOUL.md`, `CONFIG.yaml`, and `SKILLS.md`
+- `agent_policy`: effective policy resolved from global permissions, agent config, identity, approval policy, and device context
 - `memory`: global, user, system, and agent memory
 - `identity`: agent soul and skills
 - `project`: project description and project memory
@@ -129,14 +169,14 @@ Chat events:
 `AgentRuntime` receives:
 
 - agent id
-- structured `AgentIdentity`
+- structured `AgentEffectivePolicy`
 - structured loaded context
 - user message
-- allowed tool specs
+- policy-filtered tool specs
 
 It delegates response generation to `ModelRouter`. When a model response includes structured tool calls, `AgentRuntime` does not execute tools directly. It sends them to `ToolRouter`.
 
-Before tool routing, `AgentRuntime` enforces `AgentIdentity.forbidden_tools`. A forbidden tool is blocked before `ToolRouter`, `PermissionManager`, and `ApprovalManager` are reached.
+Before tool routing, `AgentRuntime` blocks tools explicitly forbidden by `AgentEffectivePolicy`. Other tool requests are sent to `ToolRouter`, which revalidates the policy and then calls `PermissionManager` and `ApprovalManager`.
 
 ## Agent Identity Runtime
 
@@ -177,6 +217,7 @@ Tool calling flow:
 
 ```text
 AgentRuntime
+  -> EffectivePolicyRuntime
   -> ToolRouter
   -> PermissionManager
   -> ApprovalManager (when risk policy requires it)
@@ -263,7 +304,7 @@ Resume flow:
   -> ApprovalManager.mark_resumed()
 ```
 
-Approval resume revalidates permissions immediately before execution. A resumed approval cannot execute a second time.
+Approval resume resolves a fresh `AgentEffectivePolicy` and revalidates permissions immediately before execution. A resumed approval cannot execute a second time.
 
 Current supported structured tool calls:
 
@@ -327,6 +368,8 @@ Supported commands:
 
 - `/help`
 - `/agents`
+- `/agent <id>`
+- `/policy <agent_id>`
 - `/tasks`
 - `/memory`
 - `/call <agent> <message>`
@@ -352,7 +395,7 @@ data/devices/
   revoked/<device_id>.yaml
 ```
 
-Each record stores `device_id`, `trusted`, `revoked`, permissions, metadata, and timestamps. Device permissions are persisted but are not yet enforced by `PermissionManager`.
+Each record stores `device_id`, `trusted`, `revoked`, permissions, metadata, and timestamps. `EffectivePolicyRuntime` can use device records as an additional ceiling for agent tools when `PermissionContext.device_id` is present.
 
 Approval commands use device records when `PermissionContext.device_id` is present. A device must be trusted, not revoked, and have `approve_actions` or another configured approval permission.
 

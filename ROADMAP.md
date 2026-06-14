@@ -22,6 +22,7 @@ Status: complete.
 
 - Structured `ContextLoader`.
 - Agent Identity Runtime / SOUL Runtime.
+- Effective Agent Policy.
 - Structured agent-to-agent messages.
 - Human-readable `INBOX.md` projection.
 - Initial device registry.
@@ -34,6 +35,7 @@ Status: complete foundation, integrated with Chat Runtime.
 - Slash command parser.
 - Runtime-backed `/call`, `/task`, `/remember`, `/search`.
 - Runtime-backed `/agent <id>` and `/agents detail`.
+- Runtime-backed `/policy <agent_id>`.
 - No duplicated command business logic in UI.
 
 ## 3A. Agent Identity Runtime
@@ -53,6 +55,23 @@ Pending:
 - Runtime validation for autonomy profiles beyond manual mode.
 - Identity migration tooling.
 
+## 3B. Effective Agent Policy
+
+Status: complete foundation.
+
+- `AgentEffectivePolicy` combines global permissions, agent `CONFIG.yaml`, `AgentIdentity`, approval policy, and optional device context.
+- Explicit forbids and global denies win over agent allows.
+- Preferred tools are exposed as preference only; they do not grant permission.
+- `AgentRuntime`, `ToolRouter`, `ContextLoader`, `ApprovalResumeRuntime`, and `CommandRuntime` use the resolved policy.
+- `/policy <agent_id>` exposes structured policy for inspection.
+
+Pending:
+
+- Resource-scoped policy rules.
+- Policy schema versioning and migration.
+- Rich policy audit/correlation records beyond existing events.
+- UI/mobile inspection and approval surfaces.
+
 ## 4. Model Integration
 
 Status: partial foundation complete.
@@ -69,7 +88,7 @@ Status: partial foundation complete.
 Status: partial foundation complete.
 
 - Controlled tool-call contracts.
-- Agent Runtime -> Tool Router -> Permission Manager -> ToolRegistry flow.
+- Agent Runtime -> Effective Policy -> Tool Router -> Permission Manager -> ToolRegistry flow.
 - Initial tool-call support for `read_file`, `list_directory`, `create_task`, and `send_agent_message`.
 - Tool-call events for requested, permission checked, executed, and failed.
 - Human Approval Gate for high/critical risk tools.

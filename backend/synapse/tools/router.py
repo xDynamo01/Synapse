@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
-from typing import Iterable
+from typing import TYPE_CHECKING, Iterable
 
 from synapse.approvals.manager import ApprovalManager
 from synapse.core.events import EventBus
@@ -9,6 +9,9 @@ from synapse.core.exceptions import PermissionDenied, SynapseError
 from synapse.core.permissions import PermissionContext, PermissionManager
 from synapse.tools.base import ToolRegistry
 from synapse.tools.calls import ToolCallPlan, ToolCallRequest, ToolCallResult
+
+if TYPE_CHECKING:
+    from synapse.policies.effective import AgentEffectivePolicy
 
 
 class ToolRouter:
@@ -32,6 +35,7 @@ class ToolRouter:
         session_id: str | None = None,
         original_message_id: str | None = None,
         project_id: str | None = None,
+        policy: AgentEffectivePolicy | None = None,
     ) -> list[ToolCallResult]:
         return [
             self.execute_call(
@@ -41,6 +45,7 @@ class ToolRouter:
                 session_id=session_id,
                 original_message_id=original_message_id,
                 project_id=project_id,
+                policy=policy,
             )
             for call in plan.calls
         ]
@@ -53,6 +58,7 @@ class ToolRouter:
         session_id: str | None = None,
         original_message_id: str | None = None,
         project_id: str | None = None,
+        policy: AgentEffectivePolicy | None = None,
     ) -> ToolCallResult:
         self.event_bus.emit("tool.requested", context.actor_id, asdict(call))
         try:
@@ -68,7 +74,25 @@ class ToolRouter:
                     "allowed": decision.allowed,
                 },
             )
-            if allowed_permissions is not None:
+            if policy and not policy.allows_tool(call.name):
+                return self._failed_result(
+                    context,
+                    call,
+                    PermissionDenied(
+                        f"Agent effective policy blocks tool {call.name} for {policy.agent_id}"
+                    ),
+                )
+            if policy is not None:
+                allowed = set(policy.allowed_permissions)
+                if spec.permission not in allowed:
+                    return self._failed_result(
+                        context,
+                        call,
+                        PermissionDenied(
+                            f"Agent effective policy does not allow permission {spec.permission}"
+                        ),
+                    )
+            elif allowed_permissions is not None:
                 allowed = set(allowed_permissions)
                 if "*" not in allowed and spec.permission not in allowed:
                     return self._failed_result(
@@ -79,13 +103,15 @@ class ToolRouter:
                             f"to use tool {call.name}"
                         ),
                     )
+            risk_level = policy.risk_level_for(call.name, spec.risk_level) if policy else spec.risk_level
             approval_result = self._approval_result_if_required(
                 context,
                 call,
-                spec.risk_level,
+                risk_level,
                 session_id=session_id,
                 original_message_id=original_message_id,
                 project_id=project_id,
+                policy=policy,
             )
             if approval_result:
                 return approval_result
@@ -132,6 +158,7 @@ class ToolRouter:
         session_id: str | None = None,
         original_message_id: str | None = None,
         project_id: str | None = None,
+        policy: AgentEffectivePolicy | None = None,
     ) -> ToolCallResult | None:
         if call.approval_id:
             self.approvals.assert_approved_for_tool(
@@ -143,7 +170,10 @@ class ToolRouter:
             )
             return None
 
-        if not self.approvals.requires_approval(
+        if policy is not None:
+            if not policy.requires_approval_for(risk_level):
+                return None
+        elif not self.approvals.requires_approval(
             agent_id=context.actor_id,
             risk_level=risk_level,
             permission_explicitly_granted=True,

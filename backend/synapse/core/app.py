@@ -19,6 +19,7 @@ from synapse.core.events import EventBus
 from synapse.core.model_router import ModelRouter
 from synapse.core.permissions import PermissionContext, PermissionManager
 from synapse.memory.store import MemoryStore
+from synapse.policies.effective import EffectivePolicyRuntime
 from synapse.tasks.runtime import TaskRuntime
 from synapse.tools.base import ToolRegistry
 from synapse.tools.builtin import register_builtin_tools
@@ -41,6 +42,7 @@ class RuntimeContainer:
     devices: DeviceRegistry
     approvals: ApprovalManager
     approval_resume: ApprovalResumeRuntime
+    policies: EffectivePolicyRuntime
     memory: MemoryStore
     context_loader: ContextLoader
     tasks: TaskRuntime
@@ -79,16 +81,18 @@ def create_runtime(settings: Settings | None = None) -> RuntimeContainer:
     approvals = ApprovalManager(data_dir, permissions, devices, events)
     memory = MemoryStore(data_dir, permissions, events)
     tasks = TaskRuntime(data_dir, permissions, events)
-    context_loader = ContextLoader(data_dir, permissions, events, agents, identities, tasks)
     tools = ToolRegistry(permissions, events)
     register_builtin_tools(tools, data_dir, communication, tasks)
+    policies = EffectivePolicyRuntime(agents, identities, tools, permissions, approvals, devices)
+    context_loader = ContextLoader(data_dir, permissions, events, agents, identities, policies, tasks)
     tool_router = ToolRouter(tools, permissions, approvals, events)
-    agent_runtime = AgentRuntime(agents, identities, models, tools, tool_router, events)
-    approval_resume = ApprovalResumeRuntime(approvals, tool_router)
+    agent_runtime = AgentRuntime(agents, policies, models, tool_router, events)
+    approval_resume = ApprovalResumeRuntime(approvals, tool_router, policies)
     commands = CommandRuntime(
         config,
         agents,
         identities,
+        policies,
         memory,
         tasks,
         tools,
@@ -114,6 +118,7 @@ def create_runtime(settings: Settings | None = None) -> RuntimeContainer:
         devices=devices,
         approvals=approvals,
         approval_resume=approval_resume,
+        policies=policies,
         memory=memory,
         context_loader=context_loader,
         tasks=tasks,

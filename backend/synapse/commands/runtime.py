@@ -10,6 +10,7 @@ from synapse.approvals.resume import ApprovalResumeRuntime
 from synapse.core.config import ConfigStore
 from synapse.core.permissions import PermissionContext
 from synapse.memory.store import MemoryStore
+from synapse.policies.effective import EffectivePolicyRuntime
 from synapse.tasks.runtime import TaskRuntime
 from synapse.tools.base import ToolRegistry
 
@@ -28,6 +29,7 @@ class CommandRuntime:
         config: ConfigStore,
         agents: AgentRegistry,
         identities: AgentIdentityRuntime,
+        policies: EffectivePolicyRuntime,
         memory: MemoryStore,
         tasks: TaskRuntime,
         tools: ToolRegistry,
@@ -37,6 +39,7 @@ class CommandRuntime:
         self.config = config
         self.agents = agents
         self.identities = identities
+        self.policies = policies
         self.memory = memory
         self.tasks = tasks
         self.tools = tools
@@ -67,6 +70,8 @@ class CommandRuntime:
             return self._agents(argument_text)
         if command == "/agent":
             return self._agent(argument_text)
+        if command == "/policy":
+            return self._policy(context, argument_text)
         if command == "/tasks":
             return self._tasks()
         if command == "/memory":
@@ -93,6 +98,7 @@ class CommandRuntime:
             "/help",
             "/agents",
             "/agent",
+            "/policy",
             "/tasks",
             "/memory",
             "/call",
@@ -146,6 +152,22 @@ class CommandRuntime:
             status="ok",
             output=f"{identity.name}: {identity.role}",
             data={"agent": identity.to_dict()},
+        )
+
+    def _policy(self, context: PermissionContext, argument_text: str) -> CommandResult:
+        agent_id = argument_text.strip()
+        if not agent_id:
+            return CommandResult(
+                command="/policy",
+                status="error",
+                output="Usage: /policy <agent_id>",
+            )
+        policy = self.policies.resolve(context, agent_id.lower())
+        return CommandResult(
+            command="/policy",
+            status="ok",
+            output=f"Effective policy for {policy.agent_id}.",
+            data={"policy": policy.to_dict()},
         )
 
     def _tasks(self) -> CommandResult:
