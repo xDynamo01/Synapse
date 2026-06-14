@@ -13,7 +13,7 @@ from synapse.core.exceptions import NotFound, PermissionDenied, ValidationError
 from synapse.core.permissions import PermissionContext, PermissionManager
 from synapse.core.serialization import dump_structured_file, load_structured_file
 
-APPROVAL_STATUSES = {"pending", "approved", "rejected", "expired"}
+APPROVAL_STATUSES = {"pending", "approved", "rejected", "expired", "resumed"}
 RISK_LEVELS = {"low", "medium", "high", "critical"}
 
 
@@ -33,9 +33,15 @@ class ApprovalRequest:
     tool_args: dict[str, Any]
     risk_level: str
     reason: str
+    tool_call_id: str
+    session_id: str | None = None
+    original_message_id: str | None = None
+    project_id: str | None = None
     status: str = "pending"
     approved_by: str | None = None
     expires_at: str | None = None
+    resumed_at: str | None = None
+    resume_result: dict[str, Any] | None = None
     id: str = field(default_factory=lambda: str(uuid4()))
     created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     updated_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
@@ -79,6 +85,10 @@ class ApprovalManager:
         tool_args: dict[str, Any],
         risk_level: str,
         reason: str,
+        tool_call_id: str,
+        session_id: str | None = None,
+        original_message_id: str | None = None,
+        project_id: str | None = None,
     ) -> ApprovalRequest:
         expires_at = None
         if self.policy.default_expires_minutes is not None:
@@ -91,6 +101,10 @@ class ApprovalManager:
             tool_args=tool_args,
             risk_level=risk_level,
             reason=reason,
+            tool_call_id=tool_call_id,
+            session_id=session_id,
+            original_message_id=original_message_id,
+            project_id=project_id,
             expires_at=expires_at,
         )
         self._write(request)
@@ -139,6 +153,29 @@ class ApprovalManager:
                 return self.expire(PermissionContext(actor_id="system"), approval_id)
         return request
 
+    def get_resumable_request(self, approval_id: str) -> ApprovalRequest:
+        request = self.get_status(approval_id)
+        if request.status != "approved":
+            raise ValidationError(f"Approval request is not resumable: {approval_id}")
+        return request
+
+    def mark_resumed(
+        self,
+        context: PermissionContext,
+        approval_id: str,
+        resume_result: dict[str, Any],
+    ) -> ApprovalRequest:
+        request = self.get_resumable_request(approval_id)
+        updated = self._transition(
+            request,
+            "resumed",
+            approved_by=request.approved_by,
+            resumed_at=datetime.now(UTC).isoformat(),
+            resume_result=resume_result,
+        )
+        self.event_bus.emit("approval.resumed", context.actor_id, asdict(updated))
+        return updated
+
     def assert_approved_for_tool(
         self,
         approval_id: str,
@@ -165,6 +202,8 @@ class ApprovalManager:
         request: ApprovalRequest,
         status: str,
         approved_by: str | None = None,
+        resumed_at: str | None = None,
+        resume_result: dict[str, Any] | None = None,
     ) -> ApprovalRequest:
         if status not in APPROVAL_STATUSES:
             raise ValidationError(f"Invalid approval status: {status}")
@@ -175,9 +214,15 @@ class ApprovalManager:
             tool_args=request.tool_args,
             risk_level=request.risk_level,
             reason=request.reason,
+            tool_call_id=request.tool_call_id,
+            session_id=request.session_id,
+            original_message_id=request.original_message_id,
+            project_id=request.project_id,
             status=status,
             approved_by=approved_by or request.approved_by,
             expires_at=request.expires_at,
+            resumed_at=resumed_at or request.resumed_at,
+            resume_result=resume_result if resume_result is not None else request.resume_result,
             created_at=request.created_at,
             updated_at=datetime.now(UTC).isoformat(),
         )
@@ -224,5 +269,6 @@ class ApprovalManager:
 
     @staticmethod
     def _read(path: Path) -> ApprovalRequest:
-        return ApprovalRequest(**load_structured_file(path))
-
+        raw = load_structured_file(path)
+        raw.setdefault("tool_call_id", raw.get("id", "unknown"))
+        return ApprovalRequest(**raw)

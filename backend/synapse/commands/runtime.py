@@ -5,6 +5,7 @@ from typing import Any
 
 from synapse.agents.registry import AgentRegistry
 from synapse.approvals.manager import ApprovalManager
+from synapse.approvals.resume import ApprovalResumeRuntime
 from synapse.core.config import ConfigStore
 from synapse.core.permissions import PermissionContext
 from synapse.memory.store import MemoryStore
@@ -29,6 +30,7 @@ class CommandRuntime:
         tasks: TaskRuntime,
         tools: ToolRegistry,
         approvals: ApprovalManager,
+        approval_resume: ApprovalResumeRuntime,
     ):
         self.config = config
         self.agents = agents
@@ -36,6 +38,7 @@ class CommandRuntime:
         self.tasks = tasks
         self.tools = tools
         self.approvals = approvals
+        self.approval_resume = approval_resume
 
     def execute(
         self,
@@ -241,12 +244,18 @@ class CommandRuntime:
                 status="error",
                 output="Usage: /approve <approval_id>",
             )
-        approval = self.approvals.approve(context, approval_id)
+        approval, tool_result = self.approval_resume.approve_and_resume(context, approval_id)
+        status = "resumed" if tool_result.success else "approved"
+        output = (
+            f"Approved and executed {approval_id}."
+            if tool_result.success
+            else f"Approved {approval_id}, but resume did not execute."
+        )
         return CommandResult(
             command="/approve",
-            status="ok",
-            output=f"Approved {approval_id}.",
-            data={"approval": asdict(approval)},
+            status=status,
+            output=output,
+            data={"approval": asdict(approval), "tool_result": asdict(tool_result)},
         )
 
     def _reject(self, context: PermissionContext, approval_id: str) -> CommandResult:

@@ -189,6 +189,7 @@ Approval statuses:
 - `approved`
 - `rejected`
 - `expired`
+- `resumed`
 
 Approval events:
 
@@ -196,8 +197,33 @@ Approval events:
 - `approval.approved`
 - `approval.rejected`
 - `approval.expired`
+- `approval.resumed`
 
 When a tool requires approval, `ToolRouter` returns a `ToolCallResult` with `status="awaiting_approval"` and does not call `ToolRegistry.execute()`. If the same tool call is retried with an approved `approval_id`, `ToolRouter` validates the approval against agent, tool, risk level, and arguments before executing.
+
+Approval requests retain enough data to resume execution:
+
+- `agent_id`
+- optional `session_id`
+- `tool_name`
+- `tool_args`
+- `tool_call_id`
+- optional `original_message_id`
+- optional `project_id`
+
+Resume flow:
+
+```text
+/approve or POST /approvals/{id}/approve
+  -> ApprovalManager.approve()
+  -> ApprovalResumeRuntime.resume()
+  -> ToolRouter.execute_call()
+  -> PermissionManager.require()
+  -> ToolRegistry.execute()
+  -> ApprovalManager.mark_resumed()
+```
+
+Approval resume revalidates permissions immediately before execution. A resumed approval cannot execute a second time.
 
 Current supported structured tool calls:
 
@@ -289,6 +315,12 @@ data/devices/
 Each record stores `device_id`, `trusted`, `revoked`, permissions, metadata, and timestamps. Device permissions are persisted but are not yet enforced by `PermissionManager`.
 
 Approval commands use device records when `PermissionContext.device_id` is present. A device must be trusted, not revoked, and have `approve_actions` or another configured approval permission.
+
+Approval API endpoints:
+
+- `GET /approvals/pending`
+- `POST /approvals/{approval_id}/approve`
+- `POST /approvals/{approval_id}/reject`
 
 ## Tool Contract
 

@@ -39,6 +39,16 @@ Approval requests are persisted in:
 DATA_DIR/approvals/<approval_id>.yaml
 ```
 
+Approval requests store enough context to resume:
+
+- agent id
+- optional session id
+- tool name
+- tool arguments
+- tool call id
+- optional original message id
+- optional project id
+
 Approval commands exist in `CommandRuntime`:
 
 - `/approvals`
@@ -47,11 +57,24 @@ Approval commands exist in `CommandRuntime`:
 
 When a `device_id` is present, approval requires a trusted, non-revoked device with the configured approval permission, currently `approve_actions`.
 
+Approving an approval attempts to resume execution automatically:
+
+```text
+approve
+  -> ApprovalResumeRuntime
+  -> ToolRouter
+  -> PermissionManager
+  -> ToolRegistry
+  -> mark approval as resumed
+```
+
+Permissions are revalidated during resume. A resumed approval cannot execute again.
+
 ## Consequences
 
 - Agents can request sensitive actions without executing them immediately.
 - Approval state survives runtime restart.
 - Future mobile and remote access workflows have a runtime contract to build on.
 - UI is not required for approval logic.
+- Approvals can resume execution without forcing the user to resend the tool call.
 - Multi-step agent planning still remains separate future work.
-

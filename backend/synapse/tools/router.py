@@ -29,9 +29,19 @@ class ToolRouter:
         context: PermissionContext,
         plan: ToolCallPlan,
         allowed_permissions: Iterable[str] | None = None,
+        session_id: str | None = None,
+        original_message_id: str | None = None,
+        project_id: str | None = None,
     ) -> list[ToolCallResult]:
         return [
-            self.execute_call(context, call, allowed_permissions=allowed_permissions)
+            self.execute_call(
+                context,
+                call,
+                allowed_permissions=allowed_permissions,
+                session_id=session_id,
+                original_message_id=original_message_id,
+                project_id=project_id,
+            )
             for call in plan.calls
         ]
 
@@ -40,6 +50,9 @@ class ToolRouter:
         context: PermissionContext,
         call: ToolCallRequest,
         allowed_permissions: Iterable[str] | None = None,
+        session_id: str | None = None,
+        original_message_id: str | None = None,
+        project_id: str | None = None,
     ) -> ToolCallResult:
         self.event_bus.emit("tool.requested", context.actor_id, asdict(call))
         try:
@@ -66,7 +79,14 @@ class ToolRouter:
                             f"to use tool {call.name}"
                         ),
                     )
-            approval_result = self._approval_result_if_required(context, call, spec.risk_level)
+            approval_result = self._approval_result_if_required(
+                context,
+                call,
+                spec.risk_level,
+                session_id=session_id,
+                original_message_id=original_message_id,
+                project_id=project_id,
+            )
             if approval_result:
                 return approval_result
             result = self.registry.execute(call.name, context, call.arguments)
@@ -86,6 +106,8 @@ class ToolRouter:
                     "success": True,
                 },
             )
+            if call.approval_id:
+                self.approvals.mark_resumed(context, call.approval_id, asdict(tool_result))
             return tool_result
         except PermissionDenied as exc:
             self.event_bus.emit(
@@ -107,6 +129,9 @@ class ToolRouter:
         context: PermissionContext,
         call: ToolCallRequest,
         risk_level: str,
+        session_id: str | None = None,
+        original_message_id: str | None = None,
+        project_id: str | None = None,
     ) -> ToolCallResult | None:
         if call.approval_id:
             self.approvals.assert_approved_for_tool(
@@ -131,6 +156,10 @@ class ToolRouter:
             tool_args=call.arguments,
             risk_level=risk_level,
             reason=f"Tool {call.name} risk level {risk_level} requires human approval.",
+            tool_call_id=call.id,
+            session_id=session_id,
+            original_message_id=original_message_id,
+            project_id=project_id,
         )
         return ToolCallResult(
             request=call,

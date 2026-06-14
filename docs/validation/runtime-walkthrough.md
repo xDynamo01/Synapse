@@ -75,7 +75,7 @@ permission.decision
 context.loaded
 ```
 
-Important limitation in the original validation: conversation could only be represented as session history. Current status: `ChatRuntime` now persists sessions under `chats/sessions/` and uses `ContextLoader` for non-command turns. Model responses can now request controlled tool calls through `ToolRouter`; high/critical risk calls create persisted approval requests before execution. Multi-step planning and streaming remain out of scope.
+Important limitation in the original validation: conversation could only be represented as session history. Current status: `ChatRuntime` now persists sessions under `chats/sessions/` and uses `ContextLoader` for non-command turns. Model responses can now request controlled tool calls through `ToolRouter`; high/critical risk calls create persisted approval requests before execution. Once approved, the runtime can resume and execute the saved tool call without the user resending it. Multi-step planning and streaming remain out of scope.
 
 ## Step-by-Step Walkthrough
 
@@ -92,6 +92,7 @@ Components:
 - `MockModelAdapter` for deterministic tests, or configured model adapter
 - `ToolRouter` when the model response requests a tool
 - `ApprovalManager` when the tool risk policy requires approval
+- `ApprovalResumeRuntime` when an approval is approved and resumed
 - `EventBus`
 - `DataDir`
 
@@ -123,6 +124,7 @@ Events generated:
 - `tool.permission_checked`, when applicable
 - `approval.requested`, when risk policy requires approval
 - `approval.approved` or `approval.rejected`, when a human decision is made
+- `approval.resumed`, when an approved request executes successfully
 - `tool.executed` or `tool.failed`, when applicable
 - `agent.run.completed`
 - `chat.response_generated`
@@ -659,10 +661,17 @@ Technical validation:
 12. Runtime is recreated against the same `DATA_DIR`.
 13. Tasks, messages, inbox projections, memory, and event log remain available.
 
-With controlled tool calling, steps 4 and 5 can also be initiated by a model-produced `ToolCallRequest`, but the execution path remains:
+With controlled tool calling, steps 4 and 5 can also be initiated by a model-produced `ToolCallRequest`. For low-risk tools, execution path is:
 
 ```text
-AgentRuntime -> ToolRouter -> PermissionManager -> ApprovalManager -> ToolRegistry -> Tool implementation
+AgentRuntime -> ToolRouter -> PermissionManager -> ToolRegistry -> Tool implementation
+```
+
+For high/critical tools, approval and resume path is:
+
+```text
+AgentRuntime -> ToolRouter -> PermissionManager -> ApprovalManager(pending)
+/approve -> ApprovalResumeRuntime -> ToolRouter -> PermissionManager -> ToolRegistry -> ApprovalManager(resumed)
 ```
 
 ## Execution Diagram
@@ -693,7 +702,11 @@ sequenceDiagram
     Runtime->>Events: "tool.requested"
     Runtime->>Events: "tool.permission_checked"
     Runtime->>Events: "approval.requested when high/critical"
+    Runtime->>Runtime: "approval approved"
+    Runtime->>Events: "approval.approved"
+    Runtime->>Runtime: "resume approved tool call"
     Runtime->>Files: "tool writes through ToolRegistry"
+    Runtime->>Events: "approval.resumed"
     Runtime->>Events: "tool.executed or tool.failed"
     Artemis->>A2A: "send_agent_message(to researcher)"
     A2A->>Files: "append researcher/INBOX.md"
@@ -723,7 +736,7 @@ sequenceDiagram
    User-to-agent turns are executable and persisted. Models can request simple structured tool calls, but there is no iterative observe/think/act cycle yet.
 
 1A. Approval Gate exists, but has no UI/mobile approval surface.
-    Approval can be managed through runtime commands only.
+    Approval can be managed through runtime commands and API endpoints only.
 
 2. No LLM/agent execution loop exists.
    Artemis and Researcher do not autonomously reason, call tools, or process inboxes.
@@ -760,7 +773,7 @@ Priority 1:
 - Make task and message writes atomic.
 - Add schema versioning for chat sessions, tasks, and messages.
 - Add multi-step tool observation and final model follow-up.
-- Add approval notifications and remote-safe approval workflows.
+- Add approval notifications, remote-safe approval workflows, and session message updates after resume.
 
 Priority 2:
 

@@ -45,6 +45,9 @@ class AgentRuntime:
         agent_id: str,
         loaded_context: LoadedContext,
         user_message: str,
+        session_id: str | None = None,
+        project_id: str | None = None,
+        original_message_id: str | None = None,
     ) -> AgentRunResult:
         agent = self.agents.get(agent_id)
         allowed_tools = self._allowed_tools(agent.permissions)
@@ -77,6 +80,9 @@ class AgentRuntime:
                 tool_context,
                 plan,
                 allowed_permissions=agent.permissions,
+                session_id=session_id,
+                project_id=project_id,
+                original_message_id=original_message_id,
             )
             final_response = self._response_after_tools(model_response, tool_results)
         result = AgentRunResult(

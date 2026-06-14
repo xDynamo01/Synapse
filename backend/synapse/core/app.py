@@ -7,6 +7,7 @@ from synapse.agents.presence import PresenceStore
 from synapse.agents.registry import AgentRegistry
 from synapse.agents.runtime import AgentRuntime
 from synapse.approvals.manager import ApprovalManager
+from synapse.approvals.resume import ApprovalResumeRuntime
 from synapse.auth.devices import DeviceRegistry
 from synapse.chat.runtime import ChatRuntime
 from synapse.commands.runtime import CommandRuntime
@@ -37,6 +38,7 @@ class RuntimeContainer:
     presence: PresenceStore
     devices: DeviceRegistry
     approvals: ApprovalManager
+    approval_resume: ApprovalResumeRuntime
     memory: MemoryStore
     context_loader: ContextLoader
     tasks: TaskRuntime
@@ -79,7 +81,8 @@ def create_runtime(settings: Settings | None = None) -> RuntimeContainer:
     register_builtin_tools(tools, data_dir, communication, tasks)
     tool_router = ToolRouter(tools, permissions, approvals, events)
     agent_runtime = AgentRuntime(agents, models, tools, tool_router, events)
-    commands = CommandRuntime(config, agents, memory, tasks, tools, approvals)
+    approval_resume = ApprovalResumeRuntime(approvals, tool_router)
+    commands = CommandRuntime(config, agents, memory, tasks, tools, approvals, approval_resume)
     chat = ChatRuntime(data_dir, events, context_loader, agent_runtime, commands)
 
     events.emit("runtime.started", settings.default_actor_id, {"data_dir": str(data_dir.root)})
@@ -97,6 +100,7 @@ def create_runtime(settings: Settings | None = None) -> RuntimeContainer:
         presence=presence,
         devices=devices,
         approvals=approvals,
+        approval_resume=approval_resume,
         memory=memory,
         context_loader=context_loader,
         tasks=tasks,

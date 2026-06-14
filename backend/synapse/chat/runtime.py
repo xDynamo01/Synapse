@@ -129,6 +129,8 @@ class ChatRuntime:
             agent_id=agent_id,
             loaded_context=loaded_context,
             user_message=user_message,
+            session_id=session.id,
+            project_id=project_id,
         )
         assistant_message = ChatMessage(
             role="assistant",

@@ -57,15 +57,18 @@ Status: partial foundation complete.
 - Persisted approval requests.
 - Approval commands `/approvals`, `/approve`, and `/reject`.
 - Device-aware approval validation.
+- Approval resume flow after approval.
+- Approval API endpoints for pending, approve, and reject.
 
 Pending:
 
 - Resource-scoped filesystem permissions.
 - OpenAPI/MCP bridge adapters.
 - Tool execution audit correlation beyond event type.
-- Rich approval UI/mobile workflow.
+- Rich approval UI/mobile workflow and notifications.
 - Sandbox strategy for risky tools.
 - Multi-step tool planning and model follow-up after tool observations.
+- Session message update after resumed tool execution.
 
 ## 5A. Chat Runtime
 

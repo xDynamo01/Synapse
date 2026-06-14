@@ -542,8 +542,175 @@ class ChatRuntimeTests(unittest.TestCase):
         approval_id = first.message.metadata["tool_results"][0]["approval_id"]
         result = runtime.commands.execute(runtime.context(), f"/approve {approval_id}")
 
-        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.status, "resumed")
+        self.assertEqual(runtime.approvals.get_status(approval_id).status, "resumed")
+        self.assertTrue(runtime.data_dir.resolve("projects/command-approved.txt").exists())
+
+    def test_approve_automatically_executes_tool(self) -> None:
+        directory, _, runtime = runtime_in_tempdir()
+        self.addCleanup(directory.cleanup)
+
+        first = runtime.chat.send_message(
+            runtime.context(),
+            "artemis",
+            "tool:write_file path=projects/resume.txt content=resumed",
+        )
+        approval_id = first.message.metadata["tool_results"][0]["approval_id"]
+        approval, tool_result = runtime.approval_resume.approve_and_resume(
+            runtime.context(),
+            approval_id,
+        )
+
+        self.assertEqual(approval.status, "approved")
+        self.assertEqual(tool_result.status, "executed")
+        self.assertTrue(tool_result.success)
+        self.assertEqual(runtime.approvals.get_status(approval_id).status, "resumed")
+        self.assertEqual(
+            runtime.data_dir.resolve("projects/resume.txt").read_text(encoding="utf-8"),
+            "resumed",
+        )
+
+    def test_resumed_approval_does_not_execute_twice(self) -> None:
+        directory, _, runtime = runtime_in_tempdir()
+        self.addCleanup(directory.cleanup)
+
+        first = runtime.chat.send_message(
+            runtime.context(),
+            "artemis",
+            "tool:write_file path=projects/once.txt content=first",
+        )
+        approval_id = first.message.metadata["tool_results"][0]["approval_id"]
+        runtime.approval_resume.approve_and_resume(runtime.context(), approval_id)
+
+        second = runtime.approval_resume.resume(runtime.context(), approval_id)
+
+        self.assertFalse(second.success)
+        self.assertEqual(second.status, "failed")
+        self.assertIn("resumed", second.error)
+        self.assertEqual(
+            runtime.data_dir.resolve("projects/once.txt").read_text(encoding="utf-8"),
+            "first",
+        )
+
+    def test_rejected_approval_does_not_resume(self) -> None:
+        directory, _, runtime = runtime_in_tempdir()
+        self.addCleanup(directory.cleanup)
+
+        first = runtime.chat.send_message(
+            runtime.context(),
+            "artemis",
+            "tool:write_file path=projects/reject-resume.txt content=no",
+        )
+        approval_id = first.message.metadata["tool_results"][0]["approval_id"]
+        runtime.approvals.reject(runtime.context(), approval_id)
+
+        result = runtime.approval_resume.resume(runtime.context(), approval_id)
+
+        self.assertFalse(result.success)
+        self.assertEqual(result.status, "failed")
+        self.assertIn("rejected", result.error)
+        self.assertFalse(runtime.data_dir.resolve("projects/reject-resume.txt").exists())
+
+    def test_permission_is_revalidated_on_resume(self) -> None:
+        directory, _, runtime = runtime_in_tempdir()
+        self.addCleanup(directory.cleanup)
+
+        first = runtime.chat.send_message(
+            runtime.context(),
+            "artemis",
+            "tool:write_file path=projects/revalidate.txt content=blocked",
+        )
+        approval_id = first.message.metadata["tool_results"][0]["approval_id"]
+        runtime.approvals.approve(runtime.context(), approval_id)
+        runtime.permissions.subjects["agent:artemis"].discard("filesystem.write")
+
+        result = runtime.approval_resume.resume(runtime.context(), approval_id)
+
+        self.assertFalse(result.success)
+        self.assertEqual(result.status, "failed")
+        self.assertIn("lacks permission filesystem.write", result.error)
         self.assertEqual(runtime.approvals.get_status(approval_id).status, "approved")
+        self.assertFalse(runtime.data_dir.resolve("projects/revalidate.txt").exists())
+
+    def test_approval_resumed_event_is_emitted(self) -> None:
+        directory, _, runtime = runtime_in_tempdir()
+        self.addCleanup(directory.cleanup)
+
+        first = runtime.chat.send_message(
+            runtime.context(),
+            "artemis",
+            "tool:write_file path=projects/resumed-event.txt content=event",
+        )
+        approval_id = first.message.metadata["tool_results"][0]["approval_id"]
+        runtime.approval_resume.approve_and_resume(runtime.context(), approval_id)
+
+        event_types = [event.type for event in runtime.events.tail(limit=120)]
+        self.assertIn("approval.resumed", event_types)
+
+    def test_api_approve_executes_resume(self) -> None:
+        try:
+            from fastapi import FastAPI
+            from fastapi.testclient import TestClient
+        except Exception as exc:  # pragma: no cover
+            self.skipTest(f"FastAPI test dependencies unavailable: {exc}")
+
+        from synapse.api.routes import router
+
+        directory, _, runtime = runtime_in_tempdir()
+        self.addCleanup(directory.cleanup)
+        first = runtime.chat.send_message(
+            runtime.context(),
+            "artemis",
+            "tool:write_file path=projects/api-resume.txt content=api",
+        )
+        approval_id = first.message.metadata["tool_results"][0]["approval_id"]
+        app = FastAPI()
+        app.state.runtime = runtime
+        app.include_router(router, prefix="/api")
+
+        response = TestClient(app).post(
+            f"/api/approvals/{approval_id}/approve",
+            headers={"x-actor-id": "local_owner", "x-actor-type": "user"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["tool_result"]["status"], "executed")
+        self.assertTrue(runtime.data_dir.resolve("projects/api-resume.txt").exists())
+
+    def test_api_lists_pending_and_rejects_approval(self) -> None:
+        try:
+            from fastapi import FastAPI
+            from fastapi.testclient import TestClient
+        except Exception as exc:  # pragma: no cover
+            self.skipTest(f"FastAPI test dependencies unavailable: {exc}")
+
+        from synapse.api.routes import router
+
+        directory, _, runtime = runtime_in_tempdir()
+        self.addCleanup(directory.cleanup)
+        first = runtime.chat.send_message(
+            runtime.context(),
+            "artemis",
+            "tool:write_file path=projects/api-reject.txt content=no",
+        )
+        approval_id = first.message.metadata["tool_results"][0]["approval_id"]
+        app = FastAPI()
+        app.state.runtime = runtime
+        app.include_router(router, prefix="/api")
+        client = TestClient(app)
+
+        pending = client.get("/api/approvals/pending")
+        rejected = client.post(
+            f"/api/approvals/{approval_id}/reject",
+            headers={"x-actor-id": "local_owner", "x-actor-type": "user"},
+        )
+
+        self.assertEqual(pending.status_code, 200)
+        self.assertEqual(len(pending.json()), 1)
+        self.assertEqual(rejected.status_code, 200)
+        self.assertEqual(rejected.json()["status"], "rejected")
+        self.assertFalse(runtime.data_dir.resolve("projects/api-reject.txt").exists())
 
     def test_command_runtime_reject_changes_status(self) -> None:
         directory, _, runtime = runtime_in_tempdir()

@@ -93,6 +93,45 @@ def list_tools(request: Request) -> list[dict[str, Any]]:
     return [asdict(spec) for spec in runtime.tools.list_specs()]
 
 
+@router.get("/approvals/pending")
+def list_pending_approvals(request: Request) -> list[dict[str, Any]]:
+    runtime = runtime_from(request)
+    return [asdict(approval) for approval in runtime.approvals.list_pending()]
+
+
+@router.post("/approvals/{approval_id}/approve")
+def approve_approval(
+    approval_id: str,
+    request: Request,
+    x_actor_id: str | None = Header(default=None),
+    x_actor_type: str | None = Header(default=None),
+    x_device_id: str | None = Header(default=None),
+) -> dict[str, Any]:
+    runtime = runtime_from(request)
+    context = context_from(runtime, x_actor_id, x_actor_type, x_device_id)
+    try:
+        approval, tool_result = runtime.approval_resume.approve_and_resume(context, approval_id)
+        return {"approval": asdict(approval), "tool_result": asdict(tool_result)}
+    except Exception as exc:
+        raise api_error(exc) from exc
+
+
+@router.post("/approvals/{approval_id}/reject")
+def reject_approval(
+    approval_id: str,
+    request: Request,
+    x_actor_id: str | None = Header(default=None),
+    x_actor_type: str | None = Header(default=None),
+    x_device_id: str | None = Header(default=None),
+) -> dict[str, Any]:
+    runtime = runtime_from(request)
+    context = context_from(runtime, x_actor_id, x_actor_type, x_device_id)
+    try:
+        return asdict(runtime.approvals.reject(context, approval_id))
+    except Exception as exc:
+        raise api_error(exc) from exc
+
+
 @router.post("/tools/{tool_name}")
 def execute_tool(
     tool_name: str,
