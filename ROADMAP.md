@@ -47,13 +47,21 @@ Status: partial foundation complete.
 
 ## 5. Tool Expansion
 
-Status: pending.
+Status: partial foundation complete.
+
+- Controlled tool-call contracts.
+- Agent Runtime -> Tool Router -> Permission Manager -> ToolRegistry flow.
+- Initial tool-call support for `read_file`, `list_directory`, `create_task`, and `send_agent_message`.
+- Tool-call events for requested, permission checked, executed, and failed.
+
+Pending:
 
 - Resource-scoped filesystem permissions.
 - OpenAPI/MCP bridge adapters.
-- Tool execution audit correlation.
+- Tool execution audit correlation beyond event type.
 - Approval-required tool calls.
 - Sandbox strategy for risky tools.
+- Multi-step tool planning and model follow-up after tool observations.
 
 ## 5A. Chat Runtime
 

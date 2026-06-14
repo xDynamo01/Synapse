@@ -133,7 +133,11 @@ class ChatRuntime:
         assistant_message = ChatMessage(
             role="assistant",
             content=agent_result.response,
-            metadata={"model": agent_result.model, "tool_calling": agent_result.tool_calling},
+            metadata={
+                "model": agent_result.model,
+                "tool_calling": agent_result.tool_calling,
+                "tool_results": [asdict(tool_result) for tool_result in agent_result.tool_results],
+            },
         )
         session = self._append_message(session, user_chat_message, agent_id, project_id)
         session = self._append_message(session, assistant_message, agent_id, project_id)

@@ -10,7 +10,7 @@ Update: after the Chat Runtime and Model Adapter step, the previous "user talks 
 User -> ChatRuntime -> ContextLoader -> AgentRuntime -> ModelRouter/ModelAdapter -> response -> events/logs/session
 ```
 
-Remaining non-goals: no UI, no voice, no avatar, no communication integration, no perception runtime, and no autonomous agent/tool-calling loop.
+Remaining non-goals: no UI, no voice, no avatar, no communication integration, no perception runtime, and no autonomous multi-step agent loop.
 
 ## Technical Execution
 
@@ -75,7 +75,7 @@ permission.decision
 context.loaded
 ```
 
-Important limitation in the original validation: conversation could only be represented as session history. Current status: `ChatRuntime` now persists sessions under `chats/sessions/` and uses `ContextLoader` for non-command turns. The LLM execution loop is still limited to model adapter response generation; tool calling remains `not_implemented`.
+Important limitation in the original validation: conversation could only be represented as session history. Current status: `ChatRuntime` now persists sessions under `chats/sessions/` and uses `ContextLoader` for non-command turns. Model responses can now request controlled tool calls through `ToolRouter`; multi-step planning and streaming remain out of scope.
 
 ## Step-by-Step Walkthrough
 
@@ -90,6 +90,7 @@ Components:
 - `AgentRuntime`
 - `ModelRouter`
 - `MockModelAdapter` for deterministic tests, or configured model adapter
+- `ToolRouter` when the model response requests a tool
 - `EventBus`
 - `DataDir`
 
@@ -107,6 +108,7 @@ Files written:
 
 - `chats/sessions/<session_id>.json`
 - `logs/events.jsonl`
+- tool-specific files when requested, such as tasks or agent messages
 
 Events generated:
 
@@ -115,6 +117,9 @@ Events generated:
 - `context.loaded`
 - `chat.context_loaded`
 - `agent.run.started`
+- `tool.requested`, when applicable
+- `tool.permission_checked`, when applicable
+- `tool.executed` or `tool.failed`, when applicable
 - `agent.run.completed`
 - `chat.response_generated`
 - `chat.session_persisted`
@@ -122,12 +127,12 @@ Events generated:
 Risks:
 
 - Chat history is persisted as session state, but it must remain separate from memory.
-- Tool calling is not implemented yet.
+- Tool calling is controlled and permission-gated, but only supports simple single-pass execution.
 - Real model execution depends on configured adapters; deterministic tests use `MockModelAdapter`.
 
 Architectural gap:
 
-- Add streaming, tool-calling loop, and stronger session schema/versioning before UI chat grows.
+- Add streaming, multi-step tool planning, and stronger session schema/versioning before UI chat grows.
 
 ### 2. Artemis reads global memory
 
@@ -650,6 +655,12 @@ Technical validation:
 12. Runtime is recreated against the same `DATA_DIR`.
 13. Tasks, messages, inbox projections, memory, and event log remain available.
 
+With controlled tool calling, steps 4 and 5 can also be initiated by a model-produced `ToolCallRequest`, but the execution path remains:
+
+```text
+AgentRuntime -> ToolRouter -> PermissionManager -> ToolRegistry -> Tool implementation
+```
+
 ## Execution Diagram
 
 ```mermaid
@@ -674,6 +685,11 @@ sequenceDiagram
     Artemis->>Tasks: "create_task"
     Tasks->>Files: "write tasks/active/<task>.json"
     Tasks->>Events: "task.created"
+    Artemis->>Runtime: "model tool call request"
+    Runtime->>Events: "tool.requested"
+    Runtime->>Events: "tool.permission_checked"
+    Runtime->>Files: "tool writes through ToolRegistry"
+    Runtime->>Events: "tool.executed or tool.failed"
     Artemis->>A2A: "send_agent_message(to researcher)"
     A2A->>Files: "append researcher/INBOX.md"
     A2A->>Files: "write researcher/messages/<message>.yaml"
@@ -698,8 +714,8 @@ sequenceDiagram
 
 ## Gaps Found
 
-1. Chat Runtime exists, but has no streaming/tool-calling loop.
-   User-to-agent turns are executable and persisted, but agents do not yet plan or execute tools from model output.
+1. Chat Runtime exists, but has no streaming or multi-step tool loop.
+   User-to-agent turns are executable and persisted. Models can request simple structured tool calls, but there is no iterative observe/think/act cycle yet.
 
 2. No LLM/agent execution loop exists.
    Artemis and Researcher do not autonomously reason, call tools, or process inboxes.
@@ -735,6 +751,7 @@ Priority 1:
 - Add message thread/conversation ids for agent-to-agent exchanges.
 - Make task and message writes atomic.
 - Add schema versioning for chat sessions, tasks, and messages.
+- Add multi-step tool observation and final model follow-up.
 
 Priority 2:
 

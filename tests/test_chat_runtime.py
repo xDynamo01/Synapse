@@ -22,7 +22,23 @@ def write(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
-def agent_config(agent_id: str, role: str) -> str:
+DEFAULT_AGENT_PERMISSIONS = [
+    "filesystem.read",
+    "filesystem.write",
+    "filesystem.list",
+    "filesystem.search",
+    "agents.message",
+    "tasks.create",
+    "tasks.update",
+    "web.search",
+]
+
+
+def agent_config(
+    agent_id: str,
+    role: str,
+    permissions: list[str] | None = None,
+) -> str:
     return json.dumps(
         {
             "id": agent_id,
@@ -31,22 +47,16 @@ def agent_config(agent_id: str, role: str) -> str:
             "preferred_model": "mock/synapse-test",
             "autonomy": "manual",
             "skills": ["chat", "message_agents", "create_tasks"],
-            "permissions": [
-                "filesystem.read",
-                "filesystem.write",
-                "filesystem.list",
-                "filesystem.search",
-                "agents.message",
-                "tasks.create",
-                "tasks.update",
-                "web.search",
-            ],
+            "permissions": permissions or DEFAULT_AGENT_PERMISSIONS,
         },
         indent=2,
     )
 
 
-def runtime_in_tempdir():
+def runtime_in_tempdir(
+    artemis_permissions: list[str] | None = None,
+    researcher_permissions: list[str] | None = None,
+):
     directory = tempfile.TemporaryDirectory()
     root = Path(directory.name)
     settings = Settings(
@@ -62,20 +72,10 @@ def runtime_in_tempdir():
             "local_owner": ["*"],
             "user:local_owner": ["*"],
             "agent:artemis": [
-                "filesystem.read",
-                "filesystem.write",
-                "agents.message",
-                "tasks.create",
-                "tasks.update",
-                "web.search",
+                *(artemis_permissions or DEFAULT_AGENT_PERMISSIONS),
             ],
             "agent:researcher": [
-                "filesystem.read",
-                "filesystem.write",
-                "agents.message",
-                "tasks.create",
-                "tasks.update",
-                "web.search",
+                *(researcher_permissions or DEFAULT_AGENT_PERMISSIONS),
             ],
         }
     }
@@ -101,7 +101,8 @@ def runtime_in_tempdir():
         "researcher": "Research support agent.",
     }.items():
         base = settings.data_dir / "agents" / agent_id
-        write(base / "CONFIG.yaml", agent_config(agent_id, role))
+        permissions = artemis_permissions if agent_id == "artemis" else researcher_permissions
+        write(base / "CONFIG.yaml", agent_config(agent_id, role, permissions))
         write(base / "SOUL.md", f"# {agent_id.title()}\n{role}\n")
         write(base / "MEMORY.md", f"# {agent_id.title()} Memory\nPersistent {agent_id} memory.\n")
         write(base / "SKILLS.md", f"# {agent_id.title()} Skills\n- chat\n- message_agents\n")
@@ -271,7 +272,130 @@ class ChatRuntimeTests(unittest.TestCase):
         self.assertEqual(call["project_id"], "project-a")
         self.assertEqual(call["session_id"], "session-a")
 
+    def test_agent_tool_call_read_file_with_permission_returns_content(self) -> None:
+        directory, _, runtime = runtime_in_tempdir()
+        self.addCleanup(directory.cleanup)
+
+        result = runtime.chat.send_message(
+            runtime.context(),
+            "artemis",
+            "tool:read_file path=memory/MEMORY.md",
+        )
+
+        tool_results = result.message.metadata["tool_results"]
+        self.assertEqual(tool_results[0]["request"]["name"], "read_file")
+        self.assertTrue(tool_results[0]["success"])
+        self.assertIn("Chat runtime test memory", tool_results[0]["result"]["content"])
+        self.assertIn("read_file:ok", result.response)
+
+    def test_agent_tool_call_read_file_without_permission_is_blocked(self) -> None:
+        permissions = [
+            permission
+            for permission in DEFAULT_AGENT_PERMISSIONS
+            if permission != "filesystem.read"
+        ]
+        directory, _, runtime = runtime_in_tempdir(artemis_permissions=permissions)
+        self.addCleanup(directory.cleanup)
+
+        result = runtime.chat.send_message(
+            runtime.context(),
+            "artemis",
+            "tool:read_file path=memory/MEMORY.md",
+        )
+
+        tool_result = result.message.metadata["tool_results"][0]
+        self.assertFalse(tool_result["success"])
+        self.assertIn("lacks permission filesystem.read", tool_result["error"])
+        self.assertIn("read_file:failed", result.response)
+
+    def test_agent_tool_call_path_traversal_is_blocked(self) -> None:
+        directory, _, runtime = runtime_in_tempdir()
+        self.addCleanup(directory.cleanup)
+
+        result = runtime.chat.send_message(
+            runtime.context(),
+            "artemis",
+            "tool:read_file path=../outside.txt",
+        )
+
+        tool_result = result.message.metadata["tool_results"][0]
+        self.assertFalse(tool_result["success"])
+        self.assertIn("Path escapes DATA_DIR", tool_result["error"])
+
+    def test_agent_tool_call_create_task_persists_task(self) -> None:
+        directory, _, runtime = runtime_in_tempdir()
+        self.addCleanup(directory.cleanup)
+
+        result = runtime.chat.send_message(
+            runtime.context(),
+            "artemis",
+            "tool:create_task title='Tool Created Task' description='Created through tool call'",
+        )
+
+        tool_result = result.message.metadata["tool_results"][0]
+        self.assertTrue(tool_result["success"])
+        task_id = tool_result["result"]["id"]
+        self.assertTrue(runtime.data_dir.resolve(f"tasks/active/{task_id}.json").exists())
+        self.assertEqual(runtime.tasks.get_task(task_id).title, "Tool Created Task")
+
+    def test_agent_tool_call_send_agent_message_creates_structured_message(self) -> None:
+        directory, _, runtime = runtime_in_tempdir()
+        self.addCleanup(directory.cleanup)
+
+        result = runtime.chat.send_message(
+            runtime.context(),
+            "artemis",
+            (
+                "tool:send_agent_message from_agent_id=artemis to_agent_id=researcher "
+                "subject='Tool Message' body='hello via tool'"
+            ),
+        )
+
+        tool_result = result.message.metadata["tool_results"][0]
+        self.assertTrue(tool_result["success"])
+        message_id = tool_result["result"]["id"]
+        messages = runtime.communication.list_messages(runtime.context(), "researcher")
+        self.assertEqual(messages[0].id, message_id)
+        self.assertEqual(messages[0].body, "hello via tool")
+
+    def test_tool_call_events_are_emitted(self) -> None:
+        directory, _, runtime = runtime_in_tempdir()
+        self.addCleanup(directory.cleanup)
+
+        runtime.chat.send_message(runtime.context(), "artemis", "tool:list_directory path=memory")
+
+        event_types = [event.type for event in runtime.events.tail(limit=80)]
+        self.assertIn("tool.requested", event_types)
+        self.assertIn("tool.permission_checked", event_types)
+        self.assertIn("tool.executed", event_types)
+
+    def test_api_chat_endpoint_executes_tool_call_flow(self) -> None:
+        try:
+            from fastapi import FastAPI
+            from fastapi.testclient import TestClient
+        except Exception as exc:  # pragma: no cover
+            self.skipTest(f"FastAPI test dependencies unavailable: {exc}")
+
+        from synapse.api.routes import router
+
+        directory, _, runtime = runtime_in_tempdir()
+        self.addCleanup(directory.cleanup)
+        app = FastAPI()
+        app.state.runtime = runtime
+        app.include_router(router, prefix="/api")
+
+        response = TestClient(app).post(
+            "/api/chat",
+            headers={"x-actor-id": "local_owner", "x-actor-type": "user"},
+            json={"agent_id": "artemis", "message": "tool:read_file path=memory/MEMORY.md"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        tool_results = payload["message"]["metadata"]["tool_results"]
+        self.assertTrue(tool_results[0]["success"])
+        self.assertIn("Chat runtime test memory", tool_results[0]["result"]["content"])
+
 
 if __name__ == "__main__":
     unittest.main()
-

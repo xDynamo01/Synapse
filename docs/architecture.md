@@ -16,6 +16,7 @@ Client/UI
       -> Model Adapters
       -> Task Runtime
       -> Tool System
+      -> Tool Router
       -> Command Runtime
       -> Device Registry
 ```
@@ -129,13 +130,48 @@ Chat events:
 - user message
 - allowed tool specs
 
-It delegates response generation to `ModelRouter`. Tool calling is intentionally marked `not_implemented` at this stage; the runtime boundary is in place for future tool execution planning.
+It delegates response generation to `ModelRouter`. When a model response includes structured tool calls, `AgentRuntime` does not execute tools directly. It sends them to `ToolRouter`.
+
+Tool calling flow:
+
+```text
+AgentRuntime
+  -> ToolRouter
+  -> PermissionManager
+  -> ToolRegistry.execute()
+  -> Tool implementation
+  -> EventBus
+```
+
+`ToolRouter` emits:
+
+- `tool.requested`
+- `tool.permission_checked`
+- `tool.executed`
+- `tool.failed`
+
+Tool calls use the agent as the permission actor (`actor_type=agent`). This means a user chatting with an agent does not automatically grant that agent the user's permissions.
+
+Current supported structured tool calls:
+
+- `read_file`
+- `list_directory`
+- `create_task`
+- `send_agent_message`
+
+`web_search` remains registered but unconfigured by default.
 
 `ModelRouter` selects a route from agent `CONFIG.yaml` when `preferred_model` exists. Otherwise it uses system model config. Registered adapters:
 
 - `MockModelAdapter`: deterministic, used for tests and dev/test fallback
 - `OllamaModelAdapter`: simple local Ollama `/api/chat` adapter
 - `OpenAICompatibleAdapter`: prepared boundary, not implemented yet
+
+`MockModelAdapter` supports deterministic tool-call tests with messages in this shape:
+
+```text
+tool:<tool_name> key=value key2="quoted value"
+```
 
 ## Agent Files
 

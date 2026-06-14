@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import shlex
 from typing import Protocol
 from urllib import request
 
 from synapse.core.exceptions import ToolExecutionError
 from synapse.models.types import ModelRequest, ModelResponse
+from synapse.tools.calls import ToolCallRequest
 
 
 class BaseModelAdapter(Protocol):
@@ -22,6 +24,7 @@ class MockModelAdapter:
         self.response_prefix = response_prefix
 
     def generate(self, request_payload: ModelRequest) -> ModelResponse:
+        tool_call = self._tool_call_from_message(request_payload.user_message)
         memory_count = len(request_payload.context.get("memory", []))
         task_count = len(request_payload.context.get("tasks", []))
         content = (
@@ -34,7 +37,27 @@ class MockModelAdapter:
             provider=self.provider,
             model=request_payload.model,
             metadata={"deterministic": True},
+            tool_calls=[tool_call] if tool_call else [],
         )
+
+    def _tool_call_from_message(self, message: str) -> ToolCallRequest | None:
+        stripped = message.strip()
+        if not stripped.startswith("tool:"):
+            return None
+        command, _, argument_text = stripped.partition(" ")
+        tool_name = command.removeprefix("tool:").strip()
+        if not tool_name:
+            return None
+        return ToolCallRequest(name=tool_name, arguments=self._parse_arguments(argument_text))
+
+    @staticmethod
+    def _parse_arguments(argument_text: str) -> dict[str, str]:
+        arguments: dict[str, str] = {}
+        for token in shlex.split(argument_text):
+            key, separator, value = token.partition("=")
+            if separator:
+                arguments[key] = value
+        return arguments
 
 
 class OllamaModelAdapter:
@@ -98,4 +121,3 @@ class OpenAICompatibleAdapter:
 
     def generate(self, request_payload: ModelRequest) -> ModelResponse:
         raise NotImplementedError("OpenAI-compatible adapter is prepared but not implemented yet.")
-

@@ -19,6 +19,7 @@ from synapse.memory.store import MemoryStore
 from synapse.tasks.runtime import TaskRuntime
 from synapse.tools.base import ToolRegistry
 from synapse.tools.builtin import register_builtin_tools
+from synapse.tools.router import ToolRouter
 
 
 @dataclass
@@ -38,6 +39,7 @@ class RuntimeContainer:
     context_loader: ContextLoader
     tasks: TaskRuntime
     tools: ToolRegistry
+    tool_router: ToolRouter
     commands: CommandRuntime
     chat: ChatRuntime
 
@@ -66,7 +68,8 @@ def create_runtime(settings: Settings | None = None) -> RuntimeContainer:
     context_loader = ContextLoader(data_dir, permissions, events, agents, tasks)
     tools = ToolRegistry(permissions, events)
     register_builtin_tools(tools, data_dir, communication, tasks)
-    agent_runtime = AgentRuntime(agents, models, tools, events)
+    tool_router = ToolRouter(tools, permissions, events)
+    agent_runtime = AgentRuntime(agents, models, tools, tool_router, events)
     commands = CommandRuntime(config, agents, memory, tasks, tools)
     chat = ChatRuntime(data_dir, events, context_loader, agent_runtime, commands)
 
@@ -88,6 +91,7 @@ def create_runtime(settings: Settings | None = None) -> RuntimeContainer:
         context_loader=context_loader,
         tasks=tasks,
         tools=tools,
+        tool_router=tool_router,
         commands=commands,
         chat=chat,
     )

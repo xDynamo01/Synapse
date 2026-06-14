@@ -10,6 +10,8 @@ from synapse.core.model_router import ModelRouter
 from synapse.core.permissions import PermissionContext
 from synapse.models.types import ModelResponse
 from synapse.tools.base import ToolRegistry
+from synapse.tools.calls import ToolCallPlan, ToolCallResult
+from synapse.tools.router import ToolRouter
 
 
 @dataclass(frozen=True)
@@ -18,7 +20,8 @@ class AgentRunResult:
     response: str
     model: dict[str, Any]
     tools: list[dict[str, Any]] = field(default_factory=list)
-    tool_calling: str = "not_implemented"
+    tool_calling: str = "supported"
+    tool_results: list[ToolCallResult] = field(default_factory=list)
 
 
 class AgentRuntime:
@@ -27,11 +30,13 @@ class AgentRuntime:
         agents: AgentRegistry,
         models: ModelRouter,
         tools: ToolRegistry,
+        tool_router: ToolRouter,
         event_bus: EventBus,
     ):
         self.agents = agents
         self.models = models
         self.tools = tools
+        self.tool_router = tool_router
         self.event_bus = event_bus
 
     def run(
@@ -48,7 +53,7 @@ class AgentRuntime:
             context.actor_id,
             {
                 "agent_id": agent_id,
-                "tool_calling": "not_implemented",
+                "tool_calling": "supported",
                 "allowed_tools": [tool["name"] for tool in allowed_tools],
             },
         )
@@ -58,11 +63,28 @@ class AgentRuntime:
             context=loaded_context.to_dict(),
             tools=allowed_tools,
         )
+        tool_results: list[ToolCallResult] = []
+        final_response = model_response.content
+        if model_response.tool_calls:
+            tool_context = PermissionContext(
+                actor_id=agent.id,
+                actor_type="agent",
+                device_id=context.device_id,
+                autonomy=context.autonomy,
+            )
+            plan = ToolCallPlan(calls=model_response.tool_calls)
+            tool_results = self.tool_router.execute_plan(
+                tool_context,
+                plan,
+                allowed_permissions=agent.permissions,
+            )
+            final_response = self._response_after_tools(model_response, tool_results)
         result = AgentRunResult(
             agent_id=agent_id,
-            response=model_response.content,
+            response=final_response,
             model=self._model_metadata(model_response),
             tools=allowed_tools,
+            tool_results=tool_results,
         )
         self.event_bus.emit(
             "agent.run.completed",
@@ -71,6 +93,7 @@ class AgentRuntime:
                 "agent_id": agent_id,
                 "model": result.model,
                 "tool_calling": result.tool_calling,
+                "tool_results": [asdict(tool_result) for tool_result in tool_results],
             },
         )
         return result
@@ -93,3 +116,13 @@ class AgentRuntime:
             "metadata": response.metadata,
         }
 
+    @staticmethod
+    def _response_after_tools(
+        response: ModelResponse,
+        tool_results: list[ToolCallResult],
+    ) -> str:
+        summaries = []
+        for item in tool_results:
+            status = "ok" if item.success else "failed"
+            summaries.append(f"{item.request.name}:{status}")
+        return f"{response.content}\nTool results: {', '.join(summaries)}"

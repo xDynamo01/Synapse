@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from synapse.tools.calls import ToolCallRequest
+
 
 @dataclass(frozen=True)
 class ModelRequest:
@@ -21,4 +23,4 @@ class ModelResponse:
     provider: str
     model: str | None
     metadata: dict[str, Any] = field(default_factory=dict)
-
+    tool_calls: list[ToolCallRequest] = field(default_factory=list)

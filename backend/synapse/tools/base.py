@@ -34,6 +34,12 @@ class ToolRegistry:
     def list_specs(self) -> list[ToolSpec]:
         return [tool.spec for tool in sorted(self._tools.values(), key=lambda item: item.spec.name)]
 
+    def get_spec(self, name: str) -> ToolSpec:
+        tool = self._tools.get(name)
+        if not tool:
+            raise NotFound(f"Tool not found: {name}")
+        return tool.spec
+
     def execute(
         self,
         name: str,
@@ -58,4 +64,3 @@ class ToolRegistry:
 
         self.event_bus.emit("tool.succeeded", context.actor_id, {"tool": name})
         return result
-
