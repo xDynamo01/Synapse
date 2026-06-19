@@ -118,6 +118,7 @@ Status: partial foundation complete.
 - Communication Runtime V1 for mock email read/classify/summarize/draft.
 - Communication tools, commands, API, scheduler job, and Hermes briefing.
 - Notification Runtime with local provider, event integration, commands, and API.
+- Notification retention policy and cleanup job.
 
 Pending:
 
@@ -294,14 +295,15 @@ Status: complete foundation.
 - Commands: `/notifications`, `/notifications unread`, `/read-notification <id>`.
 - API: list, unread, detail, mark read, delete.
 - Correlation metadata preserved on notifications.
+- Retention policy in `config/notification_policy.yaml`.
+- Cleanup command/API and scheduler job type `notification_cleanup`.
 
 Pending:
 
-- Notification cleanup job execution.
-- Notification retention policy.
 - Real push/mobile/desktop providers.
 - User preferences and routing rules.
 - Deduplication and rate limiting.
+- Scheduled cleanup cadence defaults.
 
 ## 7. Presence Runtime
 

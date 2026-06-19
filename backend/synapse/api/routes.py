@@ -232,6 +232,15 @@ def list_unread_notifications(request: Request) -> list[dict[str, Any]]:
     return [asdict(notification) for notification in runtime.notifications.list_unread()]
 
 
+@router.post("/notifications/cleanup")
+def cleanup_notifications(request: Request) -> dict[str, Any]:
+    runtime = runtime_from(request)
+    try:
+        return asdict(runtime.notifications.cleanup_notifications())
+    except Exception as exc:
+        raise api_error(exc) from exc
+
+
 @router.get("/notifications/{notification_id}")
 def get_notification(notification_id: str, request: Request) -> dict[str, Any]:
     runtime = runtime_from(request)

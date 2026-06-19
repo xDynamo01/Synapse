@@ -49,6 +49,13 @@ class LocalNotificationProvider:
             raise NotFound(f"Notification not found: {notification_id}")
         path.unlink()
 
+    def delete_existing(self, notification_id: str) -> bool:
+        path = self._path(notification_id)
+        if not path.exists():
+            return False
+        path.unlink()
+        return True
+
     def list_notifications(self) -> list[Notification]:
         notifications_dir = self.data_dir.resolve("notifications")
         return [self._read(path) for path in sorted(notifications_dir.glob("*.yaml"))]

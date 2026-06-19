@@ -213,6 +213,11 @@ class SchedulerRuntime:
                 provider=provider,
             )
             return {"briefing": asdict(briefing)}
+        if job.type == "notification_cleanup":
+            if not self.notifications:
+                raise ValidationError("notification_cleanup requires NotificationRuntime")
+            result = self.notifications.cleanup_notifications()
+            return {"cleanup": asdict(result)}
         raise ValidationError(f"Unknown job type: {job.type}")
 
     @staticmethod

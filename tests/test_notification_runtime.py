@@ -4,6 +4,7 @@ import json
 import sys
 import tempfile
 import unittest
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -11,6 +12,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "backend"))
 
 from synapse.core.app import create_runtime
 from synapse.core.config import Settings
+from synapse.notifications.models import Notification
 from synapse.observability.correlation import correlation_scope, new_correlation
 
 DEFAULT_PERMISSIONS = [
@@ -67,6 +69,40 @@ def runtime_in_tempdir():
     write_json(settings.data_dir / "config" / "permissions.yaml", permissions)
     write_json(settings.data_dir / "config" / "system.yaml", system)
     return directory, settings, create_runtime(settings)
+
+
+def write_policy(settings: Settings, **updates) -> None:
+    policy = {
+        "notifications": {
+            "retention_days": 30,
+            "max_total_notifications": 500,
+            "preserve_unread": True,
+            "preserve_critical": True,
+            **updates,
+        }
+    }
+    write_json(settings.data_dir / "config" / "notification_policy.yaml", policy)
+
+
+def make_notification(
+    runtime,
+    title: str,
+    days_old: int = 0,
+    read: bool = True,
+    severity: str = "info",
+) -> Notification:
+    created_at = (datetime.now(UTC) - timedelta(days=days_old)).isoformat()
+    notification = Notification(
+        title=title,
+        message=title,
+        severity=severity,
+        source="test",
+        category="system",
+        read=read,
+        read_at=created_at if read else None,
+        created_at=created_at,
+    )
+    return runtime.notifications.provider.send(notification)
 
 
 class NotificationRuntimeTests(unittest.TestCase):
@@ -232,6 +268,129 @@ class NotificationRuntimeTests(unittest.TestCase):
         persisted = restarted.notifications.get(notification.id)
 
         self.assertEqual(persisted.title, "Restart")
+
+    def test_cleanup_deletes_old_read_notifications(self) -> None:
+        directory, settings, runtime = runtime_in_tempdir()
+        self.addCleanup(directory.cleanup)
+        write_policy(settings, retention_days=1)
+        old = make_notification(runtime, "old", days_old=10, read=True)
+        recent = make_notification(runtime, "recent", days_old=0, read=True)
+
+        result = runtime.notifications.cleanup_notifications()
+
+        self.assertEqual(result.deleted, 1)
+        ids = {notification.id for notification in runtime.notifications.list_notifications()}
+        self.assertNotIn(old.id, ids)
+        self.assertIn(recent.id, ids)
+
+    def test_cleanup_preserves_unread_and_critical(self) -> None:
+        directory, settings, runtime = runtime_in_tempdir()
+        self.addCleanup(directory.cleanup)
+        write_policy(settings, retention_days=1, preserve_unread=True, preserve_critical=True)
+        unread = make_notification(runtime, "unread", days_old=10, read=False)
+        critical = make_notification(runtime, "critical", days_old=10, read=True, severity="critical")
+        old = make_notification(runtime, "old", days_old=10, read=True)
+
+        result = runtime.notifications.cleanup_notifications()
+
+        ids = {notification.id for notification in runtime.notifications.list_notifications()}
+        self.assertEqual(result.deleted, 1)
+        self.assertIn(unread.id, ids)
+        self.assertIn(critical.id, ids)
+        self.assertNotIn(old.id, ids)
+
+    def test_cleanup_enforces_max_total_notifications(self) -> None:
+        directory, settings, runtime = runtime_in_tempdir()
+        self.addCleanup(directory.cleanup)
+        write_policy(
+            settings,
+            retention_days=999,
+            max_total_notifications=2,
+            preserve_unread=False,
+            preserve_critical=False,
+        )
+        for index in range(5):
+            make_notification(runtime, f"n{index}", days_old=5 - index, read=True)
+
+        result = runtime.notifications.cleanup_notifications()
+
+        self.assertEqual(result.max_total_deleted, 3)
+        self.assertEqual(len(runtime.notifications.list_notifications()), 2)
+
+    def test_cleanup_events_are_emitted(self) -> None:
+        directory, settings, runtime = runtime_in_tempdir()
+        self.addCleanup(directory.cleanup)
+        write_policy(settings, retention_days=1)
+        make_notification(runtime, "old", days_old=10, read=True)
+
+        runtime.notifications.cleanup_notifications()
+
+        event_types = [event.type for event in runtime.events.tail(limit=80)]
+        self.assertIn("notification.cleanup_started", event_types)
+        self.assertIn("notification.cleanup_completed", event_types)
+
+    def test_scheduler_runs_notification_cleanup(self) -> None:
+        directory, settings, runtime = runtime_in_tempdir()
+        self.addCleanup(directory.cleanup)
+        write_policy(settings, retention_days=1)
+        make_notification(runtime, "old", days_old=10, read=True)
+        runtime.scheduler.enqueue(runtime.context(), "notification_cleanup", {})
+
+        completed = runtime.scheduler.run_next(runtime.context())
+
+        self.assertEqual(completed.status, "completed")
+        self.assertEqual(completed.payload["result"]["cleanup"]["deleted"], 1)
+
+    def test_daemon_runs_notification_cleanup(self) -> None:
+        directory, settings, runtime = runtime_in_tempdir()
+        self.addCleanup(directory.cleanup)
+        write_policy(settings, retention_days=1)
+        make_notification(runtime, "old", days_old=10, read=True)
+        runtime.scheduler.enqueue(runtime.context(), "notification_cleanup", {})
+
+        status = runtime.daemon.run_once(runtime.context())
+
+        self.assertEqual(status.last_jobs_run[0]["status"], "completed")
+        self.assertEqual(len(runtime.notifications.list_notifications()), 0)
+
+    def test_cleanup_api_and_command_work(self) -> None:
+        try:
+            from fastapi import FastAPI
+            from fastapi.testclient import TestClient
+        except Exception as exc:  # pragma: no cover
+            self.skipTest(f"FastAPI test dependencies unavailable: {exc}")
+
+        from synapse.api.routes import router
+
+        directory, settings, runtime = runtime_in_tempdir()
+        self.addCleanup(directory.cleanup)
+        write_policy(settings, retention_days=1)
+        make_notification(runtime, "api-old", days_old=10, read=True)
+        command_old = make_notification(runtime, "command-old", days_old=10, read=True)
+        app = FastAPI()
+        app.state.runtime = runtime
+        app.include_router(router, prefix="/api")
+        client = TestClient(app)
+
+        api_result = client.post("/api/notifications/cleanup")
+        command_result = runtime.commands.execute(runtime.context(), "/notifications cleanup")
+
+        self.assertEqual(api_result.status_code, 200)
+        self.assertGreaterEqual(api_result.json()["deleted"], 1)
+        self.assertEqual(command_result.status, "ok")
+        ids = {notification.id for notification in runtime.notifications.list_notifications()}
+        self.assertNotIn(command_old.id, ids)
+
+    def test_cleanup_failed_event_is_emitted(self) -> None:
+        directory, settings, runtime = runtime_in_tempdir()
+        self.addCleanup(directory.cleanup)
+        write_policy(settings, retention_days="invalid")
+
+        with self.assertRaises(ValueError):
+            runtime.notifications.cleanup_notifications()
+
+        event_types = [event.type for event in runtime.events.tail(limit=80)]
+        self.assertIn("notification.cleanup_failed", event_types)
 
 
 if __name__ == "__main__":

@@ -95,7 +95,7 @@ def create_runtime(settings: Settings | None = None) -> RuntimeContainer:
     communication = AgentCommunication(data_dir, agents, permissions, events)
     presence = PresenceRuntime(data_dir, events)
     lifecycle = LifecycleRuntime(data_dir, events, presence)
-    notifications = NotificationRuntime(events, LocalNotificationProvider(data_dir))
+    notifications = NotificationRuntime(data_dir, events, LocalNotificationProvider(data_dir))
     communication_runtime = CommunicationRuntime(
         providers={
             "mock": MockCommunicationProvider(data_dir),

@@ -669,7 +669,16 @@ class CommandRuntime:
         )
 
     def _notifications(self, argument_text: str) -> CommandResult:
-        unread_only = argument_text.strip().lower() == "unread"
+        argument = argument_text.strip().lower()
+        if argument == "cleanup":
+            result = self.notifications.cleanup_notifications()
+            return CommandResult(
+                command="/notifications",
+                status="ok",
+                output=f"Notification cleanup deleted {result.deleted} notification(s).",
+                data={"cleanup": asdict(result)},
+            )
+        unread_only = argument == "unread"
         notifications = (
             self.notifications.list_unread()
             if unread_only

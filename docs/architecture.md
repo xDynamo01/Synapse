@@ -364,6 +364,29 @@ Notification events:
 
 Notification Runtime observes Presence and Lifecycle related failures only through events; it does not mutate those runtimes.
 
+Notification cleanup is controlled by:
+
+```text
+data/config/notification_policy.yaml
+```
+
+Policy fields:
+
+- `retention_days`
+- `max_total_notifications`
+- `preserve_unread`
+- `preserve_critical`
+
+`cleanup_notifications()` deletes old read notifications and enforces the configured maximum while preserving unread and critical notifications when policy requires it.
+
+Cleanup events:
+
+- `notification.cleanup_started`
+- `notification.cleanup_completed`
+- `notification.cleanup_failed`
+
+Scheduler integration adds job type `notification_cleanup`. Daemon can execute cleanup through normal scheduler cycles.
+
 ## Agent Runtime and Models
 
 `AgentRuntime` receives:

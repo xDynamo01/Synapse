@@ -32,3 +32,16 @@ class Notification:
     metadata: dict[str, Any] = field(default_factory=dict)
     id: str = field(default_factory=lambda: str(uuid4()))
     created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+
+
+@dataclass(frozen=True)
+class NotificationCleanupResult:
+    scanned: int
+    deleted: int
+    preserved_unread: int
+    preserved_critical: int
+    preserved_recent: int
+    max_total_deleted: int
+    retention_deleted: int
+    remaining: int
+    policy: dict[str, Any]

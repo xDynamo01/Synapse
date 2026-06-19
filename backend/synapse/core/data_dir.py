@@ -54,6 +54,16 @@ SEED_FILES = {
         "  }\n"
         "}\n"
     ),
+    "config/notification_policy.yaml": (
+        "{\n"
+        '  "notifications": {\n'
+        '    "retention_days": 30,\n'
+        '    "max_total_notifications": 500,\n'
+        '    "preserve_unread": true,\n'
+        '    "preserve_critical": true\n'
+        "  }\n"
+        "}\n"
+    ),
 }
 
 
