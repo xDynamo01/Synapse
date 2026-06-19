@@ -24,6 +24,7 @@ Client/UI
       -> Scheduler Runtime
       -> Daemon Runner
       -> Presence Runtime
+      -> Agent Lifecycle Runtime
       -> Observability / Correlation
       -> Command Runtime
       -> Device Registry
@@ -50,6 +51,8 @@ data/
   daemon/
     status.yaml
   presence/
+    <agent_id>.yaml
+  lifecycle/
     <agent_id>.yaml
   logs/
   library/
@@ -205,6 +208,63 @@ Runtime integrations:
 - `SchedulerRuntime`: job-scoped `working`, `idle`, `error` for agent jobs
 
 Every transition emits `presence.updated` and inherits the active `CorrelationContext` when one exists.
+
+## Agent Lifecycle Runtime
+
+`LifecycleRuntime` tracks each agent's operational stage. It is distinct from Presence:
+
+- Lifecycle answers: what operational stage is the agent in?
+- Presence answers: what is the agent doing right now?
+
+Lifecycle records are persisted under:
+
+```text
+data/lifecycle/<agent_id>.yaml
+```
+
+Lifecycle states:
+
+- `offline`
+- `booting`
+- `idle`
+- `waking`
+- `working`
+- `waiting`
+- `sleeping`
+- `error`
+- `shutdown`
+
+Each `AgentLifecycle` stores transition counters for boot, wake, sleep, and error transitions, plus optional reason, last error, transition timestamp, and correlation id.
+
+Runtime operations:
+
+- `boot(agent_id)`
+- `wake(agent_id, reason)`
+- `sleep(agent_id)`
+- `shutdown(agent_id)`
+- `error(agent_id, message)`
+- `get(agent_id)`
+- `list_all()`
+
+Lifecycle emits:
+
+- `agent.booted`
+- `agent.woken`
+- `agent.sleeping`
+- `agent.shutdown`
+- `agent.error`
+- `agent.lifecycle_changed`
+
+Initial integrations:
+
+- `boot` sets Presence to `idle`
+- `wake` sets Presence to `working`
+- `sleep` sets Presence to `idle`
+- `shutdown` sets Presence to `offline`
+- `AgentWorker` wakes an agent when pending inbox messages are processed and returns it to idle afterward
+- `SchedulerRuntime` wakes agents for `process_agent_inbox` jobs
+- `CommandRuntime` exposes `/lifecycle`, `/wake`, and `/sleep`
+- API exposes lifecycle read, wake, and sleep endpoints
 
 ## Agent Runtime and Models
 

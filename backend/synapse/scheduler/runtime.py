@@ -7,6 +7,7 @@ from typing import Any
 from synapse.core.events import EventBus
 from synapse.core.exceptions import ValidationError
 from synapse.core.permissions import PermissionContext
+from synapse.lifecycle.runtime import LifecycleRuntime
 from synapse.observability.correlation import (
     correlation_scope,
     current_correlation,
@@ -25,11 +26,13 @@ class SchedulerRuntime:
         worker: AgentWorker,
         event_bus: EventBus,
         presence: PresenceRuntime | None = None,
+        lifecycle: LifecycleRuntime | None = None,
     ):
         self.queue = queue
         self.worker = worker
         self.event_bus = event_bus
         self.presence = presence
+        self.lifecycle = lifecycle
 
     def enqueue(
         self,
@@ -130,6 +133,8 @@ class SchedulerRuntime:
             self.event_bus.emit("job.started", context.actor_id, asdict(running))
             try:
                 agent_id = self._agent_id_for_job(running)
+                if agent_id and self.lifecycle:
+                    self.lifecycle.wake(agent_id, f"scheduled job {running.id}")
                 if agent_id and self.presence:
                     self.presence.set_state(
                         agent_id,

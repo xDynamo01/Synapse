@@ -132,6 +132,30 @@ def get_presence(agent_id: str, request: Request) -> dict[str, Any]:
     return asdict(runtime.presence.get(agent_id))
 
 
+@router.get("/lifecycle")
+def list_lifecycle(request: Request) -> list[dict[str, Any]]:
+    runtime = runtime_from(request)
+    return [asdict(lifecycle) for lifecycle in runtime.lifecycle.list_all()]
+
+
+@router.get("/lifecycle/{agent_id}")
+def get_lifecycle(agent_id: str, request: Request) -> dict[str, Any]:
+    runtime = runtime_from(request)
+    return asdict(runtime.lifecycle.get(agent_id))
+
+
+@router.post("/lifecycle/{agent_id}/wake")
+def wake_agent(agent_id: str, request: Request) -> dict[str, Any]:
+    runtime = runtime_from(request)
+    return asdict(runtime.lifecycle.wake(agent_id, "api wake"))
+
+
+@router.post("/lifecycle/{agent_id}/sleep")
+def sleep_agent(agent_id: str, request: Request) -> dict[str, Any]:
+    runtime = runtime_from(request)
+    return asdict(runtime.lifecycle.sleep(agent_id))
+
+
 @router.get("/daemon/status")
 def daemon_status(request: Request) -> dict[str, Any]:
     runtime = runtime_from(request)

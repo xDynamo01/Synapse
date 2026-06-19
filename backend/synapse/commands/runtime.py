@@ -11,6 +11,7 @@ from synapse.core.config import ConfigStore
 from synapse.core.events import EventBus
 from synapse.core.permissions import PermissionContext
 from synapse.daemon.runner import DaemonRunner
+from synapse.lifecycle.runtime import LifecycleRuntime
 from synapse.memory.store import MemoryStore
 from synapse.policies.effective import EffectivePolicyRuntime
 from synapse.presence.runtime import PresenceRuntime
@@ -45,6 +46,7 @@ class CommandRuntime:
         scheduler: SchedulerRuntime,
         daemon: DaemonRunner,
         presence: PresenceRuntime,
+        lifecycle: LifecycleRuntime,
     ):
         self.config = config
         self.events = events
@@ -60,6 +62,7 @@ class CommandRuntime:
         self.scheduler = scheduler
         self.daemon = daemon
         self.presence = presence
+        self.lifecycle = lifecycle
 
     def execute(
         self,
@@ -127,6 +130,12 @@ class CommandRuntime:
             return self._trace(argument_text)
         if command == "/presence":
             return self._presence(argument_text)
+        if command == "/lifecycle":
+            return self._lifecycle(argument_text)
+        if command == "/wake":
+            return self._wake(argument_text)
+        if command == "/sleep":
+            return self._sleep(argument_text)
 
         return CommandResult(command=command, status="error", output=f"Unknown command: {command}")
 
@@ -156,6 +165,9 @@ class CommandRuntime:
             "/daemon-run-once",
             "/trace",
             "/presence",
+            "/lifecycle",
+            "/wake",
+            "/sleep",
         ]
         return CommandResult(
             command="/help",
@@ -528,6 +540,56 @@ class CommandRuntime:
             status="ok",
             output=f"{len(presences)} presence record(s).",
             data={"presence": presences},
+        )
+
+    def _lifecycle(self, argument_text: str) -> CommandResult:
+        agent_id = argument_text.strip().lower()
+        if agent_id:
+            lifecycle = self.lifecycle.get(agent_id)
+            return CommandResult(
+                command="/lifecycle",
+                status="ok",
+                output=f"Lifecycle for {agent_id}: {lifecycle.state}",
+                data={"lifecycle": asdict(lifecycle)},
+            )
+        lifecycles = [asdict(lifecycle) for lifecycle in self.lifecycle.list_all()]
+        return CommandResult(
+            command="/lifecycle",
+            status="ok",
+            output=f"{len(lifecycles)} lifecycle record(s).",
+            data={"lifecycle": lifecycles},
+        )
+
+    def _wake(self, argument_text: str) -> CommandResult:
+        agent_id, _, reason = argument_text.strip().partition(" ")
+        if not agent_id:
+            return CommandResult(
+                command="/wake",
+                status="error",
+                output="Usage: /wake <agent_id>",
+            )
+        lifecycle = self.lifecycle.wake(agent_id.lower(), reason.strip() or "command wake")
+        return CommandResult(
+            command="/wake",
+            status="ok",
+            output=f"Woke {agent_id.lower()}.",
+            data={"lifecycle": asdict(lifecycle)},
+        )
+
+    def _sleep(self, argument_text: str) -> CommandResult:
+        agent_id = argument_text.strip().lower()
+        if not agent_id:
+            return CommandResult(
+                command="/sleep",
+                status="error",
+                output="Usage: /sleep <agent_id>",
+            )
+        lifecycle = self.lifecycle.sleep(agent_id)
+        return CommandResult(
+            command="/sleep",
+            status="ok",
+            output=f"Put {agent_id} into idle lifecycle state.",
+            data={"lifecycle": asdict(lifecycle)},
         )
 
     def _default_agent_id(self) -> str:

@@ -112,6 +112,9 @@ Status: partial foundation complete.
 - Durable Presence Runtime for agent state projection.
 - Presence commands `/presence` and `/presence <agent_id>`.
 - Presence API endpoints.
+- Durable Agent Lifecycle Runtime.
+- Lifecycle commands `/lifecycle`, `/wake`, and `/sleep`.
+- Lifecycle API endpoints.
 
 Pending:
 
@@ -210,6 +213,26 @@ Pending:
 - Concurrent activity slots per agent.
 - Rich emotion/avatar state mapping.
 - Cross-process locking for homelab multi-runner scenarios.
+
+## 5G. Agent Lifecycle Runtime
+
+Status: complete foundation.
+
+- Durable lifecycle records under `DATA_DIR/lifecycle`.
+- Operational states: `offline`, `booting`, `idle`, `waking`, `working`, `waiting`, `sleeping`, `error`, and `shutdown`.
+- Lifecycle counters for boot, wake, sleep, and error transitions.
+- Presence integration for boot, wake, sleep, shutdown, and error.
+- AgentWorker wakes agents with pending inbox work and returns them to idle.
+- Scheduler wakes agents for `process_agent_inbox` jobs.
+- Commands `/lifecycle`, `/lifecycle <agent_id>`, `/wake <agent_id>`, and `/sleep <agent_id>`.
+- API endpoints for lifecycle list/detail/wake/sleep.
+
+Pending:
+
+- Explicit boot orchestration during daemon startup.
+- Lifecycle transition guards/state machine validation.
+- Historical lifecycle timeline.
+- Cross-process locks for homelab multi-runner mode.
 
 ## 5A. Chat Runtime
 

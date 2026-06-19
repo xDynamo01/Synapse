@@ -19,6 +19,7 @@ from synapse.core.model_router import ModelRouter
 from synapse.core.permissions import PermissionContext, PermissionManager
 from synapse.daemon.runner import DaemonRunner
 from synapse.daemon.status import DaemonStatusStore
+from synapse.lifecycle.runtime import LifecycleRuntime
 from synapse.memory.store import MemoryStore
 from synapse.policies.effective import EffectivePolicyRuntime
 from synapse.presence.runtime import PresenceRuntime
@@ -44,6 +45,7 @@ class RuntimeContainer:
     agent_runtime: AgentRuntime
     communication: AgentCommunication
     presence: PresenceRuntime
+    lifecycle: LifecycleRuntime
     devices: DeviceRegistry
     approvals: ApprovalManager
     approval_resume: ApprovalResumeRuntime
@@ -85,6 +87,7 @@ def create_runtime(settings: Settings | None = None) -> RuntimeContainer:
     identities = AgentIdentityRuntime(data_dir)
     communication = AgentCommunication(data_dir, agents, permissions, events)
     presence = PresenceRuntime(data_dir, events)
+    lifecycle = LifecycleRuntime(data_dir, events, presence)
     devices = DeviceRegistry(data_dir, events)
     approvals = ApprovalManager(data_dir, permissions, devices, events)
     memory = MemoryStore(data_dir, permissions, events)
@@ -95,9 +98,17 @@ def create_runtime(settings: Settings | None = None) -> RuntimeContainer:
     context_loader = ContextLoader(data_dir, permissions, events, agents, identities, policies, tasks)
     tool_router = ToolRouter(tools, permissions, approvals, events, presence)
     agent_runtime = AgentRuntime(agents, policies, models, tool_router, events, presence)
-    worker = AgentWorker(communication, context_loader, agent_runtime, policies, events, presence)
+    worker = AgentWorker(
+        communication,
+        context_loader,
+        agent_runtime,
+        policies,
+        events,
+        presence,
+        lifecycle,
+    )
     job_queue = JobQueue(data_dir)
-    scheduler = SchedulerRuntime(job_queue, worker, events, presence)
+    scheduler = SchedulerRuntime(job_queue, worker, events, presence, lifecycle)
     daemon = DaemonRunner(scheduler, DaemonStatusStore(data_dir), events)
     approval_resume = ApprovalResumeRuntime(approvals, tool_router, policies)
     commands = CommandRuntime(
@@ -115,6 +126,7 @@ def create_runtime(settings: Settings | None = None) -> RuntimeContainer:
         scheduler,
         daemon,
         presence,
+        lifecycle,
     )
     chat = ChatRuntime(data_dir, events, context_loader, agent_runtime, commands, presence)
 
@@ -132,6 +144,7 @@ def create_runtime(settings: Settings | None = None) -> RuntimeContainer:
         agent_runtime=agent_runtime,
         communication=communication,
         presence=presence,
+        lifecycle=lifecycle,
         devices=devices,
         approvals=approvals,
         approval_resume=approval_resume,

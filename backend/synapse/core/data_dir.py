@@ -17,6 +17,7 @@ REQUIRED_DIRECTORIES = (
     "jobs",
     "daemon",
     "presence",
+    "lifecycle",
     "logs",
     "library",
     "chats",

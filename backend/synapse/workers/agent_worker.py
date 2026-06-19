@@ -9,6 +9,7 @@ from synapse.agents.runtime import AgentRuntime
 from synapse.context.loader import ContextLoader
 from synapse.core.events import EventBus
 from synapse.core.permissions import PermissionContext
+from synapse.lifecycle.runtime import LifecycleRuntime
 from synapse.policies.effective import EffectivePolicyRuntime
 from synapse.presence.runtime import PresenceRuntime
 
@@ -42,6 +43,7 @@ class AgentWorker:
         policies: EffectivePolicyRuntime,
         event_bus: EventBus,
         presence: PresenceRuntime | None = None,
+        lifecycle: LifecycleRuntime | None = None,
     ):
         self.communication = communication
         self.context_loader = context_loader
@@ -49,6 +51,7 @@ class AgentWorker:
         self.policies = policies
         self.event_bus = event_bus
         self.presence = presence
+        self.lifecycle = lifecycle
         self._status = WorkerStatus()
 
     def list_inbox(
@@ -70,6 +73,12 @@ class AgentWorker:
         pending = self.communication.list_messages(worker_context, agent_id, status="pending")
         if limit is not None:
             pending = pending[:limit]
+        if (
+            pending
+            and self.lifecycle
+            and self.lifecycle.get(agent_id).state not in {"waking", "working"}
+        ):
+            self.lifecycle.wake(agent_id, "pending inbox messages")
         self._set_presence(agent_id, "working", "Checking inbox", actor_id=worker_context.actor_id)
         self.event_bus.emit(
             "worker.inbox_checked",
@@ -80,6 +89,8 @@ class AgentWorker:
         results = [self._process_message(context, agent_id, message) for message in pending]
         failures = len([item for item in results if item.status == "failed"])
         if failures:
+            if self.lifecycle:
+                self.lifecycle.error(agent_id, f"{failures} inbox message(s) failed")
             self._set_presence(
                 agent_id,
                 "error",
@@ -87,6 +98,8 @@ class AgentWorker:
                 actor_id=worker_context.actor_id,
             )
         else:
+            if self.lifecycle:
+                self.lifecycle.sleep(agent_id)
             self._set_presence(
                 agent_id,
                 "idle",
