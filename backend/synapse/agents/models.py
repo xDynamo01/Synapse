@@ -25,6 +25,10 @@ class AgentMessage:
     body: str
     task_id: str | None = None
     status: str = "pending"
+    correlation_id: str | None = None
+    causation_id: str | None = None
+    parent_id: str | None = None
+    source: str | None = None
     id: str = field(default_factory=lambda: str(uuid4()))
     timestamp: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())

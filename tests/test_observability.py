@@ -11,6 +11,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "backend"))
 
 from synapse.core.app import create_runtime
 from synapse.core.config import Settings
+from synapse.observability.correlation import correlation_scope, new_correlation
 
 DEFAULT_PERMISSIONS = [
     "filesystem.read",
@@ -181,8 +182,8 @@ class ObservabilityTests(unittest.TestCase):
         response = TestClient(app).get(f"/api/trace/{correlation_id}")
 
         self.assertEqual(response.status_code, 200)
-        self.assertGreaterEqual(len(response.json()), 1)
-        self.assertEqual(response.json()[0]["correlation_id"], correlation_id)
+        self.assertGreaterEqual(len(response.json()["events"]), 1)
+        self.assertEqual(response.json()["events"][0]["correlation_id"], correlation_id)
 
     def test_legacy_events_without_correlation_do_not_break_reading(self) -> None:
         directory, _, runtime = runtime_in_tempdir()
@@ -206,6 +207,115 @@ class ObservabilityTests(unittest.TestCase):
         legacy = next(event for event in events if event.id == "legacy-event")
         self.assertIsNone(legacy.correlation_id)
         self.assertEqual(legacy.source, "legacy")
+
+    def test_create_task_persists_correlation_id(self) -> None:
+        directory, _, runtime = runtime_in_tempdir()
+        self.addCleanup(directory.cleanup)
+        correlation = new_correlation(source="test")
+
+        with correlation_scope(correlation):
+            task = runtime.tasks.create_task(runtime.context(), "Correlated task")
+
+        persisted = runtime.tasks.get_task(task.id)
+        self.assertEqual(persisted.correlation_id, correlation.correlation_id)
+        self.assertEqual(persisted.source, "test")
+
+    def test_send_agent_message_persists_correlation_id(self) -> None:
+        directory, _, runtime = runtime_in_tempdir()
+        self.addCleanup(directory.cleanup)
+        correlation = new_correlation(source="test")
+
+        with correlation_scope(correlation):
+            message = send_message(runtime)
+
+        persisted = runtime.communication.list_messages(runtime.context(), "researcher")[0]
+        self.assertEqual(persisted.id, message.id)
+        self.assertEqual(persisted.correlation_id, correlation.correlation_id)
+
+    def test_approval_request_persists_correlation_id(self) -> None:
+        directory, _, runtime = runtime_in_tempdir()
+        self.addCleanup(directory.cleanup)
+        correlation = new_correlation(source="test")
+
+        with correlation_scope(correlation):
+            approval = runtime.approvals.create_request(
+                context=runtime.context(actor_id="artemis", actor_type="agent"),
+                tool_name="write_file",
+                tool_args={"path": "projects/a.txt"},
+                risk_level="high",
+                reason="test",
+                tool_call_id="tool-call",
+            )
+
+        persisted = runtime.approvals.get_status(approval.id)
+        self.assertEqual(persisted.correlation_id, correlation.correlation_id)
+        self.assertEqual(persisted.source, "test")
+
+    def test_job_persists_correlation_metadata(self) -> None:
+        directory, _, runtime = runtime_in_tempdir()
+        self.addCleanup(directory.cleanup)
+        correlation = new_correlation(source="test", causation_id="cause", parent_id="parent")
+
+        with correlation_scope(correlation):
+            job = runtime.scheduler.enqueue(
+                runtime.context(),
+                "process_agent_inbox",
+                {"agent_id": "researcher"},
+            )
+
+        persisted = runtime.scheduler.get_job(job.id)
+        self.assertEqual(persisted.correlation_id, correlation.correlation_id)
+        self.assertEqual(persisted.causation_id, "cause")
+        self.assertEqual(persisted.parent_id, "parent")
+        self.assertEqual(persisted.source, "test")
+
+    def test_chat_session_message_persists_correlation_id(self) -> None:
+        directory, _, runtime = runtime_in_tempdir()
+        self.addCleanup(directory.cleanup)
+
+        result = runtime.chat.send_message(runtime.context(), "artemis", "durable chat")
+        session = runtime.chat.get_session(result.session_id)
+
+        self.assertIsNotNone(session.correlation_id)
+        self.assertTrue(all(message.correlation_id for message in session.messages))
+        self.assertEqual(session.messages[0].correlation_id, session.messages[1].correlation_id)
+
+    def test_trace_includes_durable_records(self) -> None:
+        directory, _, runtime = runtime_in_tempdir()
+        self.addCleanup(directory.cleanup)
+        result = runtime.chat.send_message(runtime.context(), "artemis", "trace records")
+        correlation_id = runtime.chat.get_session(result.session_id).correlation_id
+
+        trace = runtime.commands.execute(runtime.context(), f"/trace {correlation_id}")
+
+        self.assertEqual(trace.status, "ok")
+        kinds = {record["kind"] for record in trace.data["records"]}
+        self.assertIn("chat_session", kinds)
+        self.assertIn("chat_message", kinds)
+
+    def test_legacy_durable_records_without_correlation_still_load(self) -> None:
+        directory, _, runtime = runtime_in_tempdir()
+        self.addCleanup(directory.cleanup)
+        task_path = runtime.data_dir.resolve("tasks/active/legacy-task.json")
+        task_path.write_text(
+            json.dumps(
+                {
+                    "id": "legacy-task",
+                    "title": "Legacy",
+                    "created_by": "legacy",
+                    "description": "",
+                    "status": "active",
+                    "metadata": {},
+                    "created_at": "2026-06-14T00:00:00+00:00",
+                    "updated_at": "2026-06-14T00:00:00+00:00",
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        task = runtime.tasks.get_task("legacy-task")
+
+        self.assertIsNone(task.correlation_id)
 
 
 if __name__ == "__main__":

@@ -493,10 +493,22 @@ Events are persisted as JSONL envelopes with:
 
 `EventBus` remains backward-compatible with older event lines that do not include correlation fields. Those events load with `correlation_id=None` and `source="legacy"`.
 
+Durable records also carry optional correlation metadata when created inside an active `CorrelationContext`:
+
+- task records
+- agent message records
+- approval requests
+- jobs
+- chat sessions and chat messages
+
+Older persisted records without these fields remain readable and load with `None` correlation metadata.
+
 Trace access:
 
 - command `/trace <correlation_id>`
 - API `GET /trace/{correlation_id}`
+
+Trace responses include both correlated events and local durable records found in `DATA_DIR`.
 
 ## Command Runtime
 

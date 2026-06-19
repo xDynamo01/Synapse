@@ -16,6 +16,7 @@ from synapse.core.permissions import PermissionContext
 from synapse.observability.correlation import (
     correlation_scope,
     current_correlation,
+    current_correlation_fields,
     new_correlation,
 )
 
@@ -26,6 +27,10 @@ class ChatMessage:
     content: str
     created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     metadata: dict[str, Any] = field(default_factory=dict)
+    correlation_id: str | None = None
+    causation_id: str | None = None
+    parent_id: str | None = None
+    source: str | None = None
 
 
 @dataclass(frozen=True)
@@ -34,6 +39,10 @@ class ChatSession:
     agent_id: str
     project_id: str | None
     messages: list[ChatMessage] = field(default_factory=list)
+    correlation_id: str | None = None
+    causation_id: str | None = None
+    parent_id: str | None = None
+    source: str | None = None
     created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     updated_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
@@ -105,7 +114,11 @@ class ChatRuntime:
             },
         )
 
-        user_chat_message = ChatMessage(role="user", content=user_message)
+        user_chat_message = ChatMessage(
+            role="user",
+            content=user_message,
+            **current_correlation_fields(),
+        )
 
         if user_message.strip().startswith("/"):
             session = self._append_message(session, user_chat_message, agent_id, project_id)
@@ -114,6 +127,7 @@ class ChatRuntime:
                 role="assistant",
                 content=result.output,
                 metadata={"command": asdict(result)},
+                **current_correlation_fields(),
             )
             session = self._append_message(session, assistant_message, agent_id, project_id)
             self.event_bus.emit(
@@ -167,6 +181,7 @@ class ChatRuntime:
                 "tool_calling": agent_result.tool_calling,
                 "tool_results": [asdict(tool_result) for tool_result in agent_result.tool_results],
             },
+            **current_correlation_fields(),
         )
         session = self._append_message(session, user_chat_message, agent_id, project_id)
         session = self._append_message(session, assistant_message, agent_id, project_id)
@@ -197,7 +212,11 @@ class ChatRuntime:
             id=raw["id"],
             agent_id=raw["agent_id"],
             project_id=raw.get("project_id"),
-            messages=[ChatMessage(**message) for message in raw.get("messages", [])],
+            messages=[self._message_from_raw(message) for message in raw.get("messages", [])],
+            correlation_id=raw.get("correlation_id"),
+            causation_id=raw.get("causation_id"),
+            parent_id=raw.get("parent_id"),
+            source=raw.get("source"),
             created_at=raw["created_at"],
             updated_at=raw["updated_at"],
         )
@@ -212,8 +231,18 @@ class ChatRuntime:
             path = self._session_path(session_id)
             if path.exists():
                 return self.get_session(session_id)
-            return ChatSession(id=session_id, agent_id=agent_id, project_id=project_id)
-        return ChatSession(id=str(uuid4()), agent_id=agent_id, project_id=project_id)
+            return ChatSession(
+                id=session_id,
+                agent_id=agent_id,
+                project_id=project_id,
+                **current_correlation_fields(),
+            )
+        return ChatSession(
+            id=str(uuid4()),
+            agent_id=agent_id,
+            project_id=project_id,
+            **current_correlation_fields(),
+        )
 
     def _append_message(
         self,
@@ -227,6 +256,10 @@ class ChatRuntime:
             agent_id=agent_id,
             project_id=project_id,
             messages=[*session.messages, message],
+            correlation_id=session.correlation_id or message.correlation_id,
+            causation_id=session.causation_id or message.causation_id,
+            parent_id=session.parent_id or message.parent_id,
+            source=session.source or message.source,
             created_at=session.created_at,
             updated_at=datetime.now(UTC).isoformat(),
         )
@@ -247,6 +280,15 @@ class ChatRuntime:
 
     def _session_path(self, session_id: str) -> Path:
         return self.data_dir.resolve(f"chats/sessions/{session_id}.json")
+
+    @staticmethod
+    def _message_from_raw(raw: dict[str, Any]) -> ChatMessage:
+        raw.setdefault("metadata", {})
+        raw.setdefault("correlation_id", None)
+        raw.setdefault("causation_id", None)
+        raw.setdefault("parent_id", None)
+        raw.setdefault("source", None)
+        return ChatMessage(**raw)
 
     @staticmethod
     def _history_for_context(session: ChatSession) -> list[dict[str, str]]:

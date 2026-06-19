@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from synapse.core.serialization import load_structured_file
 from synapse.observability.correlation import CorrelationContext, current_correlation
 
 
@@ -25,6 +26,7 @@ class Event:
 
 class EventBus:
     def __init__(self, data_dir: Path):
+        self.data_dir = data_dir
         self.path = data_dir / "logs" / "events.jsonl"
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -82,3 +84,61 @@ class EventBus:
             if event.correlation_id == correlation_id:
                 events.append(event)
         return events
+
+    def trace_records(self, correlation_id: str) -> list[dict[str, Any]]:
+        records: list[dict[str, Any]] = []
+        for path in self._candidate_record_paths():
+            record = self._load_record(path)
+            if not record:
+                continue
+            if record.get("correlation_id") == correlation_id:
+                records.append(self._trace_record(path, record))
+            for item in record.get("messages", []):
+                if isinstance(item, dict) and item.get("correlation_id") == correlation_id:
+                    records.append(self._trace_record(path, item, nested_kind="chat_message"))
+        return records
+
+    def _candidate_record_paths(self) -> list[Path]:
+        patterns = [
+            "tasks/*/*.json",
+            "agents/*/messages/*.yaml",
+            "approvals/*.yaml",
+            "jobs/*.yaml",
+            "chats/sessions/*.json",
+        ]
+        paths: list[Path] = []
+        for pattern in patterns:
+            paths.extend(sorted(self.data_dir.glob(pattern)))
+        return paths
+
+    def _load_record(self, path: Path) -> dict[str, Any]:
+        if path.suffix == ".json":
+            return json.loads(path.read_text(encoding="utf-8"))
+        return load_structured_file(path)
+
+    def _trace_record(
+        self,
+        path: Path,
+        record: dict[str, Any],
+        nested_kind: str | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "kind": nested_kind or self._record_kind(path),
+            "path": str(path.relative_to(self.data_dir)).replace("\\", "/"),
+            "record": record,
+        }
+
+    @staticmethod
+    def _record_kind(path: Path) -> str:
+        parts = path.parts
+        if "tasks" in parts:
+            return "task"
+        if "messages" in parts:
+            return "agent_message"
+        if "approvals" in parts:
+            return "approval"
+        if "jobs" in parts:
+            return "job"
+        if "sessions" in parts:
+            return "chat_session"
+        return "record"

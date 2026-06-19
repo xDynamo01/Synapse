@@ -62,4 +62,8 @@ class JobQueue:
     @staticmethod
     def _read(path: Path) -> Job:
         raw = load_structured_file(path)
+        raw.setdefault("correlation_id", None)
+        raw.setdefault("causation_id", None)
+        raw.setdefault("parent_id", None)
+        raw.setdefault("source", None)
         return Job(**raw)

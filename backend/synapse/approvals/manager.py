@@ -12,6 +12,7 @@ from synapse.core.events import EventBus
 from synapse.core.exceptions import NotFound, PermissionDenied, ValidationError
 from synapse.core.permissions import PermissionContext, PermissionManager
 from synapse.core.serialization import dump_structured_file, load_structured_file
+from synapse.observability.correlation import current_correlation_fields
 
 APPROVAL_STATUSES = {"pending", "approved", "rejected", "expired", "resumed"}
 RISK_LEVELS = {"low", "medium", "high", "critical"}
@@ -42,6 +43,10 @@ class ApprovalRequest:
     expires_at: str | None = None
     resumed_at: str | None = None
     resume_result: dict[str, Any] | None = None
+    correlation_id: str | None = None
+    causation_id: str | None = None
+    parent_id: str | None = None
+    source: str | None = None
     id: str = field(default_factory=lambda: str(uuid4()))
     created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     updated_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
@@ -106,6 +111,7 @@ class ApprovalManager:
             original_message_id=original_message_id,
             project_id=project_id,
             expires_at=expires_at,
+            **current_correlation_fields(),
         )
         self._write(request)
         self.event_bus.emit("approval.requested", context.actor_id, asdict(request))
@@ -223,6 +229,10 @@ class ApprovalManager:
             expires_at=request.expires_at,
             resumed_at=resumed_at or request.resumed_at,
             resume_result=resume_result if resume_result is not None else request.resume_result,
+            correlation_id=request.correlation_id,
+            causation_id=request.causation_id,
+            parent_id=request.parent_id,
+            source=request.source,
             created_at=request.created_at,
             updated_at=datetime.now(UTC).isoformat(),
         )
@@ -271,4 +281,8 @@ class ApprovalManager:
     def _read(path: Path) -> ApprovalRequest:
         raw = load_structured_file(path)
         raw.setdefault("tool_call_id", raw.get("id", "unknown"))
+        raw.setdefault("correlation_id", None)
+        raw.setdefault("causation_id", None)
+        raw.setdefault("parent_id", None)
+        raw.setdefault("source", None)
         return ApprovalRequest(**raw)

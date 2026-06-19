@@ -36,6 +36,16 @@ Trace lookup is exposed through:
 
 Event loading remains backward-compatible with older JSONL entries that do not include correlation fields.
 
+Durable records also persist optional correlation metadata when created in a correlation scope:
+
+- tasks
+- agent messages
+- approval requests
+- jobs
+- chat sessions and chat messages
+
+Trace lookup returns matching events and matching durable records from `DATA_DIR`.
+
 ## Consequences
 
 Positive:
@@ -48,5 +58,5 @@ Positive:
 Tradeoffs:
 
 - causation chains are still shallow
-- not every persistent domain record stores its correlation id yet
+- some future domain records may still need explicit correlation fields as they are introduced
 - no external exporter or indexed trace store exists yet

@@ -11,6 +11,7 @@ from synapse.core.events import EventBus
 from synapse.core.exceptions import NotFound, ValidationError
 from synapse.core.permissions import PermissionContext, PermissionManager
 from synapse.core.serialization import dump_structured_file, load_structured_file
+from synapse.observability.correlation import current_correlation_fields
 
 
 class AgentCommunication:
@@ -45,6 +46,7 @@ class AgentCommunication:
             subject=subject or "Agent message",
             body=body,
             task_id=task_id,
+            **current_correlation_fields(),
         )
         inbox_entry = (
             f"\n## {message.created_at} | {message.from_agent} | {message.subject} | {message.id}\n\n"
@@ -110,6 +112,10 @@ class AgentCommunication:
             body=message.body,
             task_id=message.task_id,
             status=status,
+            correlation_id=message.correlation_id,
+            causation_id=message.causation_id,
+            parent_id=message.parent_id,
+            source=message.source,
             timestamp=message.timestamp,
             created_at=message.created_at,
             updated_at=datetime.now(UTC).isoformat(),
@@ -158,4 +164,8 @@ class AgentCommunication:
             raw["subject"] = "Agent message"
         if "status" not in raw:
             raw["status"] = "pending"
+        raw.setdefault("correlation_id", None)
+        raw.setdefault("causation_id", None)
+        raw.setdefault("parent_id", None)
+        raw.setdefault("source", None)
         return AgentMessage(**raw)

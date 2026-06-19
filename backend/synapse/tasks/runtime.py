@@ -11,6 +11,7 @@ from synapse.core.data_dir import DataDir
 from synapse.core.events import EventBus
 from synapse.core.exceptions import NotFound, ValidationError
 from synapse.core.permissions import PermissionContext, PermissionManager
+from synapse.observability.correlation import current_correlation_fields
 
 TASK_STATUSES = {"active", "completed", "failed"}
 
@@ -22,6 +23,10 @@ class Task:
     description: str = ""
     status: str = "active"
     metadata: dict[str, Any] = field(default_factory=dict)
+    correlation_id: str | None = None
+    causation_id: str | None = None
+    parent_id: str | None = None
+    source: str | None = None
     id: str = field(default_factory=lambda: str(uuid4()))
     created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     updated_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
@@ -46,6 +51,7 @@ class TaskRuntime:
             created_by=context.actor_id,
             description=description,
             metadata=metadata or {},
+            **current_correlation_fields(),
         )
         self._write(task)
         self.event_bus.emit("task.created", context.actor_id, asdict(task))
@@ -86,6 +92,10 @@ class TaskRuntime:
             description=task.description,
             status=next_status,
             metadata=next_metadata,
+            correlation_id=task.correlation_id,
+            causation_id=task.causation_id,
+            parent_id=task.parent_id,
+            source=task.source,
             created_at=task.created_at,
             updated_at=datetime.now(UTC).isoformat(),
         )
@@ -129,4 +139,3 @@ class TaskRuntime:
     def _read(path: Path) -> Task:
         raw = json.loads(path.read_text(encoding="utf-8"))
         return Task(**raw)
-

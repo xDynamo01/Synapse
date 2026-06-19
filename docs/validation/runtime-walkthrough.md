@@ -86,7 +86,7 @@ Agent identity status: agents now load structured operational identity through `
 
 Effective policy status: `EffectivePolicyRuntime` now resolves the single policy object used by `AgentRuntime`, `ToolRouter`, `ApprovalResumeRuntime`, `ContextLoader`, and `/policy`. It combines global permissions, agent `CONFIG.yaml`, `AgentIdentity`, approval policy, and optional device constraints.
 
-Observability status: `EventBus` now writes correlation-aware envelopes. Chat turns, tool calls, approval creation, job execution, daemon ticks, and worker processing can be traced by `correlation_id` through `/trace` or `GET /trace/{correlation_id}`.
+Observability status: `EventBus` now writes correlation-aware envelopes. Durable records for tasks, agent messages, approvals, jobs, and chat sessions also persist optional correlation metadata. Chat turns, tool calls, approval creation, job execution, daemon ticks, worker processing, and related records can be traced by `correlation_id` through `/trace` or `GET /trace/{correlation_id}`.
 
 ## Step-by-Step Walkthrough
 
@@ -727,7 +727,7 @@ Command/API -> DaemonRunner -> SchedulerRuntime -> JobQueue(DATA_DIR/jobs) -> Ag
 For traces:
 
 ```text
-CorrelationContext -> EventBus(JSONL envelopes) -> /trace or GET /trace/{correlation_id}
+CorrelationContext -> EventBus(JSONL envelopes) + durable records -> /trace or GET /trace/{correlation_id}
 ```
 
 ## Execution Diagram
@@ -831,7 +831,7 @@ sequenceDiagram
     It centralizes global permissions, agent config, identity preferences, approval policy, and device constraints. Resource-scoped filesystem/project/model rules and policy schema migrations are still missing.
 
 1D. Correlation IDs exist, but causation chains are still shallow.
-    Events can be traced by `correlation_id`, but not every persisted domain record stores its correlation id yet.
+    Events and core durable records can be traced by `correlation_id`, but deeper event-to-event causation is not fully modeled yet.
 
 2. Daemon Runner exists, but no production service wrapper exists.
    `run_once()` can execute pending jobs deterministically and `start_loop()` provides a basic loop boundary. There is no CLI/service wrapper, process supervision, lock manager, or backoff retry policy yet.
@@ -873,7 +873,7 @@ Priority 1:
 - Add approval notifications, remote-safe approval workflows, and session message updates after resume.
 - Add worker retry policy and queue/scheduler before homelab autonomous mode.
 - Add daemon service wrapper, scheduler locks, backoff, and retention policies before homelab autonomous mode.
-- Persist correlation ids on long-lived domain records that need offline trace reconstruction.
+- Add indexed trace storage if JSONL scanning becomes too slow.
 
 Priority 2:
 

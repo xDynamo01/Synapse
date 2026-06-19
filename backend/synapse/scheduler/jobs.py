@@ -21,6 +21,9 @@ class Job:
     completed_at: str | None = None
     failed_reason: str | None = None
     correlation_id: str | None = None
+    causation_id: str | None = None
+    parent_id: str | None = None
+    source: str | None = None
     id: str = field(default_factory=lambda: str(uuid4()))
     created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     updated_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
@@ -47,6 +50,9 @@ class Job:
             "completed_at": self.completed_at,
             "failed_reason": self.failed_reason,
             "correlation_id": self.correlation_id,
+            "causation_id": self.causation_id,
+            "parent_id": self.parent_id,
+            "source": self.source,
         }
         payload.update(updates)
         return Job(**payload)

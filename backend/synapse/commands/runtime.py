@@ -495,11 +495,15 @@ class CommandRuntime:
                 output="Usage: /trace <correlation_id>",
             )
         events = [asdict(event) for event in self.events.trace(correlation_id)]
+        records = self.events.trace_records(correlation_id)
         return CommandResult(
             command="/trace",
             status="ok",
-            output=f"{len(events)} event(s) for correlation {correlation_id}.",
-            data={"events": events},
+            output=(
+                f"{len(events)} event(s), {len(records)} durable record(s) "
+                f"for correlation {correlation_id}."
+            ),
+            data={"events": events, "records": records},
         )
 
     def _default_agent_id(self) -> str:

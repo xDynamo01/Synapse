@@ -51,6 +51,9 @@ class SchedulerRuntime:
             max_attempts=max_attempts,
             scheduled_for=scheduled_for,
             correlation_id=correlation_id or correlation.correlation_id,
+            causation_id=correlation.causation_id,
+            parent_id=correlation.parent_id,
+            source=correlation.source,
         )
         self.queue.add(job)
         with correlation_scope(correlation.child(source="scheduler", job_id=job.id)):

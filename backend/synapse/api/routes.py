@@ -148,9 +148,12 @@ def list_events(request: Request, limit: int = 100) -> list[dict[str, Any]]:
 
 
 @router.get("/trace/{correlation_id}")
-def trace_events(correlation_id: str, request: Request) -> list[dict[str, Any]]:
+def trace_events(correlation_id: str, request: Request) -> dict[str, Any]:
     runtime = runtime_from(request)
-    return [asdict(event) for event in runtime.events.trace(correlation_id)]
+    return {
+        "events": [asdict(event) for event in runtime.events.trace(correlation_id)],
+        "records": runtime.events.trace_records(correlation_id),
+    }
 
 
 @router.get("/jobs")

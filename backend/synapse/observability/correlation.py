@@ -80,6 +80,23 @@ def current_correlation() -> CorrelationContext | None:
     return _current_correlation.get()
 
 
+def current_correlation_fields() -> dict[str, str | None]:
+    context = current_correlation()
+    if not context:
+        return {
+            "correlation_id": None,
+            "causation_id": None,
+            "parent_id": None,
+            "source": None,
+        }
+    return {
+        "correlation_id": context.correlation_id,
+        "causation_id": context.causation_id,
+        "parent_id": context.parent_id,
+        "source": context.source,
+    }
+
+
 @contextmanager
 def correlation_scope(context: CorrelationContext) -> Iterator[CorrelationContext]:
     token = _current_correlation.set(context)
