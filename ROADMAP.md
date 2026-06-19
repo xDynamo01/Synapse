@@ -115,6 +115,8 @@ Status: partial foundation complete.
 - Durable Agent Lifecycle Runtime.
 - Lifecycle commands `/lifecycle`, `/wake`, and `/sleep`.
 - Lifecycle API endpoints.
+- Communication Runtime V1 for mock email read/classify/summarize/draft.
+- Communication tools, commands, API, scheduler job, and Hermes briefing.
 
 Pending:
 
@@ -254,12 +256,29 @@ Pending:
 
 ## 6. Communication Runtime
 
-Status: pending.
+Status: complete V1 foundation.
 
-- Email and chat integration boundary.
-- Draft vs send permission separation.
-- Message ingestion events.
-- Agent review workflow.
+- Runtime-owned email boundary.
+- Offline `MockCommunicationProvider`.
+- Prepared `GmailCommunicationProvider` boundary.
+- Email classification categories: recruitment, project, personal, newsletter, system, unknown.
+- Email summary and Hermes briefing generation.
+- Draft creation and draft listing.
+- Tools: `read_email`, `summarize_email`, `create_email_draft`, `list_email_drafts`.
+- Commands: `/check-email`, `/email-summary`, `/email-drafts`, `/email-read <id>`.
+- API: `/communication/messages`, `/communication/drafts`, `/communication/summary`.
+- Scheduler job type `check_email`.
+- Daemon can execute `check_email` through scheduler.
+- Presence and lifecycle integration for Hermes.
+
+Pending:
+
+- Real Gmail OAuth/token storage.
+- Real provider sync state and pagination.
+- Send-email runtime with critical approval gate.
+- Human review workflow for draft approval.
+- Provider-specific rate limits and retries.
+- Communication threads/conversations persistence beyond drafts.
 
 ## 7. Presence Runtime
 

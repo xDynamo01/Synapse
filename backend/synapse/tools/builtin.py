@@ -4,6 +4,7 @@ from dataclasses import asdict
 from typing import Any
 
 from synapse.agents.communication import AgentCommunication
+from synapse.communication.runtime import CommunicationRuntime
 from synapse.core.data_dir import DataDir
 from synapse.core.exceptions import ToolExecutionError, ValidationError
 from synapse.core.permissions import PermissionContext
@@ -199,11 +200,90 @@ class UpdateTaskTool:
         return asdict(task)
 
 
+class ReadEmailTool:
+    spec = ToolSpec(
+        name="read_email",
+        description="Read an email message through Communication Runtime.",
+        permission="communication.read",
+        risk_level="medium",
+    )
+
+    def __init__(self, communication_runtime: CommunicationRuntime):
+        self.communication_runtime = communication_runtime
+
+    def run(self, context: PermissionContext, **kwargs: Any) -> dict[str, Any]:
+        message = self.communication_runtime.read_message(
+            message_id=str(kwargs["message_id"]),
+            provider=kwargs.get("provider"),
+        )
+        return asdict(message)
+
+
+class SummarizeEmailTool:
+    spec = ToolSpec(
+        name="summarize_email",
+        description="Summarize an email message through Communication Runtime.",
+        permission="communication.summarize",
+        risk_level="medium",
+    )
+
+    def __init__(self, communication_runtime: CommunicationRuntime):
+        self.communication_runtime = communication_runtime
+
+    def run(self, context: PermissionContext, **kwargs: Any) -> dict[str, Any]:
+        return self.communication_runtime.summarize_message(
+            message_id=str(kwargs["message_id"]),
+            provider=kwargs.get("provider"),
+        )
+
+
+class CreateEmailDraftTool:
+    spec = ToolSpec(
+        name="create_email_draft",
+        description="Create an email draft. Does not send email.",
+        permission="communication.draft",
+        risk_level="medium",
+    )
+
+    def __init__(self, communication_runtime: CommunicationRuntime):
+        self.communication_runtime = communication_runtime
+
+    def run(self, context: PermissionContext, **kwargs: Any) -> dict[str, Any]:
+        recipients = kwargs.get("recipients", [])
+        if isinstance(recipients, str):
+            recipients = [item.strip() for item in recipients.split(",") if item.strip()]
+        draft = self.communication_runtime.create_draft(
+            subject=str(kwargs["subject"]),
+            recipients=list(recipients),
+            body=str(kwargs.get("body", "")),
+            created_by_agent=context.actor_id,
+            provider=kwargs.get("provider"),
+        )
+        return asdict(draft)
+
+
+class ListEmailDraftsTool:
+    spec = ToolSpec(
+        name="list_email_drafts",
+        description="List email drafts through Communication Runtime.",
+        permission="communication.read",
+        risk_level="low",
+    )
+
+    def __init__(self, communication_runtime: CommunicationRuntime):
+        self.communication_runtime = communication_runtime
+
+    def run(self, context: PermissionContext, **kwargs: Any) -> dict[str, Any]:
+        drafts = self.communication_runtime.list_drafts(provider=kwargs.get("provider"))
+        return {"drafts": [asdict(draft) for draft in drafts]}
+
+
 def register_builtin_tools(
     registry: ToolRegistry,
     data_dir: DataDir,
     communication: AgentCommunication,
     task_runtime: TaskRuntime,
+    communication_runtime: CommunicationRuntime,
 ) -> None:
     registry.register(ReadFileTool(data_dir))
     registry.register(WriteFileTool(data_dir))
@@ -213,3 +293,7 @@ def register_builtin_tools(
     registry.register(SendAgentMessageTool(communication))
     registry.register(CreateTaskTool(task_runtime))
     registry.register(UpdateTaskTool(task_runtime))
+    registry.register(ReadEmailTool(communication_runtime))
+    registry.register(SummarizeEmailTool(communication_runtime))
+    registry.register(CreateEmailDraftTool(communication_runtime))
+    registry.register(ListEmailDraftsTool(communication_runtime))

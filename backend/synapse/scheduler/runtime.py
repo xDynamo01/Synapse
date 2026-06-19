@@ -4,6 +4,7 @@ from dataclasses import asdict
 from datetime import UTC, datetime
 from typing import Any
 
+from synapse.communication.runtime import CommunicationRuntime
 from synapse.core.events import EventBus
 from synapse.core.exceptions import ValidationError
 from synapse.core.permissions import PermissionContext
@@ -27,12 +28,14 @@ class SchedulerRuntime:
         event_bus: EventBus,
         presence: PresenceRuntime | None = None,
         lifecycle: LifecycleRuntime | None = None,
+        communication: CommunicationRuntime | None = None,
     ):
         self.queue = queue
         self.worker = worker
         self.event_bus = event_bus
         self.presence = presence
         self.lifecycle = lifecycle
+        self.communication = communication
 
     def enqueue(
         self,
@@ -197,11 +200,21 @@ class SchedulerRuntime:
             if failures:
                 raise ValidationError(f"Worker failed to process {len(failures)} message(s).")
             return {"results": [asdict(result) for result in results]}
+        if job.type == "check_email":
+            if not self.communication:
+                raise ValidationError("check_email requires CommunicationRuntime")
+            provider = str(job.payload.get("provider", "mock"))
+            agent_id = str(job.payload.get("agent_id", "hermes"))
+            briefing = self.communication.generate_briefing(
+                agent_id=agent_id,
+                provider=provider,
+            )
+            return {"briefing": asdict(briefing)}
         raise ValidationError(f"Unknown job type: {job.type}")
 
     @staticmethod
     def _agent_id_for_job(job: Job) -> str | None:
-        if job.type == "process_agent_inbox":
+        if job.type in {"process_agent_inbox", "check_email"}:
             agent_id = str(job.payload.get("agent_id", "")).strip()
             return agent_id or None
         return None

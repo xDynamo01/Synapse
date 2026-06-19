@@ -11,6 +11,9 @@ from synapse.approvals.resume import ApprovalResumeRuntime
 from synapse.auth.devices import DeviceRegistry
 from synapse.chat.runtime import ChatRuntime
 from synapse.commands.runtime import CommandRuntime
+from synapse.communication.gmail_provider import GmailCommunicationProvider
+from synapse.communication.mock_provider import MockCommunicationProvider
+from synapse.communication.runtime import CommunicationRuntime
 from synapse.context.loader import ContextLoader
 from synapse.core.config import ConfigStore, Settings
 from synapse.core.data_dir import DataDir
@@ -44,6 +47,7 @@ class RuntimeContainer:
     identities: AgentIdentityRuntime
     agent_runtime: AgentRuntime
     communication: AgentCommunication
+    communication_runtime: CommunicationRuntime
     presence: PresenceRuntime
     lifecycle: LifecycleRuntime
     devices: DeviceRegistry
@@ -88,12 +92,21 @@ def create_runtime(settings: Settings | None = None) -> RuntimeContainer:
     communication = AgentCommunication(data_dir, agents, permissions, events)
     presence = PresenceRuntime(data_dir, events)
     lifecycle = LifecycleRuntime(data_dir, events, presence)
+    communication_runtime = CommunicationRuntime(
+        providers={
+            "mock": MockCommunicationProvider(data_dir),
+            "gmail": GmailCommunicationProvider(),
+        },
+        event_bus=events,
+        presence=presence,
+        lifecycle=lifecycle,
+    )
     devices = DeviceRegistry(data_dir, events)
     approvals = ApprovalManager(data_dir, permissions, devices, events)
     memory = MemoryStore(data_dir, permissions, events)
     tasks = TaskRuntime(data_dir, permissions, events)
     tools = ToolRegistry(permissions, events)
-    register_builtin_tools(tools, data_dir, communication, tasks)
+    register_builtin_tools(tools, data_dir, communication, tasks, communication_runtime)
     policies = EffectivePolicyRuntime(agents, identities, tools, permissions, approvals, devices)
     context_loader = ContextLoader(data_dir, permissions, events, agents, identities, policies, tasks)
     tool_router = ToolRouter(tools, permissions, approvals, events, presence)
@@ -108,7 +121,14 @@ def create_runtime(settings: Settings | None = None) -> RuntimeContainer:
         lifecycle,
     )
     job_queue = JobQueue(data_dir)
-    scheduler = SchedulerRuntime(job_queue, worker, events, presence, lifecycle)
+    scheduler = SchedulerRuntime(
+        job_queue,
+        worker,
+        events,
+        presence,
+        lifecycle,
+        communication_runtime,
+    )
     daemon = DaemonRunner(scheduler, DaemonStatusStore(data_dir), events)
     approval_resume = ApprovalResumeRuntime(approvals, tool_router, policies)
     commands = CommandRuntime(
@@ -127,6 +147,7 @@ def create_runtime(settings: Settings | None = None) -> RuntimeContainer:
         daemon,
         presence,
         lifecycle,
+        communication_runtime,
     )
     chat = ChatRuntime(data_dir, events, context_loader, agent_runtime, commands, presence)
 
@@ -143,6 +164,7 @@ def create_runtime(settings: Settings | None = None) -> RuntimeContainer:
         identities=identities,
         agent_runtime=agent_runtime,
         communication=communication,
+        communication_runtime=communication_runtime,
         presence=presence,
         lifecycle=lifecycle,
         devices=devices,

@@ -7,6 +7,7 @@ from synapse.agents.identity import AgentIdentityRuntime
 from synapse.agents.registry import AgentRegistry
 from synapse.approvals.manager import ApprovalManager
 from synapse.approvals.resume import ApprovalResumeRuntime
+from synapse.communication.runtime import CommunicationRuntime
 from synapse.core.config import ConfigStore
 from synapse.core.events import EventBus
 from synapse.core.permissions import PermissionContext
@@ -47,6 +48,7 @@ class CommandRuntime:
         daemon: DaemonRunner,
         presence: PresenceRuntime,
         lifecycle: LifecycleRuntime,
+        communication_runtime: CommunicationRuntime,
     ):
         self.config = config
         self.events = events
@@ -63,6 +65,7 @@ class CommandRuntime:
         self.daemon = daemon
         self.presence = presence
         self.lifecycle = lifecycle
+        self.communication_runtime = communication_runtime
 
     def execute(
         self,
@@ -136,6 +139,14 @@ class CommandRuntime:
             return self._wake(argument_text)
         if command == "/sleep":
             return self._sleep(argument_text)
+        if command == "/check-email":
+            return self._check_email(argument_text)
+        if command == "/email-summary":
+            return self._email_summary(argument_text)
+        if command == "/email-drafts":
+            return self._email_drafts(argument_text)
+        if command == "/email-read":
+            return self._email_read(argument_text)
 
         return CommandResult(command=command, status="error", output=f"Unknown command: {command}")
 
@@ -168,6 +179,10 @@ class CommandRuntime:
             "/lifecycle",
             "/wake",
             "/sleep",
+            "/check-email",
+            "/email-summary",
+            "/email-drafts",
+            "/email-read",
         ]
         return CommandResult(
             command="/help",
@@ -590,6 +605,58 @@ class CommandRuntime:
             status="ok",
             output=f"Put {agent_id} into idle lifecycle state.",
             data={"lifecycle": asdict(lifecycle)},
+        )
+
+    def _check_email(self, argument_text: str) -> CommandResult:
+        provider = argument_text.strip() or "mock"
+        briefing = self.communication_runtime.generate_briefing(
+            agent_id="hermes",
+            provider=provider,
+        )
+        return CommandResult(
+            command="/check-email",
+            status="ok",
+            output=briefing.summary,
+            data={"briefing": asdict(briefing)},
+        )
+
+    def _email_summary(self, argument_text: str) -> CommandResult:
+        provider = argument_text.strip() or "mock"
+        summary = self.communication_runtime.daily_summary(provider=provider)
+        return CommandResult(
+            command="/email-summary",
+            status="ok",
+            output=str(summary["summary"]),
+            data={"summary": summary},
+        )
+
+    def _email_drafts(self, argument_text: str) -> CommandResult:
+        provider = argument_text.strip() or "mock"
+        drafts = [
+            asdict(draft)
+            for draft in self.communication_runtime.list_drafts(provider=provider)
+        ]
+        return CommandResult(
+            command="/email-drafts",
+            status="ok",
+            output=f"{len(drafts)} email draft(s).",
+            data={"drafts": drafts},
+        )
+
+    def _email_read(self, argument_text: str) -> CommandResult:
+        message_id = argument_text.strip()
+        if not message_id:
+            return CommandResult(
+                command="/email-read",
+                status="error",
+                output="Usage: /email-read <id>",
+            )
+        message = self.communication_runtime.read_message(message_id=message_id)
+        return CommandResult(
+            command="/email-read",
+            status="ok",
+            output=message.subject,
+            data={"message": asdict(message)},
         )
 
     def _default_agent_id(self) -> str:

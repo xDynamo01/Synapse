@@ -44,6 +44,14 @@ class JobRequest(BaseModel):
     correlation_id: str | None = None
 
 
+class DraftRequest(BaseModel):
+    subject: str
+    recipients: list[str]
+    body: str
+    provider: str = "mock"
+    created_by_agent: str = "hermes"
+
+
 def runtime_from(request: Request):
     return request.app.state.runtime
 
@@ -154,6 +162,62 @@ def wake_agent(agent_id: str, request: Request) -> dict[str, Any]:
 def sleep_agent(agent_id: str, request: Request) -> dict[str, Any]:
     runtime = runtime_from(request)
     return asdict(runtime.lifecycle.sleep(agent_id))
+
+
+@router.get("/communication/messages")
+def list_communication_messages(request: Request, provider: str = "mock") -> list[dict[str, Any]]:
+    runtime = runtime_from(request)
+    return [
+        asdict(message)
+        for message in runtime.communication_runtime.list_messages(provider=provider)
+    ]
+
+
+@router.get("/communication/messages/{message_id}")
+def read_communication_message(
+    message_id: str,
+    request: Request,
+    provider: str = "mock",
+) -> dict[str, Any]:
+    runtime = runtime_from(request)
+    try:
+        return asdict(runtime.communication_runtime.read_message(message_id, provider=provider))
+    except Exception as exc:
+        raise api_error(exc) from exc
+
+
+@router.get("/communication/drafts")
+def list_communication_drafts(request: Request, provider: str = "mock") -> list[dict[str, Any]]:
+    runtime = runtime_from(request)
+    return [
+        asdict(draft)
+        for draft in runtime.communication_runtime.list_drafts(provider=provider)
+    ]
+
+
+@router.post("/communication/drafts")
+def create_communication_draft(
+    payload: DraftRequest,
+    request: Request,
+) -> dict[str, Any]:
+    runtime = runtime_from(request)
+    try:
+        draft = runtime.communication_runtime.create_draft(
+            subject=payload.subject,
+            recipients=payload.recipients,
+            body=payload.body,
+            created_by_agent=payload.created_by_agent,
+            provider=payload.provider,
+        )
+        return asdict(draft)
+    except Exception as exc:
+        raise api_error(exc) from exc
+
+
+@router.get("/communication/summary")
+def communication_summary(request: Request, provider: str = "mock") -> dict[str, Any]:
+    runtime = runtime_from(request)
+    return runtime.communication_runtime.daily_summary(provider=provider)
 
 
 @router.get("/daemon/status")

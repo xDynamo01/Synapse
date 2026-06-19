@@ -10,7 +10,7 @@ Update: after the Chat Runtime and Model Adapter step, the previous "user talks 
 User -> ChatRuntime -> ContextLoader -> AgentIdentityRuntime -> EffectivePolicyRuntime -> AgentRuntime -> ModelRouter/ModelAdapter -> response -> events/logs/session
 ```
 
-Remaining non-goals: no UI, no voice, no avatar, no communication integration, no perception runtime, no mobile approval UI, and no autonomous multi-step agent loop.
+Remaining non-goals: no UI, no voice, no avatar, no perception runtime, no mobile approval UI, no automatic email sending, and no autonomous multi-step agent loop.
 
 ## Technical Execution
 
@@ -91,6 +91,8 @@ Observability status: `EventBus` now writes correlation-aware envelopes. Durable
 Presence status: `PresenceRuntime` persists each agent's current state under `presence/<agent_id>.yaml`. Chat, agent execution, approvals, worker processing, and scheduler-run agent jobs update presence and emit `presence.updated` events with correlation metadata when available.
 
 Lifecycle status: `LifecycleRuntime` persists each agent's operational stage under `lifecycle/<agent_id>.yaml`. Worker and scheduler inbox processing wake agents before work and return them to idle afterward. Lifecycle state is separate from presence state.
+
+Communication status: `CommunicationRuntime` now provides the first utility runtime. V1 supports offline mock email reading, classification, summary, briefing, draft creation, commands, API endpoints, tools, and `check_email` scheduler jobs. Gmail is only a prepared provider boundary. Sending email is not implemented.
 
 ## Step-by-Step Walkthrough
 
@@ -182,6 +184,7 @@ Components:
 
 - `MemoryStore`
 - `PermissionManager`
+- `CommunicationRuntime`
 - `EventBus`
 - `DataDir`
 

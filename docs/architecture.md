@@ -25,6 +25,7 @@ Client/UI
       -> Daemon Runner
       -> Presence Runtime
       -> Agent Lifecycle Runtime
+      -> Communication Runtime
       -> Observability / Correlation
       -> Command Runtime
       -> Device Registry
@@ -54,6 +55,9 @@ data/
     <agent_id>.yaml
   lifecycle/
     <agent_id>.yaml
+  communication/
+    mock/
+      drafts/
   logs/
   library/
   chats/
@@ -265,6 +269,54 @@ Initial integrations:
 - `SchedulerRuntime` wakes agents for `process_agent_inbox` jobs
 - `CommandRuntime` exposes `/lifecycle`, `/wake`, and `/sleep`
 - API exposes lifecycle read, wake, and sleep endpoints
+
+## Communication Runtime
+
+`CommunicationRuntime` is the runtime boundary for external communication systems. Agents do not call providers directly.
+
+Required flow:
+
+```text
+Agent
+  -> ToolRouter / CommandRuntime / SchedulerRuntime
+  -> CommunicationRuntime
+  -> CommunicationProvider
+  -> Provider
+```
+
+V1 supports listing, reading, classifying, and summarizing email messages, creating drafts, listing drafts, generating daily summaries, and generating a Hermes email briefing. It does not send email.
+
+Providers:
+
+- `MockCommunicationProvider`: fully offline and deterministic
+- `GmailCommunicationProvider`: prepared boundary, not configured yet
+
+Drafts are persisted locally under:
+
+```text
+data/communication/mock/drafts/<draft_id>.yaml
+```
+
+Hermes is the first operational communication agent. Hermes has `communication_skill` capabilities for `read_email`, `classify_email`, `summarize_email`, and `create_draft`.
+
+Communication tools:
+
+- `read_email`: permission `communication.read`, risk `medium`
+- `summarize_email`: permission `communication.summarize`, risk `medium`
+- `create_email_draft`: permission `communication.draft`, risk `medium`
+- `list_email_drafts`: permission `communication.read`, risk `low`
+
+The architecture reserves `send_email` as a future critical-risk action. It is not implemented in V1.
+
+Communication events:
+
+- `communication.message_read`
+- `communication.message_classified`
+- `communication.summary_generated`
+- `communication.draft_created`
+- `communication.briefing_generated`
+
+Scheduler integration adds job type `check_email`, with payload fields `provider` and `agent_id`. Daemon can execute this job through normal scheduler cycles.
 
 ## Agent Runtime and Models
 
