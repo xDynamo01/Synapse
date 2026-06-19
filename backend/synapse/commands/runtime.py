@@ -154,6 +154,10 @@ class CommandRuntime:
             return self._notifications(argument_text)
         if command == "/read-notification":
             return self._read_notification(argument_text)
+        if command == "/recurring-jobs":
+            return self._recurring_jobs()
+        if command == "/run-recurring":
+            return self._run_recurring(context)
 
         return CommandResult(command=command, status="error", output=f"Unknown command: {command}")
 
@@ -192,6 +196,8 @@ class CommandRuntime:
             "/email-read",
             "/notifications",
             "/read-notification",
+            "/recurring-jobs",
+            "/run-recurring",
         ]
         return CommandResult(
             command="/help",
@@ -706,6 +712,24 @@ class CommandRuntime:
             status="ok",
             output=f"Notification read: {notification.title}",
             data={"notification": asdict(notification)},
+        )
+
+    def _recurring_jobs(self) -> CommandResult:
+        recurring = [asdict(job) for job in self.scheduler.load_recurring_jobs()]
+        return CommandResult(
+            command="/recurring-jobs",
+            status="ok",
+            output=f"{len(recurring)} recurring job(s).",
+            data={"recurring_jobs": recurring},
+        )
+
+    def _run_recurring(self, context: PermissionContext) -> CommandResult:
+        jobs = [asdict(job) for job in self.scheduler.enqueue_due_recurring_jobs(context)]
+        return CommandResult(
+            command="/run-recurring",
+            status="ok",
+            output=f"Enqueued {len(jobs)} recurring job(s).",
+            data={"jobs": jobs},
         )
 
     def _default_agent_id(self) -> str:

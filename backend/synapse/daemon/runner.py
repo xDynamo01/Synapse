@@ -56,6 +56,8 @@ class DaemonRunner:
                 {"tick_at": tick_at, "total_ticks": current.total_ticks + 1},
             )
             try:
+                if hasattr(self.scheduler, "enqueue_due_recurring_jobs"):
+                    self.scheduler.enqueue_due_recurring_jobs(context)
                 jobs = self.scheduler.run_all_pending(context)
                 job_payloads = [asdict(job) for job in jobs]
                 updated = DaemonStatus(

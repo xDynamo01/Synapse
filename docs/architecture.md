@@ -387,6 +387,50 @@ Cleanup events:
 
 Scheduler integration adds job type `notification_cleanup`. Daemon can execute cleanup through normal scheduler cycles.
 
+## Scheduler Recurring Jobs
+
+`SchedulerRuntime` supports local recurring job definitions for homelab maintenance and background routines.
+
+Recurring job policy lives at:
+
+```text
+data/config/scheduler_policy.yaml
+```
+
+Runtime state is persisted under:
+
+```text
+data/scheduler/recurring/<recurring_id>.yaml
+```
+
+Supported V1 recurring fields:
+
+- `id`
+- `type`
+- `payload`
+- `interval_minutes`
+- `enabled`
+- `priority`
+- `max_attempts`
+- `last_run_at`
+- `next_run_at`
+
+Supported V1 recurring job types:
+
+- `notification_cleanup`
+- `check_email`
+- `process_agent_inbox`
+
+`SchedulerRuntime.enqueue_due_recurring_jobs()` loads definitions, skips disabled or not-due jobs, enqueues due jobs, and advances `last_run_at`/`next_run_at`. `DaemonRunner.run_once()` calls this before running pending jobs.
+
+Recurring events:
+
+- `recurring.loaded`
+- `recurring.due`
+- `recurring.enqueued`
+- `recurring.skipped`
+- `recurring.failed`
+
 ## Agent Runtime and Models
 
 `AgentRuntime` receives:

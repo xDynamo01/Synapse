@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from synapse.communication.runtime import CommunicationRuntime
 from synapse.core.events import EventBus
 from synapse.core.exceptions import ValidationError
 from synapse.core.permissions import PermissionContext
+from synapse.core.serialization import dump_structured_file, load_structured_file
 from synapse.lifecycle.runtime import LifecycleRuntime
 from synapse.notifications.runtime import NotificationRuntime
 from synapse.observability.correlation import (
@@ -16,7 +18,7 @@ from synapse.observability.correlation import (
     new_correlation,
 )
 from synapse.presence.runtime import PresenceRuntime
-from synapse.scheduler.jobs import Job
+from synapse.scheduler.jobs import RECURRING_JOB_TYPES, Job, RecurringJobDefinition
 from synapse.scheduler.queue import JobQueue
 from synapse.workers.agent_worker import AgentWorker
 
@@ -117,6 +119,102 @@ class SchedulerRuntime:
             self.event_bus.emit("job.retried", context.actor_id, asdict(updated))
             retried.append(updated)
         return retried
+
+    def load_recurring_jobs(self) -> list[RecurringJobDefinition]:
+        policy = load_structured_file(self.queue.data_dir.resolve("config/scheduler_policy.yaml"))
+        configured = policy.get("recurring_jobs", [])
+        if not isinstance(configured, list):
+            raise ValidationError("scheduler_policy.yaml recurring_jobs must be a list")
+
+        loaded: list[RecurringJobDefinition] = []
+        for item in configured:
+            if not isinstance(item, dict):
+                raise ValidationError("recurring job definition must be an object")
+            definition = self._recurring_from_policy(item)
+            state = self._load_recurring_state(definition.id)
+            if state:
+                definition = definition.with_updates(
+                    last_run_at=state.last_run_at,
+                    next_run_at=state.next_run_at,
+                    created_at=state.created_at,
+                )
+            if not definition.next_run_at:
+                definition = definition.with_updates(
+                    next_run_at=datetime.now(UTC).isoformat()
+                )
+                self._save_recurring_state(definition)
+            loaded.append(definition)
+
+        self.event_bus.emit(
+            "recurring.loaded",
+            "scheduler",
+            {"count": len(loaded), "jobs": [asdict(job) for job in loaded]},
+        )
+        return loaded
+
+    def enqueue_due_recurring_jobs(
+        self,
+        context: PermissionContext,
+    ) -> list[Job]:
+        enqueued: list[Job] = []
+        for definition in self.load_recurring_jobs():
+            try:
+                if not definition.enabled:
+                    self.event_bus.emit(
+                        "recurring.skipped",
+                        context.actor_id,
+                        {"id": definition.id, "reason": "disabled"},
+                    )
+                    continue
+                if not definition.is_due():
+                    self.event_bus.emit(
+                        "recurring.skipped",
+                        context.actor_id,
+                        {
+                            "id": definition.id,
+                            "reason": "not_due",
+                            "next_run_at": definition.next_run_at,
+                        },
+                    )
+                    continue
+                self.event_bus.emit("recurring.due", context.actor_id, asdict(definition))
+                job = self.enqueue(
+                    context=context,
+                    job_type=definition.type,
+                    payload={
+                        **definition.payload,
+                        "recurring_id": definition.id,
+                    },
+                    priority=definition.priority,
+                    max_attempts=definition.max_attempts,
+                    correlation_id=current_correlation().correlation_id
+                    if current_correlation()
+                    else None,
+                )
+                now = datetime.now(UTC)
+                next_run = now + self._interval_delta(definition.interval_minutes)
+                updated = definition.with_updates(
+                    last_run_at=now.isoformat(),
+                    next_run_at=next_run.isoformat(),
+                )
+                self._save_recurring_state(updated)
+                self.event_bus.emit(
+                    "recurring.enqueued",
+                    context.actor_id,
+                    {"recurring": asdict(updated), "job": asdict(job)},
+                )
+                enqueued.append(job)
+            except Exception as exc:
+                self.event_bus.emit(
+                    "recurring.failed",
+                    context.actor_id,
+                    {
+                        "id": definition.id,
+                        "error": str(exc) or type(exc).__name__,
+                        "error_type": type(exc).__name__,
+                    },
+                )
+        return enqueued
 
     def _run_job(self, context: PermissionContext, job: Job) -> Job:
         correlation = current_correlation()
@@ -219,6 +317,46 @@ class SchedulerRuntime:
             result = self.notifications.cleanup_notifications()
             return {"cleanup": asdict(result)}
         raise ValidationError(f"Unknown job type: {job.type}")
+
+    def _recurring_from_policy(self, raw: dict[str, Any]) -> RecurringJobDefinition:
+        job_type = str(raw.get("type", "")).strip()
+        if job_type not in RECURRING_JOB_TYPES:
+            raise ValidationError(f"Invalid recurring job type: {job_type}")
+        interval = int(raw.get("interval_minutes", 0))
+        if interval < 1:
+            raise ValidationError("Recurring job interval_minutes must be at least 1")
+        recurring_id = str(raw.get("id") or job_type).strip()
+        if not recurring_id:
+            raise ValidationError("Recurring job id is required")
+        return RecurringJobDefinition(
+            id=recurring_id,
+            type=job_type,
+            payload=dict(raw.get("payload", {})),
+            interval_minutes=interval,
+            enabled=bool(raw.get("enabled", True)),
+            priority=int(raw.get("priority", 100)),
+            max_attempts=int(raw.get("max_attempts", 3)),
+            next_run_at=raw.get("next_run_at"),
+            last_run_at=raw.get("last_run_at"),
+        )
+
+    def _load_recurring_state(self, recurring_id: str) -> RecurringJobDefinition | None:
+        path = self._recurring_state_path(recurring_id)
+        if not path.exists():
+            return None
+        return RecurringJobDefinition(**load_structured_file(path))
+
+    def _save_recurring_state(self, definition: RecurringJobDefinition) -> None:
+        dump_structured_file(self._recurring_state_path(definition.id), asdict(definition))
+
+    def _recurring_state_path(self, recurring_id: str) -> Path:
+        return self.queue.data_dir.resolve(f"scheduler/recurring/{recurring_id}.yaml")
+
+    @staticmethod
+    def _interval_delta(interval_minutes: int):
+        from datetime import timedelta
+
+        return timedelta(minutes=interval_minutes)
 
     @staticmethod
     def _agent_id_for_job(job: Job) -> str | None:

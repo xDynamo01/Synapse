@@ -119,6 +119,7 @@ Status: partial foundation complete.
 - Communication tools, commands, API, scheduler job, and Hermes briefing.
 - Notification Runtime with local provider, event integration, commands, and API.
 - Notification retention policy and cleanup job.
+- Scheduler recurring jobs and cadence policy.
 
 Pending:
 
@@ -304,6 +305,27 @@ Pending:
 - User preferences and routing rules.
 - Deduplication and rate limiting.
 - Scheduled cleanup cadence defaults.
+
+## 6B. Scheduler Recurring Jobs
+
+Status: complete foundation.
+
+- Recurring job policy in `config/scheduler_policy.yaml`.
+- Runtime state under `scheduler/recurring`.
+- `RecurringJobDefinition` with `interval_minutes`, `last_run_at`, and `next_run_at`.
+- Supported recurring job types: `notification_cleanup`, `check_email`, `process_agent_inbox`.
+- Commands: `/recurring-jobs`, `/run-recurring`.
+- API: `GET /scheduler/recurring`, `POST /scheduler/recurring/run`.
+- Daemon checks due recurring jobs before running pending jobs.
+- Events: `recurring.loaded`, `recurring.due`, `recurring.enqueued`, `recurring.skipped`, `recurring.failed`.
+
+Pending:
+
+- Cron parser.
+- Timezone-aware schedules.
+- Dependency/chaining model.
+- Concurrency locks for multiple daemon processes.
+- Backoff policies for recurring failures.
 
 ## 7. Presence Runtime
 

@@ -15,6 +15,7 @@ REQUIRED_DIRECTORIES = (
     "tasks/failed",
     "approvals",
     "jobs",
+    "scheduler/recurring",
     "daemon",
     "presence",
     "lifecycle",
@@ -62,6 +63,11 @@ SEED_FILES = {
         '    "preserve_unread": true,\n'
         '    "preserve_critical": true\n'
         "  }\n"
+        "}\n"
+    ),
+    "config/scheduler_policy.yaml": (
+        "{\n"
+        '  "recurring_jobs": []\n'
         "}\n"
     ),
 }

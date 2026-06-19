@@ -370,6 +370,30 @@ def cancel_job(
         raise api_error(exc) from exc
 
 
+@router.get("/scheduler/recurring")
+def list_recurring_jobs(request: Request) -> list[dict[str, Any]]:
+    runtime = runtime_from(request)
+    try:
+        return [asdict(job) for job in runtime.scheduler.load_recurring_jobs()]
+    except Exception as exc:
+        raise api_error(exc) from exc
+
+
+@router.post("/scheduler/recurring/run")
+def run_recurring_jobs(
+    request: Request,
+    x_actor_id: str | None = Header(default=None),
+    x_actor_type: str | None = Header(default=None),
+    x_device_id: str | None = Header(default=None),
+) -> list[dict[str, Any]]:
+    runtime = runtime_from(request)
+    context = context_from(runtime, x_actor_id, x_actor_type, x_device_id)
+    try:
+        return [asdict(job) for job in runtime.scheduler.enqueue_due_recurring_jobs(context)]
+    except Exception as exc:
+        raise api_error(exc) from exc
+
+
 @router.get("/tasks")
 def list_tasks(request: Request, status: str | None = None) -> list[dict[str, Any]]:
     runtime = runtime_from(request)
