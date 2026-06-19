@@ -8,6 +8,7 @@ from synapse.agents.registry import AgentRegistry
 from synapse.approvals.manager import ApprovalManager
 from synapse.approvals.resume import ApprovalResumeRuntime
 from synapse.core.config import ConfigStore
+from synapse.core.events import EventBus
 from synapse.core.permissions import PermissionContext
 from synapse.daemon.runner import DaemonRunner
 from synapse.memory.store import MemoryStore
@@ -30,6 +31,7 @@ class CommandRuntime:
     def __init__(
         self,
         config: ConfigStore,
+        events: EventBus,
         agents: AgentRegistry,
         identities: AgentIdentityRuntime,
         policies: EffectivePolicyRuntime,
@@ -43,6 +45,7 @@ class CommandRuntime:
         daemon: DaemonRunner,
     ):
         self.config = config
+        self.events = events
         self.agents = agents
         self.identities = identities
         self.policies = policies
@@ -117,6 +120,8 @@ class CommandRuntime:
             return self._daemon_status()
         if command == "/daemon-run-once":
             return self._daemon_run_once(context)
+        if command == "/trace":
+            return self._trace(argument_text)
 
         return CommandResult(command=command, status="error", output=f"Unknown command: {command}")
 
@@ -144,6 +149,7 @@ class CommandRuntime:
             "/cancel-job",
             "/daemon-status",
             "/daemon-run-once",
+            "/trace",
         ]
         return CommandResult(
             command="/help",
@@ -478,6 +484,22 @@ class CommandRuntime:
             status="ok",
             output=f"Daemon tick completed with {len(status.last_jobs_run)} job(s).",
             data={"daemon": asdict(status)},
+        )
+
+    def _trace(self, correlation_id: str) -> CommandResult:
+        correlation_id = correlation_id.strip()
+        if not correlation_id:
+            return CommandResult(
+                command="/trace",
+                status="error",
+                output="Usage: /trace <correlation_id>",
+            )
+        events = [asdict(event) for event in self.events.trace(correlation_id)]
+        return CommandResult(
+            command="/trace",
+            status="ok",
+            output=f"{len(events)} event(s) for correlation {correlation_id}.",
+            data={"events": events},
         )
 
     def _default_agent_id(self) -> str:

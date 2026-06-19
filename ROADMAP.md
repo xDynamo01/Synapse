@@ -106,6 +106,8 @@ Status: partial foundation complete.
 - Initial Synapse Daemon / Background Runner.
 - Daemon commands `/daemon-status` and `/daemon-run-once`.
 - Daemon API endpoints for status and deterministic single-cycle execution.
+- Correlation ID and event envelope hardening.
+- Trace command/API for correlated runtime flows.
 
 Pending:
 
@@ -169,6 +171,23 @@ Pending:
 - Process supervision/systemd/Windows service integration.
 - Graceful shutdown across process boundaries.
 - Locking when multiple daemon instances target the same `DATA_DIR`.
+
+## 5E. Correlation ID / Observability
+
+Status: complete foundation.
+
+- `CorrelationContext` based on context-local runtime scope.
+- Event JSONL envelope includes `correlation_id`, `causation_id`, `parent_id`, and `source`.
+- Chat, tool calls, approvals, jobs, daemon cycles, and worker flows are traceable through events.
+- Backward-compatible loading for legacy events without correlation fields.
+- `/trace <correlation_id>` command and `GET /trace/{correlation_id}` API.
+
+Pending:
+
+- Full causation chain modeling between individual events.
+- Correlation IDs persisted directly on approvals/tasks/messages where needed.
+- Structured trace summaries and timeline views.
+- External observability exporters.
 
 ## 5A. Chat Runtime
 

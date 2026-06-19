@@ -32,6 +32,7 @@ The runtime services used were the existing services:
 - `EffectivePolicyRuntime`
 - `SchedulerRuntime`
 - `DaemonRunner`
+- `CorrelationContext`
 - `ContextLoader`
 - `PermissionManager`
 
@@ -84,6 +85,8 @@ Important limitation in the original validation: conversation could only be repr
 Agent identity status: agents now load structured operational identity through `AgentIdentityRuntime`. Artemis, Researcher, Atlas, Hermes, and Vigil exist as base agents in `DATA_DIR`, each with distinct roles, focus areas, preferred tools, forbidden tools, communication styles, and operational rules.
 
 Effective policy status: `EffectivePolicyRuntime` now resolves the single policy object used by `AgentRuntime`, `ToolRouter`, `ApprovalResumeRuntime`, `ContextLoader`, and `/policy`. It combines global permissions, agent `CONFIG.yaml`, `AgentIdentity`, approval policy, and optional device constraints.
+
+Observability status: `EventBus` now writes correlation-aware envelopes. Chat turns, tool calls, approval creation, job execution, daemon ticks, and worker processing can be traced by `correlation_id` through `/trace` or `GET /trace/{correlation_id}`.
 
 ## Step-by-Step Walkthrough
 
@@ -688,7 +691,7 @@ Technical validation:
 ## Complete System Flow
 
 1. Runtime starts and loads config, permissions, event bus, identities, agents, memory, tasks, tools, approvals, effective policy runtime, context loader, agent worker, scheduler runtime, daemon runner, command runtime, and device registry.
-2. A chat turn with Artemis is persisted under `chats/sessions/` through `ChatRuntime`.
+2. A chat turn with Artemis creates a `CorrelationContext` and is persisted under `chats/sessions/` through `ChatRuntime`.
 3. `ContextLoader` loads global memory, Artemis identity, Artemis effective policy, Artemis memory, skills, relevant tasks, and recent session history.
 4. Artemis reads global and agent memory through runtime-owned services, not direct file access.
 5. Artemis creates a persisted task through `TaskRuntime`.
@@ -697,7 +700,7 @@ Technical validation:
 8. `AgentWorker` loads Researcher context/policy, runs `AgentRuntime`, optionally sends a structured response to Artemis, and marks the request processed.
 9. Artemis lists received messages and marks the response read.
 10. Artemis completes the task through `TaskRuntime`.
-11. `EventBus` records permission decisions, task events, message events, tool events, approval events, context load, chat events, and runtime starts.
+11. `EventBus` records permission decisions, task events, message events, tool events, approval events, context load, chat events, daemon events, and runtime starts with event envelopes.
 12. `ContextLoader` reconstructs typed context from memory, identity, effective policy, relevant tasks, and session history.
 13. Runtime is recreated against the same `DATA_DIR`.
 14. Tasks, daemon status, jobs, messages, inbox projections, memory, identity files, chat sessions, approvals, and event log remain available.
@@ -721,6 +724,12 @@ For scheduled inbox work:
 Command/API -> DaemonRunner -> SchedulerRuntime -> JobQueue(DATA_DIR/jobs) -> AgentWorker -> AgentRuntime
 ```
 
+For traces:
+
+```text
+CorrelationContext -> EventBus(JSONL envelopes) -> /trace or GET /trace/{correlation_id}
+```
+
 ## Execution Diagram
 
 ```mermaid
@@ -729,6 +738,7 @@ sequenceDiagram
     participant Artemis
     participant Runtime
     participant Daemon as "DaemonRunner"
+    participant Trace as "CorrelationContext"
     participant Identity as "AgentIdentityRuntime"
     participant Policy as "EffectivePolicyRuntime"
     participant Memory as "MemoryStore"
@@ -742,6 +752,7 @@ sequenceDiagram
     participant Files as "DATA_DIR"
 
     User->>Runtime: "POST/chat or ChatRuntime.chat"
+    Runtime->>Trace: "create correlation_id"
     Runtime->>Context: "load context for artemis"
     Context->>Identity: "load_identity(artemis)"
     Identity->>Files: "read SOUL.md, CONFIG.yaml, SKILLS.md"
@@ -792,6 +803,7 @@ sequenceDiagram
     Worker->>Events: "worker.message_processed or worker.message_failed"
     Scheduler->>Events: "job.completed or job.failed"
     Daemon->>Files: "write daemon/status.yaml"
+    Runtime->>Events: "trace by correlation_id"
     Artemis->>A2A: "mark response read"
     A2A->>Events: "agent.message.status_changed"
     Artemis->>Tasks: "update_task(completed)"
@@ -818,14 +830,17 @@ sequenceDiagram
 1C. Effective Agent Policy exists, but is still coarse-grained.
     It centralizes global permissions, agent config, identity preferences, approval policy, and device constraints. Resource-scoped filesystem/project/model rules and policy schema migrations are still missing.
 
+1D. Correlation IDs exist, but causation chains are still shallow.
+    Events can be traced by `correlation_id`, but not every persisted domain record stores its correlation id yet.
+
 2. Daemon Runner exists, but no production service wrapper exists.
    `run_once()` can execute pending jobs deterministically and `start_loop()` provides a basic loop boundary. There is no CLI/service wrapper, process supervision, lock manager, or backoff retry policy yet.
 
 3. Persistent chat/session log exists, but is basic.
    Sessions persist under `data/chats/sessions/`, but there is no schema version, attachment model, retention policy, or search.
 
-4. Logs are only event logs.
-   `logs/events.jsonl` works, but there is no separate application diagnostic log or request correlation.
+4. Logs are correlation-aware event logs only.
+   `logs/events.jsonl` works for traceable domain events, but there is no separate application diagnostic log or external observability exporter.
 
 5. Message threading is incomplete.
    Request and response share `task_id`, but there is no formal thread/conversation id.
@@ -858,11 +873,12 @@ Priority 1:
 - Add approval notifications, remote-safe approval workflows, and session message updates after resume.
 - Add worker retry policy and queue/scheduler before homelab autonomous mode.
 - Add daemon service wrapper, scheduler locks, backoff, and retention policies before homelab autonomous mode.
+- Persist correlation ids on long-lived domain records that need offline trace reconstruction.
 
 Priority 2:
 
 - Add CLI/service packaging for the daemon runner.
-- Add request/task/event correlation ids.
+- Add deeper causation chains between individual events.
 - Add schema version fields for structured persisted records.
 
 Priority 3:

@@ -7,6 +7,11 @@ from typing import Any
 from synapse.core.events import EventBus
 from synapse.core.exceptions import ValidationError
 from synapse.core.permissions import PermissionContext
+from synapse.observability.correlation import (
+    correlation_scope,
+    current_correlation,
+    new_correlation,
+)
 from synapse.scheduler.jobs import Job
 from synapse.scheduler.queue import JobQueue
 from synapse.workers.agent_worker import AgentWorker
@@ -33,16 +38,23 @@ class SchedulerRuntime:
         scheduled_for: str | None = None,
         correlation_id: str | None = None,
     ) -> Job:
+        correlation = current_correlation()
+        if correlation_id and (
+            correlation is None or correlation.correlation_id != correlation_id
+        ):
+            correlation = new_correlation(source="scheduler", correlation_id=correlation_id)
+        correlation = correlation or new_correlation(source="scheduler")
         job = Job(
             type=job_type,
             payload=payload,
             priority=priority,
             max_attempts=max_attempts,
             scheduled_for=scheduled_for,
-            correlation_id=correlation_id,
+            correlation_id=correlation_id or correlation.correlation_id,
         )
         self.queue.add(job)
-        self.event_bus.emit("job.enqueued", context.actor_id, asdict(job))
+        with correlation_scope(correlation.child(source="scheduler", job_id=job.id)):
+            self.event_bus.emit("job.enqueued", context.actor_id, asdict(job))
         return job
 
     def list_jobs(self, status: str | None = None) -> list[Job]:
@@ -92,37 +104,45 @@ class SchedulerRuntime:
         return retried
 
     def _run_job(self, context: PermissionContext, job: Job) -> Job:
-        running = self.queue.save(
-            job.with_updates(
-                status="running",
-                attempts=job.attempts + 1,
-                started_at=datetime.now(UTC).isoformat(),
-                completed_at=None,
-                failed_reason=None,
+        correlation = current_correlation()
+        if correlation is None or correlation.correlation_id != job.correlation_id:
+            correlation = new_correlation(
+                source="scheduler",
+                correlation_id=job.correlation_id,
+                job_id=job.id,
             )
-        )
-        self.event_bus.emit("job.started", context.actor_id, asdict(running))
-        try:
-            result = self._execute(context, running)
-            completed = self.queue.save(
-                running.with_updates(
-                    status="completed",
-                    completed_at=datetime.now(UTC).isoformat(),
+        with correlation_scope(correlation.child(source="scheduler", job_id=job.id)):
+            running = self.queue.save(
+                job.with_updates(
+                    status="running",
+                    attempts=job.attempts + 1,
+                    started_at=datetime.now(UTC).isoformat(),
+                    completed_at=None,
                     failed_reason=None,
-                    payload={**running.payload, "result": result},
                 )
             )
-            self.event_bus.emit("job.completed", context.actor_id, asdict(completed))
-            return completed
-        except Exception as exc:
-            failed = self.queue.save(
-                running.with_updates(
-                    status="failed",
-                    failed_reason=str(exc) or type(exc).__name__,
+            self.event_bus.emit("job.started", context.actor_id, asdict(running))
+            try:
+                result = self._execute(context, running)
+                completed = self.queue.save(
+                    running.with_updates(
+                        status="completed",
+                        completed_at=datetime.now(UTC).isoformat(),
+                        failed_reason=None,
+                        payload={**running.payload, "result": result},
+                    )
                 )
-            )
-            self.event_bus.emit("job.failed", context.actor_id, asdict(failed))
-            return failed
+                self.event_bus.emit("job.completed", context.actor_id, asdict(completed))
+                return completed
+            except Exception as exc:
+                failed = self.queue.save(
+                    running.with_updates(
+                        status="failed",
+                        failed_reason=str(exc) or type(exc).__name__,
+                    )
+                )
+                self.event_bus.emit("job.failed", context.actor_id, asdict(failed))
+                return failed
 
     def _execute(self, context: PermissionContext, job: Job) -> dict[str, Any]:
         if job.type == "process_agent_inbox":

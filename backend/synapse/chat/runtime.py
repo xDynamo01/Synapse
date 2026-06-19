@@ -13,6 +13,11 @@ from synapse.context.loader import ContextLoader
 from synapse.core.data_dir import DataDir
 from synapse.core.events import EventBus
 from synapse.core.permissions import PermissionContext
+from synapse.observability.correlation import (
+    correlation_scope,
+    current_correlation,
+    new_correlation,
+)
 
 
 @dataclass(frozen=True)
@@ -68,6 +73,28 @@ class ChatRuntime:
         session_id: str | None = None,
     ) -> ChatTurnResult:
         session = self._load_or_create_session(session_id, agent_id, project_id)
+        correlation = current_correlation() or new_correlation(
+            source="chat",
+            session_id=session.id,
+            agent_id=agent_id,
+        )
+        with correlation_scope(correlation):
+            return self._send_message(
+                context=context,
+                agent_id=agent_id,
+                user_message=user_message,
+                project_id=project_id,
+                session=session,
+            )
+
+    def _send_message(
+        self,
+        context: PermissionContext,
+        agent_id: str,
+        user_message: str,
+        project_id: str | None,
+        session: ChatSession,
+    ) -> ChatTurnResult:
         self.event_bus.emit(
             "chat.message_received",
             context.actor_id,

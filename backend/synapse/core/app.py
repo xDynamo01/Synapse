@@ -102,6 +102,7 @@ def create_runtime(settings: Settings | None = None) -> RuntimeContainer:
     approval_resume = ApprovalResumeRuntime(approvals, tool_router, policies)
     commands = CommandRuntime(
         config,
+        events,
         agents,
         identities,
         policies,

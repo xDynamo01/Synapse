@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from synapse.core.events import EventBus
 from synapse.core.permissions import PermissionContext
 from synapse.daemon.status import DaemonStatus, DaemonStatusStore
+from synapse.observability.correlation import correlation_scope, new_correlation
 from synapse.scheduler.runtime import SchedulerRuntime
 
 
@@ -47,41 +48,43 @@ class DaemonRunner:
         context = context or PermissionContext(actor_id=self.actor_id, actor_type="system")
         current = self.status()
         tick_at = self._now()
-        self.event_bus.emit(
-            "daemon.tick",
-            context.actor_id,
-            {"tick_at": tick_at, "total_ticks": current.total_ticks + 1},
-        )
-        try:
-            jobs = self.scheduler.run_all_pending(context)
-            job_payloads = [asdict(job) for job in jobs]
-            updated = DaemonStatus(
-                running=current.running,
-                last_tick_at=tick_at,
-                total_ticks=current.total_ticks + 1,
-                last_error=None,
-                last_jobs_run=job_payloads,
-                started_at=current.started_at,
-                stopped_at=current.stopped_at,
-            )
-            return self.status_store.save(updated)
-        except Exception as exc:
-            error = str(exc) or type(exc).__name__
+        correlation = new_correlation(source="daemon")
+        with correlation_scope(correlation):
             self.event_bus.emit(
-                "daemon.error",
+                "daemon.tick",
                 context.actor_id,
-                {"tick_at": tick_at, "error": error, "error_type": type(exc).__name__},
+                {"tick_at": tick_at, "total_ticks": current.total_ticks + 1},
             )
-            updated = DaemonStatus(
-                running=current.running,
-                last_tick_at=tick_at,
-                total_ticks=current.total_ticks + 1,
-                last_error=error,
-                last_jobs_run=[],
-                started_at=current.started_at,
-                stopped_at=current.stopped_at,
-            )
-            return self.status_store.save(updated)
+            try:
+                jobs = self.scheduler.run_all_pending(context)
+                job_payloads = [asdict(job) for job in jobs]
+                updated = DaemonStatus(
+                    running=current.running,
+                    last_tick_at=tick_at,
+                    total_ticks=current.total_ticks + 1,
+                    last_error=None,
+                    last_jobs_run=job_payloads,
+                    started_at=current.started_at,
+                    stopped_at=current.stopped_at,
+                )
+                return self.status_store.save(updated)
+            except Exception as exc:
+                error = str(exc) or type(exc).__name__
+                self.event_bus.emit(
+                    "daemon.error",
+                    context.actor_id,
+                    {"tick_at": tick_at, "error": error, "error_type": type(exc).__name__},
+                )
+                updated = DaemonStatus(
+                    running=current.running,
+                    last_tick_at=tick_at,
+                    total_ticks=current.total_ticks + 1,
+                    last_error=error,
+                    last_jobs_run=[],
+                    started_at=current.started_at,
+                    stopped_at=current.stopped_at,
+                )
+                return self.status_store.save(updated)
 
     def stop(self) -> DaemonStatus:
         self._running = False

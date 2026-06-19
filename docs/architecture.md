@@ -23,6 +23,7 @@ Client/UI
       -> Agent Worker
       -> Scheduler Runtime
       -> Daemon Runner
+      -> Observability / Correlation
       -> Command Runtime
       -> Device Registry
 ```
@@ -464,6 +465,39 @@ Each daemon cycle:
 
 The runtime exposes `run_once()` through commands and API. It does not start a persistent process automatically.
 
+## Observability / Correlation
+
+Runtime flows use a `CorrelationContext` to connect events across chat, agents, tools, approvals, messages, jobs, daemon ticks, and tasks.
+
+Minimum correlation fields:
+
+- `correlation_id`
+- optional `causation_id`
+- optional `parent_id`
+- `source`
+- optional `session_id`
+- optional `agent_id`
+- optional `task_id`
+- optional `job_id`
+- optional `approval_id`
+
+Events are persisted as JSONL envelopes with:
+
+- `id`
+- `type`
+- `timestamp`
+- `correlation_id`
+- optional `causation_id`
+- `source`
+- `payload`
+
+`EventBus` remains backward-compatible with older event lines that do not include correlation fields. Those events load with `correlation_id=None` and `source="legacy"`.
+
+Trace access:
+
+- command `/trace <correlation_id>`
+- API `GET /trace/{correlation_id}`
+
 ## Command Runtime
 
 `CommandRuntime` is a runtime client boundary for text commands. It does not own business logic; it delegates to runtime services and tools.
@@ -492,6 +526,7 @@ Supported commands:
 - `/cancel-job <job_id>`
 - `/daemon-status`
 - `/daemon-run-once`
+- `/trace <correlation_id>`
 
 This runtime exists before UI so desktop, API, mobile, scheduler, and future voice input can share command behavior.
 
@@ -535,6 +570,10 @@ Daemon API endpoints:
 
 - `GET /daemon/status`
 - `POST /daemon/run-once`
+
+Trace API endpoint:
+
+- `GET /trace/{correlation_id}`
 
 ## Tool Contract
 
