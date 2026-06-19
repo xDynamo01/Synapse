@@ -109,6 +109,9 @@ Status: partial foundation complete.
 - Correlation ID and event envelope hardening.
 - Trace command/API for correlated runtime flows.
 - Durable correlation metadata on tasks, messages, approvals, jobs, and chat sessions.
+- Durable Presence Runtime for agent state projection.
+- Presence commands `/presence` and `/presence <agent_id>`.
+- Presence API endpoints.
 
 Pending:
 
@@ -190,6 +193,24 @@ Pending:
 - Structured trace summaries and timeline views.
 - External observability exporters.
 
+## 5F. Presence Runtime
+
+Status: complete foundation.
+
+- Durable agent presence records under `DATA_DIR/presence`.
+- Runtime-owned states: `idle`, `listening`, `thinking`, `speaking`, `researching`, `working`, `waiting_approval`, `offline`, and `error`.
+- Presence updates from Chat Runtime, Agent Runtime, approval/tool flow, AgentWorker, and SchedulerRuntime agent jobs.
+- `presence.updated` events include correlation metadata when available.
+- Commands `/presence` and `/presence <agent_id>`.
+- API endpoints `GET /presence` and `GET /presence/{agent_id}`.
+
+Pending:
+
+- Historical presence timeline.
+- Concurrent activity slots per agent.
+- Rich emotion/avatar state mapping.
+- Cross-process locking for homelab multi-runner scenarios.
+
 ## 5A. Chat Runtime
 
 Status: complete foundation.
@@ -219,12 +240,12 @@ Status: pending.
 
 ## 7. Presence Runtime
 
-Status: pending.
+Status: complete foundation.
 
 - Durable agent presence state.
 - Activity transitions.
-- Mission Control event feed contract.
-- Background runtime status.
+- Runtime event feed through `presence.updated`.
+- Background worker/scheduler presence integration.
 
 ## 8. Voice Runtime
 

@@ -10,6 +10,7 @@ from synapse.context.loader import ContextLoader
 from synapse.core.events import EventBus
 from synapse.core.permissions import PermissionContext
 from synapse.policies.effective import EffectivePolicyRuntime
+from synapse.presence.runtime import PresenceRuntime
 
 
 @dataclass(frozen=True)
@@ -40,12 +41,14 @@ class AgentWorker:
         agent_runtime: AgentRuntime,
         policies: EffectivePolicyRuntime,
         event_bus: EventBus,
+        presence: PresenceRuntime | None = None,
     ):
         self.communication = communication
         self.context_loader = context_loader
         self.agent_runtime = agent_runtime
         self.policies = policies
         self.event_bus = event_bus
+        self.presence = presence
         self._status = WorkerStatus()
 
     def list_inbox(
@@ -67,6 +70,7 @@ class AgentWorker:
         pending = self.communication.list_messages(worker_context, agent_id, status="pending")
         if limit is not None:
             pending = pending[:limit]
+        self._set_presence(agent_id, "working", "Checking inbox", actor_id=worker_context.actor_id)
         self.event_bus.emit(
             "worker.inbox_checked",
             worker_context.actor_id,
@@ -75,6 +79,20 @@ class AgentWorker:
 
         results = [self._process_message(context, agent_id, message) for message in pending]
         failures = len([item for item in results if item.status == "failed"])
+        if failures:
+            self._set_presence(
+                agent_id,
+                "error",
+                f"{failures} inbox message(s) failed",
+                actor_id=worker_context.actor_id,
+            )
+        else:
+            self._set_presence(
+                agent_id,
+                "idle",
+                "Inbox processing completed",
+                actor_id=worker_context.actor_id,
+            )
         self._status = WorkerStatus(
             agents_checked=self._status.agents_checked + 1,
             messages_processed=self._status.messages_processed
@@ -95,6 +113,12 @@ class AgentWorker:
         message: AgentMessage,
     ) -> InboxProcessResult:
         worker_context = self._agent_context(caller_context, agent_id)
+        self._set_presence(
+            agent_id,
+            "working",
+            f"Processing message {message.id}",
+            actor_id=worker_context.actor_id,
+        )
         self.event_bus.emit(
             "worker.message_processing_started",
             worker_context.actor_id,
@@ -133,6 +157,12 @@ class AgentWorker:
             return result
         except Exception as exc:
             self.communication.mark_failed(worker_context, agent_id, message.id)
+            self._set_presence(
+                agent_id,
+                "error",
+                f"Failed processing message {message.id}",
+                actor_id=worker_context.actor_id,
+            )
             result = InboxProcessResult(
                 agent_id=agent_id,
                 message_id=message.id,
@@ -181,4 +211,20 @@ class AgentWorker:
             f"Subject: {message.subject}\n"
             f"Task: {message.task_id or ''}\n\n"
             f"{message.body}"
+        )
+
+    def _set_presence(
+        self,
+        agent_id: str,
+        state: str,
+        activity: str,
+        actor_id: str | None = None,
+    ) -> None:
+        if not self.presence:
+            return
+        self.presence.set_state(
+            agent_id,
+            state,
+            activity,
+            {"actor_id": actor_id or agent_id},
         )

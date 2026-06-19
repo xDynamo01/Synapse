@@ -12,6 +12,7 @@ from synapse.tools.calls import ToolCallPlan, ToolCallRequest, ToolCallResult
 
 if TYPE_CHECKING:
     from synapse.policies.effective import AgentEffectivePolicy
+    from synapse.presence.runtime import PresenceRuntime
 
 
 class ToolRouter:
@@ -21,11 +22,13 @@ class ToolRouter:
         permissions: PermissionManager,
         approvals: ApprovalManager,
         event_bus: EventBus,
+        presence: PresenceRuntime | None = None,
     ):
         self.registry = registry
         self.permissions = permissions
         self.approvals = approvals
         self.event_bus = event_bus
+        self.presence = presence
 
     def execute_plan(
         self,
@@ -191,6 +194,17 @@ class ToolRouter:
             original_message_id=original_message_id,
             project_id=project_id,
         )
+        if self.presence:
+            self.presence.set_state(
+                context.actor_id,
+                "waiting_approval",
+                f"Waiting approval for {call.name}",
+                {
+                    "current_session_id": session_id,
+                    "current_approval_id": approval.id,
+                    "actor_id": context.actor_id,
+                },
+            )
         return ToolCallResult(
             request=call,
             success=False,

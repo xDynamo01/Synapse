@@ -19,6 +19,7 @@ from synapse.observability.correlation import (
     current_correlation_fields,
     new_correlation,
 )
+from synapse.presence.runtime import PresenceRuntime
 
 
 @dataclass(frozen=True)
@@ -66,12 +67,14 @@ class ChatRuntime:
         context_loader: ContextLoader,
         agent_runtime: AgentRuntime,
         commands: CommandRuntime,
+        presence: PresenceRuntime | None = None,
     ):
         self.data_dir = data_dir
         self.event_bus = event_bus
         self.context_loader = context_loader
         self.agent_runtime = agent_runtime
         self.commands = commands
+        self.presence = presence
 
     def send_message(
         self,
@@ -104,6 +107,13 @@ class ChatRuntime:
         project_id: str | None,
         session: ChatSession,
     ) -> ChatTurnResult:
+        self._set_presence(
+            agent_id,
+            "listening",
+            "Receiving user message",
+            session_id=session.id,
+            actor_id=context.actor_id,
+        )
         self.event_bus.emit(
             "chat.message_received",
             context.actor_id,
@@ -121,6 +131,13 @@ class ChatRuntime:
         )
 
         if user_message.strip().startswith("/"):
+            self._set_presence(
+                agent_id,
+                "thinking",
+                "Executing command",
+                session_id=session.id,
+                actor_id=context.actor_id,
+            )
             session = self._append_message(session, user_chat_message, agent_id, project_id)
             result = self.commands.execute(context, user_message, source_agent_id=agent_id)
             assistant_message = ChatMessage(
@@ -141,7 +158,21 @@ class ChatRuntime:
                     "status": result.status,
                 },
             )
+            self._set_presence(
+                agent_id,
+                "speaking",
+                "Command response generated",
+                session_id=session.id,
+                actor_id=context.actor_id,
+            )
             self._persist_session(session, context.actor_id)
+            self._set_presence(
+                agent_id,
+                "idle",
+                "Chat turn completed",
+                session_id=session.id,
+                actor_id=context.actor_id,
+            )
             return ChatTurnResult(
                 session_id=session.id,
                 agent_id=agent_id,
@@ -150,6 +181,13 @@ class ChatRuntime:
                 command=asdict(result),
             )
 
+        self._set_presence(
+            agent_id,
+            "thinking",
+            "Loading context",
+            session_id=session.id,
+            actor_id=context.actor_id,
+        )
         loaded_context = self.context_loader.load(
             context=context,
             agent_id=agent_id,
@@ -195,7 +233,27 @@ class ChatRuntime:
                 "model": agent_result.model,
             },
         )
+        awaiting_approval = any(
+            tool_result.status == "awaiting_approval"
+            for tool_result in agent_result.tool_results
+        )
+        if not awaiting_approval:
+            self._set_presence(
+                agent_id,
+                "speaking",
+                "Response generated",
+                session_id=session.id,
+                actor_id=context.actor_id,
+            )
         self._persist_session(session, context.actor_id)
+        if not awaiting_approval:
+            self._set_presence(
+                agent_id,
+                "idle",
+                "Chat turn completed",
+                session_id=session.id,
+                actor_id=context.actor_id,
+            )
         return ChatTurnResult(
             session_id=session.id,
             agent_id=agent_id,
@@ -280,6 +338,23 @@ class ChatRuntime:
 
     def _session_path(self, session_id: str) -> Path:
         return self.data_dir.resolve(f"chats/sessions/{session_id}.json")
+
+    def _set_presence(
+        self,
+        agent_id: str,
+        state: str,
+        activity: str,
+        session_id: str | None = None,
+        actor_id: str | None = None,
+    ) -> None:
+        if not self.presence:
+            return
+        self.presence.set_state(
+            agent_id,
+            state,
+            activity,
+            {"current_session_id": session_id, "actor_id": actor_id or agent_id},
+        )
 
     @staticmethod
     def _message_from_raw(raw: dict[str, Any]) -> ChatMessage:

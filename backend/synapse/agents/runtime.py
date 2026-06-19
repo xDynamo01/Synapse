@@ -10,6 +10,7 @@ from synapse.core.model_router import ModelRouter
 from synapse.core.permissions import PermissionContext
 from synapse.models.types import ModelResponse
 from synapse.policies.effective import EffectivePolicyRuntime
+from synapse.presence.runtime import PresenceRuntime
 from synapse.tools.calls import ToolCallPlan, ToolCallResult
 from synapse.tools.router import ToolRouter
 
@@ -32,12 +33,14 @@ class AgentRuntime:
         models: ModelRouter,
         tool_router: ToolRouter,
         event_bus: EventBus,
+        presence: PresenceRuntime | None = None,
     ):
         self.agents = agents
         self.policies = policies
         self.models = models
         self.tool_router = tool_router
         self.event_bus = event_bus
+        self.presence = presence
 
     def run(
         self,
@@ -49,93 +52,117 @@ class AgentRuntime:
         project_id: str | None = None,
         original_message_id: str | None = None,
     ) -> AgentRunResult:
-        agent = self.agents.get(agent_id)
-        policy = self.policies.resolve(context, agent_id)
-        allowed_tools = policy.allowed_tool_specs
-        self.event_bus.emit(
-            "agent.run.started",
-            context.actor_id,
-            {
-                "agent_id": agent_id,
-                "tool_calling": "supported",
-                "allowed_tools": [tool["name"] for tool in allowed_tools],
-                "policy": policy.to_dict(),
-            },
-        )
-        model_response = self.models.generate(
-            agent=agent,
-            user_message=user_message,
-            context=loaded_context.to_dict(),
-            tools=allowed_tools,
-        )
-        tool_results: list[ToolCallResult] = []
-        final_response = model_response.content
-        if model_response.tool_calls:
-            tool_context = PermissionContext(
-                actor_id=agent.id,
-                actor_type="agent",
-                device_id=context.device_id,
-                autonomy=context.autonomy,
-            )
-            plan = ToolCallPlan(calls=model_response.tool_calls)
-            blocked_results = []
-            allowed_calls = []
-            forbidden = set(policy.forbidden_tools)
-            for call in plan.calls:
-                if call.name in forbidden:
-                    error = f"Tool is forbidden by agent policy for {agent.id}: {call.name}"
-                    blocked_results.append(
-                        ToolCallResult(
-                            request=call,
-                            success=False,
-                            status="blocked",
-                            error=error,
-                        )
-                    )
-                    self.event_bus.emit(
-                        "tool.failed",
-                        context.actor_id,
-                        {
-                            "tool_call_id": call.id,
-                            "tool": call.name,
-                            "success": False,
-                            "error": error,
-                            "error_type": "AgentEffectivePolicy",
-                            "blocked_before_router": True,
-                        },
-                    )
-                else:
-                    allowed_calls.append(call)
-            plan = ToolCallPlan(calls=allowed_calls)
-            tool_results = self.tool_router.execute_plan(
-                tool_context,
-                plan,
-                allowed_permissions=agent.permissions,
+        try:
+            self._set_presence(
+                agent_id,
+                "thinking",
+                "Generating agent response",
                 session_id=session_id,
-                project_id=project_id,
-                original_message_id=original_message_id,
-                policy=policy,
+                actor_id=context.actor_id,
             )
-            tool_results = [*blocked_results, *tool_results]
-            final_response = self._response_after_tools(model_response, tool_results)
-        result = AgentRunResult(
-            agent_id=agent_id,
-            response=final_response,
-            model=self._model_metadata(model_response),
-            tools=allowed_tools,
-            tool_results=tool_results,
-        )
-        self.event_bus.emit(
-            "agent.run.completed",
-            context.actor_id,
-            {
-                "agent_id": agent_id,
-                "model": result.model,
-                "tool_calling": result.tool_calling,
-                "tool_results": [asdict(tool_result) for tool_result in tool_results],
-            },
-        )
-        return result
+            agent = self.agents.get(agent_id)
+            policy = self.policies.resolve(context, agent_id)
+            allowed_tools = policy.allowed_tool_specs
+            self.event_bus.emit(
+                "agent.run.started",
+                context.actor_id,
+                {
+                    "agent_id": agent_id,
+                    "tool_calling": "supported",
+                    "allowed_tools": [tool["name"] for tool in allowed_tools],
+                    "policy": policy.to_dict(),
+                },
+            )
+            model_response = self.models.generate(
+                agent=agent,
+                user_message=user_message,
+                context=loaded_context.to_dict(),
+                tools=allowed_tools,
+            )
+            tool_results: list[ToolCallResult] = []
+            final_response = model_response.content
+            if model_response.tool_calls:
+                self._set_presence(
+                    agent_id,
+                    "working",
+                    "Executing tool calls",
+                    session_id=session_id,
+                    actor_id=context.actor_id,
+                )
+                tool_context = PermissionContext(
+                    actor_id=agent.id,
+                    actor_type="agent",
+                    device_id=context.device_id,
+                    autonomy=context.autonomy,
+                )
+                plan = ToolCallPlan(calls=model_response.tool_calls)
+                blocked_results = []
+                allowed_calls = []
+                forbidden = set(policy.forbidden_tools)
+                for call in plan.calls:
+                    if call.name in forbidden:
+                        error = f"Tool is forbidden by agent policy for {agent.id}: {call.name}"
+                        blocked_results.append(
+                            ToolCallResult(
+                                request=call,
+                                success=False,
+                                status="blocked",
+                                error=error,
+                            )
+                        )
+                        self.event_bus.emit(
+                            "tool.failed",
+                            context.actor_id,
+                            {
+                                "tool_call_id": call.id,
+                                "tool": call.name,
+                                "success": False,
+                                "error": error,
+                                "error_type": "AgentEffectivePolicy",
+                                "blocked_before_router": True,
+                            },
+                        )
+                    else:
+                        allowed_calls.append(call)
+                plan = ToolCallPlan(calls=allowed_calls)
+                tool_results = self.tool_router.execute_plan(
+                    tool_context,
+                    plan,
+                    allowed_permissions=agent.permissions,
+                    session_id=session_id,
+                    project_id=project_id,
+                    original_message_id=original_message_id,
+                    policy=policy,
+                )
+                tool_results = [*blocked_results, *tool_results]
+                final_response = self._response_after_tools(model_response, tool_results)
+            result = AgentRunResult(
+                agent_id=agent_id,
+                response=final_response,
+                model=self._model_metadata(model_response),
+                tools=allowed_tools,
+                tool_results=tool_results,
+            )
+            self.event_bus.emit(
+                "agent.run.completed",
+                context.actor_id,
+                {
+                    "agent_id": agent_id,
+                    "model": result.model,
+                    "tool_calling": result.tool_calling,
+                    "tool_results": [asdict(tool_result) for tool_result in tool_results],
+                },
+            )
+            return result
+        except Exception:
+            self._set_presence(
+                agent_id,
+                "error",
+                "Agent run failed",
+                session_id=session_id,
+                actor_id=context.actor_id,
+            )
+            raise
 
     @staticmethod
     def _model_metadata(response: ModelResponse) -> dict[str, Any]:
@@ -155,3 +182,20 @@ class AgentRuntime:
             status = item.status
             summaries.append(f"{item.request.name}:{status}")
         return f"{response.content}\nTool results: {', '.join(summaries)}"
+
+    def _set_presence(
+        self,
+        agent_id: str,
+        state: str,
+        activity: str,
+        session_id: str | None = None,
+        actor_id: str | None = None,
+    ) -> None:
+        if not self.presence:
+            return
+        self.presence.set_state(
+            agent_id,
+            state,
+            activity,
+            {"current_session_id": session_id, "actor_id": actor_id or agent_id},
+        )

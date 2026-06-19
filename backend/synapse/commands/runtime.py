@@ -13,6 +13,7 @@ from synapse.core.permissions import PermissionContext
 from synapse.daemon.runner import DaemonRunner
 from synapse.memory.store import MemoryStore
 from synapse.policies.effective import EffectivePolicyRuntime
+from synapse.presence.runtime import PresenceRuntime
 from synapse.scheduler.runtime import SchedulerRuntime
 from synapse.tasks.runtime import TaskRuntime
 from synapse.tools.base import ToolRegistry
@@ -43,6 +44,7 @@ class CommandRuntime:
         worker: AgentWorker,
         scheduler: SchedulerRuntime,
         daemon: DaemonRunner,
+        presence: PresenceRuntime,
     ):
         self.config = config
         self.events = events
@@ -57,6 +59,7 @@ class CommandRuntime:
         self.worker = worker
         self.scheduler = scheduler
         self.daemon = daemon
+        self.presence = presence
 
     def execute(
         self,
@@ -122,6 +125,8 @@ class CommandRuntime:
             return self._daemon_run_once(context)
         if command == "/trace":
             return self._trace(argument_text)
+        if command == "/presence":
+            return self._presence(argument_text)
 
         return CommandResult(command=command, status="error", output=f"Unknown command: {command}")
 
@@ -150,6 +155,7 @@ class CommandRuntime:
             "/daemon-status",
             "/daemon-run-once",
             "/trace",
+            "/presence",
         ]
         return CommandResult(
             command="/help",
@@ -504,6 +510,24 @@ class CommandRuntime:
                 f"for correlation {correlation_id}."
             ),
             data={"events": events, "records": records},
+        )
+
+    def _presence(self, argument_text: str) -> CommandResult:
+        agent_id = argument_text.strip().lower()
+        if agent_id:
+            presence = self.presence.get(agent_id)
+            return CommandResult(
+                command="/presence",
+                status="ok",
+                output=f"Presence for {agent_id}: {presence.state}",
+                data={"presence": asdict(presence)},
+            )
+        presences = [asdict(presence) for presence in self.presence.list_all()]
+        return CommandResult(
+            command="/presence",
+            status="ok",
+            output=f"{len(presences)} presence record(s).",
+            data={"presence": presences},
         )
 
     def _default_agent_id(self) -> str:

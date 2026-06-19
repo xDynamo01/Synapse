@@ -88,6 +88,8 @@ Effective policy status: `EffectivePolicyRuntime` now resolves the single policy
 
 Observability status: `EventBus` now writes correlation-aware envelopes. Durable records for tasks, agent messages, approvals, jobs, and chat sessions also persist optional correlation metadata. Chat turns, tool calls, approval creation, job execution, daemon ticks, worker processing, and related records can be traced by `correlation_id` through `/trace` or `GET /trace/{correlation_id}`.
 
+Presence status: `PresenceRuntime` persists each agent's current state under `presence/<agent_id>.yaml`. Chat, agent execution, approvals, worker processing, and scheduler-run agent jobs update presence and emit `presence.updated` events with correlation metadata when available.
+
 ## Step-by-Step Walkthrough
 
 ### 1. User talks to Artemis
@@ -107,6 +109,7 @@ Components:
 - `ApprovalManager` when the tool risk policy requires approval
 - `ApprovalResumeRuntime` when an approval is approved and resumed
 - `EventBus`
+- `PresenceRuntime`
 - `DataDir`
 
 Files read:
@@ -127,12 +130,14 @@ Files written:
 
 - `chats/sessions/<session_id>.json`
 - `logs/events.jsonl`
+- `presence/artemis.yaml`
 - tool-specific files when requested, such as tasks or agent messages
 - `approvals/<approval_id>.yaml` when a sensitive tool requires human approval
 
 Events generated:
 
 - `chat.message_received`
+- `presence.updated`
 - `permission.decision`
 - `context.loaded`
 - `chat.context_loaded`
@@ -151,6 +156,7 @@ Events generated:
 Risks:
 
 - Chat history is persisted as session state, but it must remain separate from memory.
+- Presence is a current-state projection. It does not yet keep a separate historical timeline beyond events.
 - Tool calling is controlled, permission-gated, and approval-gated for high/critical risk tools, but only supports simple single-pass execution.
 - Agents now have distinct identities, but identity schema versioning and editing workflows are not implemented.
 - Agent policy is centralized, but resource-scoped filesystem and per-project policy rules are still missing.

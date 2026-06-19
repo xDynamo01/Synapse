@@ -120,6 +120,18 @@ def worker_status(request: Request) -> dict[str, Any]:
     return asdict(runtime.worker.status())
 
 
+@router.get("/presence")
+def list_presence(request: Request) -> list[dict[str, Any]]:
+    runtime = runtime_from(request)
+    return [asdict(presence) for presence in runtime.presence.list_all()]
+
+
+@router.get("/presence/{agent_id}")
+def get_presence(agent_id: str, request: Request) -> dict[str, Any]:
+    runtime = runtime_from(request)
+    return asdict(runtime.presence.get(agent_id))
+
+
 @router.get("/daemon/status")
 def daemon_status(request: Request) -> dict[str, Any]:
     runtime = runtime_from(request)

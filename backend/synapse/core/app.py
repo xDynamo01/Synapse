@@ -4,7 +4,6 @@ from dataclasses import dataclass
 
 from synapse.agents.communication import AgentCommunication
 from synapse.agents.identity import AgentIdentityRuntime
-from synapse.agents.presence import PresenceStore
 from synapse.agents.registry import AgentRegistry
 from synapse.agents.runtime import AgentRuntime
 from synapse.approvals.manager import ApprovalManager
@@ -22,6 +21,7 @@ from synapse.daemon.runner import DaemonRunner
 from synapse.daemon.status import DaemonStatusStore
 from synapse.memory.store import MemoryStore
 from synapse.policies.effective import EffectivePolicyRuntime
+from synapse.presence.runtime import PresenceRuntime
 from synapse.scheduler.queue import JobQueue
 from synapse.scheduler.runtime import SchedulerRuntime
 from synapse.tasks.runtime import TaskRuntime
@@ -43,7 +43,7 @@ class RuntimeContainer:
     identities: AgentIdentityRuntime
     agent_runtime: AgentRuntime
     communication: AgentCommunication
-    presence: PresenceStore
+    presence: PresenceRuntime
     devices: DeviceRegistry
     approvals: ApprovalManager
     approval_resume: ApprovalResumeRuntime
@@ -84,7 +84,7 @@ def create_runtime(settings: Settings | None = None) -> RuntimeContainer:
     agents = AgentRegistry(data_dir)
     identities = AgentIdentityRuntime(data_dir)
     communication = AgentCommunication(data_dir, agents, permissions, events)
-    presence = PresenceStore(data_dir, events)
+    presence = PresenceRuntime(data_dir, events)
     devices = DeviceRegistry(data_dir, events)
     approvals = ApprovalManager(data_dir, permissions, devices, events)
     memory = MemoryStore(data_dir, permissions, events)
@@ -93,11 +93,11 @@ def create_runtime(settings: Settings | None = None) -> RuntimeContainer:
     register_builtin_tools(tools, data_dir, communication, tasks)
     policies = EffectivePolicyRuntime(agents, identities, tools, permissions, approvals, devices)
     context_loader = ContextLoader(data_dir, permissions, events, agents, identities, policies, tasks)
-    tool_router = ToolRouter(tools, permissions, approvals, events)
-    agent_runtime = AgentRuntime(agents, policies, models, tool_router, events)
-    worker = AgentWorker(communication, context_loader, agent_runtime, policies, events)
+    tool_router = ToolRouter(tools, permissions, approvals, events, presence)
+    agent_runtime = AgentRuntime(agents, policies, models, tool_router, events, presence)
+    worker = AgentWorker(communication, context_loader, agent_runtime, policies, events, presence)
     job_queue = JobQueue(data_dir)
-    scheduler = SchedulerRuntime(job_queue, worker, events)
+    scheduler = SchedulerRuntime(job_queue, worker, events, presence)
     daemon = DaemonRunner(scheduler, DaemonStatusStore(data_dir), events)
     approval_resume = ApprovalResumeRuntime(approvals, tool_router, policies)
     commands = CommandRuntime(
@@ -114,8 +114,9 @@ def create_runtime(settings: Settings | None = None) -> RuntimeContainer:
         worker,
         scheduler,
         daemon,
+        presence,
     )
-    chat = ChatRuntime(data_dir, events, context_loader, agent_runtime, commands)
+    chat = ChatRuntime(data_dir, events, context_loader, agent_runtime, commands, presence)
 
     events.emit("runtime.started", settings.default_actor_id, {"data_dir": str(data_dir.root)})
 

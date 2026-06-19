@@ -23,6 +23,7 @@ Client/UI
       -> Agent Worker
       -> Scheduler Runtime
       -> Daemon Runner
+      -> Presence Runtime
       -> Observability / Correlation
       -> Command Runtime
       -> Device Registry
@@ -48,6 +49,8 @@ data/
   jobs/
   daemon/
     status.yaml
+  presence/
+    <agent_id>.yaml
   logs/
   library/
   chats/
@@ -170,6 +173,38 @@ Chat events:
 - `chat.context_loaded`
 - `chat.response_generated`
 - `chat.session_persisted`
+
+`ChatRuntime` also updates `PresenceRuntime` through `listening`, `thinking`, `speaking`, and `idle` states. If a tool call creates a pending approval, the agent remains in `waiting_approval`.
+
+## Presence Runtime
+
+`PresenceRuntime` is the durable state projection for what each agent is doing. It is not UI logic; it is a runtime-owned status layer for chat, workers, scheduler/daemon cycles, future voice/avatar surfaces, and operations.
+
+Presence records are persisted under:
+
+```text
+data/presence/<agent_id>.yaml
+```
+
+Each `AgentPresence` includes:
+
+- `agent_id`
+- `state`: `idle`, `listening`, `thinking`, `speaking`, `researching`, `working`, `waiting_approval`, `offline`, or `error`
+- optional `activity`
+- optional current task, job, session, and approval ids
+- optional `emotion`
+- `updated_at`
+- optional `correlation_id`
+
+Runtime integrations:
+
+- `ChatRuntime`: `listening`, `thinking`, `speaking`, `idle`, or preserved `waiting_approval`
+- `AgentRuntime`: `thinking`, `working`, `error`
+- `ToolRouter`/approval flow: `waiting_approval`
+- `AgentWorker`: `working`, `idle`, `error`
+- `SchedulerRuntime`: job-scoped `working`, `idle`, `error` for agent jobs
+
+Every transition emits `presence.updated` and inherits the active `CorrelationContext` when one exists.
 
 ## Agent Runtime and Models
 

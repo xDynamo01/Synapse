@@ -12,6 +12,7 @@ from synapse.observability.correlation import (
     current_correlation,
     new_correlation,
 )
+from synapse.presence.runtime import PresenceRuntime
 from synapse.scheduler.jobs import Job
 from synapse.scheduler.queue import JobQueue
 from synapse.workers.agent_worker import AgentWorker
@@ -23,10 +24,12 @@ class SchedulerRuntime:
         queue: JobQueue,
         worker: AgentWorker,
         event_bus: EventBus,
+        presence: PresenceRuntime | None = None,
     ):
         self.queue = queue
         self.worker = worker
         self.event_bus = event_bus
+        self.presence = presence
 
     def enqueue(
         self,
@@ -126,6 +129,17 @@ class SchedulerRuntime:
             )
             self.event_bus.emit("job.started", context.actor_id, asdict(running))
             try:
+                agent_id = self._agent_id_for_job(running)
+                if agent_id and self.presence:
+                    self.presence.set_state(
+                        agent_id,
+                        "working",
+                        f"Running job {running.type}",
+                        {
+                            "current_job_id": running.id,
+                            "actor_id": context.actor_id,
+                        },
+                    )
                 result = self._execute(context, running)
                 completed = self.queue.save(
                     running.with_updates(
@@ -136,6 +150,16 @@ class SchedulerRuntime:
                     )
                 )
                 self.event_bus.emit("job.completed", context.actor_id, asdict(completed))
+                if agent_id and self.presence:
+                    self.presence.set_state(
+                        agent_id,
+                        "idle",
+                        f"Completed job {running.type}",
+                        {
+                            "current_job_id": running.id,
+                            "actor_id": context.actor_id,
+                        },
+                    )
                 return completed
             except Exception as exc:
                 failed = self.queue.save(
@@ -145,6 +169,17 @@ class SchedulerRuntime:
                     )
                 )
                 self.event_bus.emit("job.failed", context.actor_id, asdict(failed))
+                agent_id = self._agent_id_for_job(running)
+                if agent_id and self.presence:
+                    self.presence.set_state(
+                        agent_id,
+                        "error",
+                        f"Failed job {running.type}",
+                        {
+                            "current_job_id": running.id,
+                            "actor_id": context.actor_id,
+                        },
+                    )
                 return failed
 
     def _execute(self, context: PermissionContext, job: Job) -> dict[str, Any]:
@@ -158,3 +193,10 @@ class SchedulerRuntime:
                 raise ValidationError(f"Worker failed to process {len(failures)} message(s).")
             return {"results": [asdict(result) for result in results]}
         raise ValidationError(f"Unknown job type: {job.type}")
+
+    @staticmethod
+    def _agent_id_for_job(job: Job) -> str | None:
+        if job.type == "process_agent_inbox":
+            agent_id = str(job.payload.get("agent_id", "")).strip()
+            return agent_id or None
+        return None
