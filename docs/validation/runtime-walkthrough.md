@@ -94,6 +94,8 @@ Lifecycle status: `LifecycleRuntime` persists each agent's operational stage und
 
 Communication status: `CommunicationRuntime` now provides the first utility runtime. V1 supports offline mock email reading, classification, summary, briefing, draft creation, commands, API endpoints, tools, and `check_email` scheduler jobs. Gmail is only a prepared provider boundary. Sending email is not implemented.
 
+Notification status: `NotificationRuntime` now observes runtime events and persists local notifications under `notifications/`. Approval requests, communication briefings, scheduler failures, daemon errors, agent errors, tool failures, and worker failures generate notifications without UI/mobile/voice/avatar dependencies.
+
 ## Step-by-Step Walkthrough
 
 ### 1. User talks to Artemis
@@ -115,6 +117,7 @@ Components:
 - `EventBus`
 - `PresenceRuntime`
 - `LifecycleRuntime`
+- `NotificationRuntime`
 - `DataDir`
 
 Files read:
@@ -137,6 +140,7 @@ Files written:
 - `logs/events.jsonl`
 - `presence/artemis.yaml`
 - `lifecycle/artemis.yaml`
+- `notifications/<notification_id>.yaml` when relevant events occur
 - tool-specific files when requested, such as tasks or agent messages
 - `approvals/<approval_id>.yaml` when a sensitive tool requires human approval
 
@@ -147,6 +151,7 @@ Events generated:
 - `agent.woken`
 - `agent.sleeping`
 - `agent.lifecycle_changed`
+- `notification.created` when a subscribed event occurs
 - `permission.decision`
 - `context.loaded`
 - `chat.context_loaded`
@@ -167,6 +172,7 @@ Risks:
 - Chat history is persisted as session state, but it must remain separate from memory.
 - Presence is a current-state projection. It does not yet keep a separate historical timeline beyond events.
 - Lifecycle is currently permissive; it records transitions but does not enforce a strict state machine.
+- Notification V1 is local-only. Push/mobile/desktop providers, cleanup execution, retention, deduplication, and user routing preferences remain future work.
 - Tool calling is controlled, permission-gated, and approval-gated for high/critical risk tools, but only supports simple single-pass execution.
 - Agents now have distinct identities, but identity schema versioning and editing workflows are not implemented.
 - Agent policy is centralized, but resource-scoped filesystem and per-project policy rules are still missing.

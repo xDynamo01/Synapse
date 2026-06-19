@@ -4,7 +4,7 @@ import json
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from uuid import uuid4
 
 from synapse.core.serialization import load_structured_file
@@ -29,6 +29,10 @@ class EventBus:
         self.data_dir = data_dir
         self.path = data_dir / "logs" / "events.jsonl"
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._listeners: list[Callable[[Event], None]] = []
+
+    def add_listener(self, listener: Callable[[Event], None]) -> None:
+        self._listeners.append(listener)
 
     def emit(
         self,
@@ -49,6 +53,8 @@ class EventBus:
         )
         with self.path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(asdict(event), sort_keys=True) + "\n")
+        for listener in list(self._listeners):
+            listener(event)
         return event
 
     def tail(self, limit: int = 100) -> list[Event]:
@@ -105,6 +111,7 @@ class EventBus:
             "approvals/*.yaml",
             "jobs/*.yaml",
             "chats/sessions/*.json",
+            "notifications/*.yaml",
         ]
         paths: list[Path] = []
         for pattern in patterns:
@@ -141,4 +148,6 @@ class EventBus:
             return "job"
         if "sessions" in parts:
             return "chat_session"
+        if "notifications" in parts:
+            return "notification"
         return "record"

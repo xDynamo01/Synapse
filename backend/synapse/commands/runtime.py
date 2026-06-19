@@ -14,6 +14,7 @@ from synapse.core.permissions import PermissionContext
 from synapse.daemon.runner import DaemonRunner
 from synapse.lifecycle.runtime import LifecycleRuntime
 from synapse.memory.store import MemoryStore
+from synapse.notifications.runtime import NotificationRuntime
 from synapse.policies.effective import EffectivePolicyRuntime
 from synapse.presence.runtime import PresenceRuntime
 from synapse.scheduler.runtime import SchedulerRuntime
@@ -49,6 +50,7 @@ class CommandRuntime:
         presence: PresenceRuntime,
         lifecycle: LifecycleRuntime,
         communication_runtime: CommunicationRuntime,
+        notifications: NotificationRuntime,
     ):
         self.config = config
         self.events = events
@@ -66,6 +68,7 @@ class CommandRuntime:
         self.presence = presence
         self.lifecycle = lifecycle
         self.communication_runtime = communication_runtime
+        self.notifications = notifications
 
     def execute(
         self,
@@ -147,6 +150,10 @@ class CommandRuntime:
             return self._email_drafts(argument_text)
         if command == "/email-read":
             return self._email_read(argument_text)
+        if command == "/notifications":
+            return self._notifications(argument_text)
+        if command == "/read-notification":
+            return self._read_notification(argument_text)
 
         return CommandResult(command=command, status="error", output=f"Unknown command: {command}")
 
@@ -183,6 +190,8 @@ class CommandRuntime:
             "/email-summary",
             "/email-drafts",
             "/email-read",
+            "/notifications",
+            "/read-notification",
         ]
         return CommandResult(
             command="/help",
@@ -657,6 +666,37 @@ class CommandRuntime:
             status="ok",
             output=message.subject,
             data={"message": asdict(message)},
+        )
+
+    def _notifications(self, argument_text: str) -> CommandResult:
+        unread_only = argument_text.strip().lower() == "unread"
+        notifications = (
+            self.notifications.list_unread()
+            if unread_only
+            else self.notifications.list_notifications()
+        )
+        payload = [asdict(notification) for notification in notifications]
+        return CommandResult(
+            command="/notifications",
+            status="ok",
+            output=f"{len(payload)} notification(s).",
+            data={"notifications": payload},
+        )
+
+    def _read_notification(self, notification_id: str) -> CommandResult:
+        notification_id = notification_id.strip()
+        if not notification_id:
+            return CommandResult(
+                command="/read-notification",
+                status="error",
+                output="Usage: /read-notification <id>",
+            )
+        notification = self.notifications.mark_read(notification_id)
+        return CommandResult(
+            command="/read-notification",
+            status="ok",
+            output=f"Notification read: {notification.title}",
+            data={"notification": asdict(notification)},
         )
 
     def _default_agent_id(self) -> str:

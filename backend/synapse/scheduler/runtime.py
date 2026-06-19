@@ -9,6 +9,7 @@ from synapse.core.events import EventBus
 from synapse.core.exceptions import ValidationError
 from synapse.core.permissions import PermissionContext
 from synapse.lifecycle.runtime import LifecycleRuntime
+from synapse.notifications.runtime import NotificationRuntime
 from synapse.observability.correlation import (
     correlation_scope,
     current_correlation,
@@ -29,6 +30,7 @@ class SchedulerRuntime:
         presence: PresenceRuntime | None = None,
         lifecycle: LifecycleRuntime | None = None,
         communication: CommunicationRuntime | None = None,
+        notifications: NotificationRuntime | None = None,
     ):
         self.queue = queue
         self.worker = worker
@@ -36,6 +38,7 @@ class SchedulerRuntime:
         self.presence = presence
         self.lifecycle = lifecycle
         self.communication = communication
+        self.notifications = notifications
 
     def enqueue(
         self,

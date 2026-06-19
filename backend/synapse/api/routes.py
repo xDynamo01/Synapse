@@ -220,6 +220,46 @@ def communication_summary(request: Request, provider: str = "mock") -> dict[str,
     return runtime.communication_runtime.daily_summary(provider=provider)
 
 
+@router.get("/notifications")
+def list_notifications(request: Request) -> list[dict[str, Any]]:
+    runtime = runtime_from(request)
+    return [asdict(notification) for notification in runtime.notifications.list_notifications()]
+
+
+@router.get("/notifications/unread")
+def list_unread_notifications(request: Request) -> list[dict[str, Any]]:
+    runtime = runtime_from(request)
+    return [asdict(notification) for notification in runtime.notifications.list_unread()]
+
+
+@router.get("/notifications/{notification_id}")
+def get_notification(notification_id: str, request: Request) -> dict[str, Any]:
+    runtime = runtime_from(request)
+    try:
+        return asdict(runtime.notifications.get(notification_id))
+    except Exception as exc:
+        raise api_error(exc) from exc
+
+
+@router.post("/notifications/{notification_id}/read")
+def mark_notification_read(notification_id: str, request: Request) -> dict[str, Any]:
+    runtime = runtime_from(request)
+    try:
+        return asdict(runtime.notifications.mark_read(notification_id))
+    except Exception as exc:
+        raise api_error(exc) from exc
+
+
+@router.delete("/notifications/{notification_id}")
+def delete_notification(notification_id: str, request: Request) -> dict[str, Any]:
+    runtime = runtime_from(request)
+    try:
+        runtime.notifications.delete_notification(notification_id)
+        return {"deleted": True, "id": notification_id}
+    except Exception as exc:
+        raise api_error(exc) from exc
+
+
 @router.get("/daemon/status")
 def daemon_status(request: Request) -> dict[str, Any]:
     runtime = runtime_from(request)

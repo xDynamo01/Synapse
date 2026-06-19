@@ -24,6 +24,8 @@ from synapse.daemon.runner import DaemonRunner
 from synapse.daemon.status import DaemonStatusStore
 from synapse.lifecycle.runtime import LifecycleRuntime
 from synapse.memory.store import MemoryStore
+from synapse.notifications.local_provider import LocalNotificationProvider
+from synapse.notifications.runtime import NotificationRuntime
 from synapse.policies.effective import EffectivePolicyRuntime
 from synapse.presence.runtime import PresenceRuntime
 from synapse.scheduler.queue import JobQueue
@@ -50,6 +52,7 @@ class RuntimeContainer:
     communication_runtime: CommunicationRuntime
     presence: PresenceRuntime
     lifecycle: LifecycleRuntime
+    notifications: NotificationRuntime
     devices: DeviceRegistry
     approvals: ApprovalManager
     approval_resume: ApprovalResumeRuntime
@@ -92,6 +95,7 @@ def create_runtime(settings: Settings | None = None) -> RuntimeContainer:
     communication = AgentCommunication(data_dir, agents, permissions, events)
     presence = PresenceRuntime(data_dir, events)
     lifecycle = LifecycleRuntime(data_dir, events, presence)
+    notifications = NotificationRuntime(events, LocalNotificationProvider(data_dir))
     communication_runtime = CommunicationRuntime(
         providers={
             "mock": MockCommunicationProvider(data_dir),
@@ -128,6 +132,7 @@ def create_runtime(settings: Settings | None = None) -> RuntimeContainer:
         presence,
         lifecycle,
         communication_runtime,
+        notifications,
     )
     daemon = DaemonRunner(scheduler, DaemonStatusStore(data_dir), events)
     approval_resume = ApprovalResumeRuntime(approvals, tool_router, policies)
@@ -148,6 +153,7 @@ def create_runtime(settings: Settings | None = None) -> RuntimeContainer:
         presence,
         lifecycle,
         communication_runtime,
+        notifications,
     )
     chat = ChatRuntime(data_dir, events, context_loader, agent_runtime, commands, presence)
 
@@ -167,6 +173,7 @@ def create_runtime(settings: Settings | None = None) -> RuntimeContainer:
         communication_runtime=communication_runtime,
         presence=presence,
         lifecycle=lifecycle,
+        notifications=notifications,
         devices=devices,
         approvals=approvals,
         approval_resume=approval_resume,

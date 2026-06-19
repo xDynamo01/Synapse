@@ -117,6 +117,7 @@ Status: partial foundation complete.
 - Lifecycle API endpoints.
 - Communication Runtime V1 for mock email read/classify/summarize/draft.
 - Communication tools, commands, API, scheduler job, and Hermes briefing.
+- Notification Runtime with local provider, event integration, commands, and API.
 
 Pending:
 
@@ -279,6 +280,28 @@ Pending:
 - Human review workflow for draft approval.
 - Provider-specific rate limits and retries.
 - Communication threads/conversations persistence beyond drafts.
+
+## 6A. Notification Runtime
+
+Status: complete foundation.
+
+- Local-first `NotificationRuntime`.
+- `LocalNotificationProvider` persists notifications under `DATA_DIR/notifications`.
+- `ConsoleNotificationProvider` prepared for debug output.
+- Notification severities: info, success, warning, critical.
+- Notification categories: approval, communication, agent, scheduler, daemon, system, task, security, unknown.
+- Event integration for approvals, communication briefings, job failures, daemon errors, agent errors, tool failures, and worker failures.
+- Commands: `/notifications`, `/notifications unread`, `/read-notification <id>`.
+- API: list, unread, detail, mark read, delete.
+- Correlation metadata preserved on notifications.
+
+Pending:
+
+- Notification cleanup job execution.
+- Notification retention policy.
+- Real push/mobile/desktop providers.
+- User preferences and routing rules.
+- Deduplication and rate limiting.
 
 ## 7. Presence Runtime
 

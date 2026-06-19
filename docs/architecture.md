@@ -26,6 +26,7 @@ Client/UI
       -> Presence Runtime
       -> Agent Lifecycle Runtime
       -> Communication Runtime
+      -> Notification Runtime
       -> Observability / Correlation
       -> Command Runtime
       -> Device Registry
@@ -58,6 +59,7 @@ data/
   communication/
     mock/
       drafts/
+  notifications/
   logs/
   library/
   chats/
@@ -317,6 +319,50 @@ Communication events:
 - `communication.briefing_generated`
 
 Scheduler integration adds job type `check_email`, with payload fields `provider` and `agent_id`. Daemon can execute this job through normal scheduler cycles.
+
+## Notification Runtime
+
+`NotificationRuntime` is the local-first notification source for Synapse. It is independent of UI, mobile, voice, and avatar layers. Future surfaces should consume notifications from this runtime instead of generating their own.
+
+Required flow:
+
+```text
+Runtime/Event
+  -> NotificationRuntime
+  -> NotificationProvider
+```
+
+The default provider is `LocalNotificationProvider`, which persists notifications under:
+
+```text
+data/notifications/<notification_id>.yaml
+```
+
+`ConsoleNotificationProvider` exists only for debug output.
+
+Notification severities are `info`, `success`, `warning`, and `critical`.
+
+Notification categories are `approval`, `communication`, `agent`, `scheduler`, `daemon`, `system`, `task`, `security`, and `unknown`.
+
+Initial event integrations:
+
+- `approval.requested` / `approval.created`
+- `approval.approved`
+- `approval.rejected`
+- `communication.briefing_generated`
+- `job.failed`
+- `agent.error`
+- `daemon.error`
+- `tool.failed`
+- `worker.message_failed`
+
+Notification events:
+
+- `notification.created`
+- `notification.read`
+- `notification.deleted`
+
+Notification Runtime observes Presence and Lifecycle related failures only through events; it does not mutate those runtimes.
 
 ## Agent Runtime and Models
 

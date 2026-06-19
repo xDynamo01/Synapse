@@ -19,6 +19,7 @@ REQUIRED_DIRECTORIES = (
     "presence",
     "lifecycle",
     "communication/mock/drafts",
+    "notifications",
     "logs",
     "library",
     "chats",
