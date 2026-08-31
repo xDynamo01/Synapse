@@ -1,61 +1,96 @@
-# Synapse V2
+# Synapse
 
-Synapse is a local-first personal agent operating system. This repository starts with the runtime foundation: Core, Memory, Context Loader, Agent Runtime, Task Runtime, Tool System, Command Runtime, Permission Manager, Event Bus, Device Registry, and a FastAPI API layer.
+Synapse is a local-first desktop environment for personal AI agents. The current
+v0.01 line focuses on the working Electron shell, local backend sidecar,
+conversation flow, history, theme-aware interface, and the Presence visual layer.
 
-## Principles
+![Synapse Presence runtime](docs/assets/readme/synapse-presence-runtime.png)
 
-- Local first: the default `DATA_DIR` is local and no critical path depends on cloud services.
-- Agent first: agents are persistent entities, not chat sessions.
-- Runtime first: tools and state exist in the runtime before any UI uses them.
-- Memory first: markdown memory files are persistent and separate from chat history.
-- Permission first: every tool call passes through `PermissionManager`.
-- Homelab ready: runtime state, logs, API, and future gateway boundaries are explicit.
+## Current product surface
 
-## Layout
+- Electron desktop app with a local backend sidecar.
+- Conversation Log with chat-style user and assistant bubbles.
+- Local chat routing through configured model providers such as LM Studio.
+- Conversation history with persisted deletion controls.
+- Theme-aware navigation/status icons for Synapse, Violet, Amber, Blue, and
+  Neutral.
+- Presence orb rendered procedurally in the frontend, with theme-aware ambient
+  lighting, particles, rings, and pulse states.
+
+The left sidebar, top status badge, composer, and Conversation Log are part of
+the current v0.01 shell. The Presence/Constellation area is intentionally visual
+first in this version; full swarm activity projection remains a later runtime
+target.
+
+## Swarm constellation target
+
+The image below is a concept reference for how the central constellation should
+evolve when a real swarm is active. It is not a screenshot of the current
+runtime. It shows the intended direction: a primary agent coordinating model,
+tool, memory, planning, verification, and repository participants through a
+living activity graph.
+
+![Synapse swarm constellation concept](docs/assets/readme/synapse-swarm-constellation-concept.png)
+
+## Repository layout
 
 ```text
-backend/synapse/      Python runtime and API
-data/                 Local DATA_DIR bootstrap
-docs/                 Architecture notes and reference study
-tests/                Core/runtime tests
+apps/frontend-v2/        Electron + React desktop shell
+backend/synapse/         Python backend runtime domains
+data/                    Development seed data and local defaults
+docs/                    Architecture, roadmap, validation, and product notes
+scripts/                 Operational build and validation scripts
+tests/                   Backend and architecture tests
 ```
 
-## Quickstart
+## Development setup
+
+Prerequisites:
+
+- Python 3.12+
+- `uv`
+- Node.js/npm
+
+Backend:
 
 ```powershell
-cd E:\Projetos\Synapse
-py -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
-.\.venv\Scripts\python.exe -m uvicorn synapse.main:app --reload --host 127.0.0.1 --port 8717
+uv sync --extra dev
+uv run uvicorn synapse.main:app --app-dir backend --host 127.0.0.1 --port 8717
 ```
 
-Then open `http://127.0.0.1:8717/docs`.
-
-Run tests without installing runtime web dependencies:
+Frontend:
 
 ```powershell
-py -m unittest discover -s tests
+cd apps/frontend-v2
+npm install
+npm run build
 ```
 
-## Current Scope
+Desktop runtime:
 
-Implemented foundation:
+```powershell
+cd apps/frontend-v2
+npm run electron:dev
+```
 
-- `DATA_DIR` bootstrap with config, memory, agents, tasks, logs, library, chats, and devices.
-- Permission-gated tools: `read_file`, `write_file`, `list_directory`, `search_files`, `web_search`, `send_agent_message`, `create_task`, `update_task`.
-- Persistent event log in `data/logs/events.jsonl`.
-- Persistent task files under `data/tasks`.
-- Persistent agent files under `data/agents/<agent_id>`.
-- Structured agent-to-agent message records under `data/agents/<agent_id>/messages`.
-- `ContextLoader` with ordered, typed context sections for memory, identity, project, tasks, and session history.
-- `CommandRuntime` for slash commands over existing runtime services and tools.
-- Initial `DeviceRegistry` for trusted, untrusted, and revoked devices.
-- FastAPI endpoints over the runtime.
+## Validation
 
-Not implemented yet:
+Use focused gates for the area being changed before broad validation. Common
+checks used during v0.01 stabilization:
 
-- LLM execution and model routing beyond configuration shape.
-- RAG indexing/vector storage.
-- Desktop UI/Tauri.
-- Voice, avatar, perception, communication integrations, remote gateway, and mobile companion.
-- Full login/session handling and device permission enforcement.
+```powershell
+uv run --extra dev pytest tests/test_frontend_v2_boundary.py
+cd apps/frontend-v2
+npm test
+npm run build
+```
+
+## Engineering rules
+
+- Backend contracts remain authoritative for persistence and runtime authority.
+- UI code must not bypass policy, approval, or provider boundaries.
+- Runtime caches, installed-app state, receipts, and generated test data are not
+  product source.
+- Stale runnable bundles should be retired or ignored so the app cannot open an
+  old renderer by accident.
+- The active workspace for current v0.01 work is `F:\Projetos\Synapse`.

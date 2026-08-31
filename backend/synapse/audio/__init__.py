@@ -1,0 +1,41 @@
+from synapse.audio.models import (
+    AudioDevice,
+    AudioDeviceType,
+    AudioInputRequest,
+    AudioOutputRequest,
+    AudioSession,
+    AudioSessionStatus,
+    SpeechFeatures,
+    SpeechToTextResult,
+    TextToSpeechResult,
+    TranscriptResult,
+    TranscriptSegment,
+)
+from synapse.audio.realtime_devices import (
+    AudioOutputPort,
+    MicrophoneInputPort,
+    PlaybackRequest,
+    PlaybackResult,
+    SoundDeviceMicrophonePort,
+    SoundDeviceOutputPort,
+)
+
+__all__ = [
+    "AudioDevice",
+    "AudioDeviceType",
+    "AudioInputRequest",
+    "AudioOutputRequest",
+    "AudioSession",
+    "AudioSessionStatus",
+    "SpeechFeatures",
+    "SpeechToTextResult",
+    "TextToSpeechResult",
+    "TranscriptResult",
+    "TranscriptSegment",
+    "AudioOutputPort",
+    "MicrophoneInputPort",
+    "PlaybackRequest",
+    "PlaybackResult",
+    "SoundDeviceMicrophonePort",
+    "SoundDeviceOutputPort",
+]

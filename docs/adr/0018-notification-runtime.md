@@ -8,7 +8,7 @@ Accepted
 
 ## Context
 
-Synapse needs a central notification source before desktop, mobile, voice, or avatar surfaces exist. Runtime modules should not create UI-specific alerts directly. Notifications must be local-first, persistent, observable, and provider-based.
+Synapse needs a central notification source before desktop, mobile, or voice surfaces exist. Runtime modules should not create UI-specific alerts directly. Notifications must be local-first, persistent, observable, and provider-based.
 
 ## Decision
 
@@ -38,7 +38,7 @@ API:
 
 ## Consequences
 
-Notification Runtime becomes the single source of local Synapse notifications. UI, mobile, voice, and avatar surfaces can later consume the same runtime records.
+Notification Runtime becomes the single source of local Synapse notifications. UI, mobile, and voice surfaces can later consume the same runtime records.
 
 Known gaps:
 

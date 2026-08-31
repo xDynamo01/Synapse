@@ -43,4 +43,3 @@ class ConfigStore:
 
     def load_system(self) -> dict[str, Any]:
         return self.load("system.yaml")
-

@@ -7,6 +7,7 @@ from typing import Any
 from synapse.core.data_dir import DataDir
 from synapse.core.events import Event, EventBus
 from synapse.core.exceptions import ValidationError
+from synapse.core.permissions import PermissionContext, PermissionManager
 from synapse.core.serialization import load_structured_file
 from synapse.notifications.local_provider import LocalNotificationProvider
 from synapse.notifications.models import (
@@ -17,6 +18,7 @@ from synapse.notifications.models import (
 )
 from synapse.notifications.provider import NotificationProvider
 from synapse.observability.correlation import current_correlation
+from synapse.resources import ResourceRef, check_resource_access
 
 
 class NotificationRuntime:
@@ -25,11 +27,13 @@ class NotificationRuntime:
         data_dir: DataDir,
         event_bus: EventBus,
         provider: LocalNotificationProvider,
+        permissions: PermissionManager | None = None,
         extra_providers: list[NotificationProvider] | None = None,
     ):
         self.data_dir = data_dir
         self.event_bus = event_bus
         self.provider = provider
+        self.permissions = permissions
         self.extra_providers = extra_providers or []
         self.event_bus.add_listener(self.handle_event)
 
@@ -72,12 +76,22 @@ class NotificationRuntime:
     def list_unread(self) -> list[Notification]:
         return self.provider.list_unread()
 
-    def mark_read(self, notification_id: str) -> Notification:
+    def mark_read(
+        self,
+        notification_id: str,
+        context: PermissionContext | None = None,
+    ) -> Notification:
+        self._check_notification_resource(context, "read", notification_id)
         notification = self.provider.mark_read(notification_id)
         self.event_bus.emit("notification.read", "notifications", asdict(notification))
         return notification
 
-    def delete_notification(self, notification_id: str) -> None:
+    def delete_notification(
+        self,
+        notification_id: str,
+        context: PermissionContext | None = None,
+    ) -> None:
+        self._check_notification_resource(context, "delete", notification_id)
         notification = self.provider.get(notification_id)
         self.provider.delete(notification_id)
         self.event_bus.emit("notification.deleted", "notifications", asdict(notification))
@@ -149,13 +163,6 @@ class NotificationRuntime:
                 "message": "An approval request was rejected.",
                 "severity": "warning",
                 "category": "approval",
-            }
-        if event.type == "communication.briefing_generated":
-            return {
-                "title": "Email Briefing Available",
-                "message": str(event.payload.get("summary", "A communication briefing is available.")),
-                "severity": "info",
-                "category": "communication",
             }
         if event.type == "job.failed":
             return {
@@ -264,3 +271,19 @@ class NotificationRuntime:
             "preserve_unread": bool(policy.get("preserve_unread", True)),
             "preserve_critical": bool(policy.get("preserve_critical", True)),
         }
+
+    def _check_notification_resource(
+        self,
+        context: PermissionContext | None,
+        action: str,
+        notification_id: str,
+    ) -> None:
+        if context is None or self.permissions is None:
+            return
+        check_resource_access(
+            agent_id=context.actor_id,
+            action=action,
+            resource_ref=ResourceRef("notification", resource_id=notification_id),
+            context=context,
+            permission_manager=self.permissions,
+        )

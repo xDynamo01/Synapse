@@ -1,0 +1,118 @@
+{
+  "captured_at": "2026-07-14",
+  "scope": "primary-persistent-ephemeral-agent-consolidation",
+  "backend_status": "NOT READY",
+  "agent_kinds": {
+    "before": ["implicit_persistent_directory_agent"],
+    "after": ["primary", "persistent", "ephemeral"],
+    "after_count": 3,
+    "explicit_enum": true
+  },
+  "creation_authorities": {
+    "before": ["AgentProvisioningRuntime"],
+    "after": {
+      "persistent": "AgentProvisioningRuntime",
+      "ephemeral": "EphemeralAgentRuntime",
+      "primary_binding": "PrimaryAgentRuntime"
+    },
+    "public_arbitrary_ephemeral_spawn_surfaces": 0,
+    "legacy_agent_creator_active_references": 0
+  },
+  "runtimes": {
+    "primary": 1,
+    "ephemeral": 1,
+    "dynamic_workforce_planner": 1,
+    "persistent_agent_registries": ["AgentRegistry"],
+    "ephemeral_persistent_registry_entries": 0
+  },
+  "contracts": {
+    "primary": ["PrimaryAgentProfile", "PrimaryAgentState", "PrimaryInteractionBootstrap", "PrimaryAgentAssignmentResult"],
+    "ephemeral": ["EphemeralAgentSpec", "EphemeralAgentInstance", "EphemeralAgentResult", "EphemeralWorkforcePlan", "EphemeralCleanupResult"],
+    "duplicated_legacy_creator_contract_families_after": 0
+  },
+  "stores": {
+    "primary_profile_stores": 1,
+    "ephemeral_stores": ["instances", "results", "temporary_contexts"],
+    "ephemeral_agent_directories": 0,
+    "durable_ephemeral_memory_stores": 0
+  },
+  "persistent_workspace_agents": {
+    "directories_preserved": 6,
+    "configs_with_explicit_persistent_kind": 6,
+    "silently_selected_as_primary": 0
+  },
+  "memory_commit_boundary": {
+    "ephemeral_runtime_writes_durable_agent_memory": false,
+    "intermediate_content_promoted_automatically": false,
+    "verified_result_promotion_authority": "MemoryCommitPolicy through the existing Agent Loop path"
+  },
+  "openapi": {
+    "before": {"paths": 425, "operations": 471, "unique_operation_ids": 471, "schemas": 100},
+    "after": {"paths": 438, "operations": 485, "unique_operation_ids": 485, "schemas": 103},
+    "delta": {"paths": 13, "operations": 14, "schemas": 3},
+    "normalized_sha256_after": "9546a90adfb21a5b0a46cb187ac3ecd128f82e1950e1fbb7f7f0d07409211352"
+  },
+  "commands": {
+    "before": 339,
+    "after": 351,
+    "delta": 12,
+    "primary": ["/primary-agent-show", "/primary-agent-set", "/primary-agent-replace", "/primary-interaction-status", "/primary-interaction-bootstrap", "/primary-interaction-pause", "/primary-interaction-resume"],
+    "ephemeral": ["/ephemeral-agent-list", "/ephemeral-agent-show", "/ephemeral-agent-result", "/ephemeral-agent-reconcile", "/ephemeral-agent-cleanup-dry-run"]
+  },
+  "health_readiness": {
+    "legacy_agent_creator_health_fields_after": 0,
+    "primary_component": true,
+    "primary_facts": ["configured", "ready", "missing", "misconfigured", "conversation_available"],
+    "ephemeral_component": true,
+    "ephemeral_facts": ["ready", "active_count", "expired_count", "cleanup_pending", "resource_limits", "last_error"],
+    "missing_primary_blocks_backend_start": false
+  },
+  "acceptance_cleanup_measurement": {
+    "scenario": "isolated deterministic two-agent cancellation and cleanup",
+    "persistent_agents_created": 1,
+    "ephemeral_agents_created": 2,
+    "ephemeral_agents_destroyed": 2,
+    "cleanup_duration_ms": 130.601,
+    "active_after_cleanup": 0,
+    "cleanup_pending_after": 0,
+    "temporary_context_records_after": 0,
+    "scratchpad_references_after": 0,
+    "ephemeral_agent_directories_after": 0,
+    "expired_leases_after": 0
+  },
+  "resource_pressure": {
+    "planner_consults_pressure": true,
+    "insufficient_capacity_behavior": ["reduce_concurrency", "sequential", "defer"],
+    "policy_limits_file": "data/config/ephemeral_agent_policy.yaml"
+  },
+  "dependency_sccs": {
+    "before": [{"contexts": 25, "internal_edges": 76}, {"contexts": 4, "internal_edges": 6}, {"contexts": 2, "internal_edges": 2}],
+    "after": [{"contexts": 25, "internal_edges": 76}, {"contexts": 4, "internal_edges": 6}, {"contexts": 2, "internal_edges": 2}],
+    "finding": "No unrelated cycle was attacked and no cycle reduction is claimed."
+  },
+  "legacy_removal": {
+    "removed_files": ["backend/synapse/api/agent_creator_adapter.py", "tests/test_agent_creator.py"],
+    "exact_deleted_loc_available": false,
+    "reason": "The accumulated worktree did not provide a tracked pre-phase blob for an honest LOC comparison.",
+    "active_backend_or_config_references_after": 0
+  },
+  "validation": {
+    "architecture": {"passed": 71},
+    "agents_provisioning_primary_ephemeral": {"passed": 97},
+    "missions_workers_swarm_delegation": {"passed": 170},
+    "acceptance": {"passed": 72, "new_requested_flows": 8},
+    "frozen_domains": {"passed": 86, "skipped": 1},
+    "global": {"passed": 1099, "skipped": 1, "subtests_passed": 4, "duration_seconds": 621.67},
+    "ruff": "passed",
+    "git_diff_check": "passed",
+    "active_legacy_reference_scan": "passed",
+    "public_spawn_surface_scan": "passed"
+  },
+  "scope_guards": {
+    "frontend_created": false,
+    "client_sdk_created": false,
+    "data_dir_maintenance_changed_by_this_phase": false,
+    "unrelated_cycles_attacked": false,
+    "commit_push_or_pr_performed": false
+  }
+}

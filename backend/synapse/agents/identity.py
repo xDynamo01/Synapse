@@ -3,9 +3,9 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from synapse.agents.models import load_agent_config
 from synapse.core.data_dir import DataDir
 from synapse.core.exceptions import ValidationError
-from synapse.core.serialization import load_structured_file
 
 
 @dataclass(frozen=True)
@@ -39,7 +39,7 @@ class AgentIdentityRuntime:
         if not config_path.exists():
             raise ValidationError(f"Agent config missing: {agent_id}")
 
-        raw = load_structured_file(config_path)
+        raw = load_agent_config(config_path, agent_id, require_identity=True)
         soul = self._read_optional(f"{base}/SOUL.md")
         skills = self._read_optional(f"{base}/SKILLS.md")
         identity_raw = raw.get("identity", {})
@@ -50,7 +50,9 @@ class AgentIdentityRuntime:
             role=str(raw.get("role", identity_raw.get("role", ""))),
             description=str(raw.get("description", identity_raw.get("description", ""))),
             can_delegate=bool(raw.get("can_delegate", identity_raw.get("can_delegate", False))),
-            focus_areas=self._list_value(raw.get("focus_areas", identity_raw.get("focus_areas", []))),
+            focus_areas=self._list_value(
+                raw.get("focus_areas", identity_raw.get("focus_areas", []))
+            ),
             preferred_tools=self._list_value(
                 raw.get("preferred_tools", identity_raw.get("preferred_tools", []))
             ),
@@ -59,7 +61,9 @@ class AgentIdentityRuntime:
             ),
             default_model=raw.get("default_model", raw.get("preferred_model")),
             autonomy_profile=str(
-                raw.get("autonomy_profile", raw.get("autonomy", identity_raw.get("autonomy", "manual")))
+                raw.get(
+                    "autonomy_profile", raw.get("autonomy", identity_raw.get("autonomy", "manual"))
+                )
             ),
             communication_style=str(
                 raw.get(
@@ -99,4 +103,3 @@ class AgentIdentityRuntime:
         if isinstance(value, list):
             return [str(item) for item in value]
         return [str(value)]
-

@@ -16,6 +16,8 @@ from synapse.core.app import create_runtime
 from synapse.core.config import Settings
 from synapse.core.exceptions import PermissionDenied
 from synapse.core.permissions import PermissionContext
+from synapse.models.adapters import build_chat_messages
+from synapse.models.types import ModelRequest
 
 
 def write(path: Path, content: str) -> None:
@@ -153,6 +155,82 @@ class ChatRuntimeTests(unittest.TestCase):
         )
         self.assertNotIn("This should remain chat history only", memory_text)
 
+    def test_memory_is_injected_into_model_prompt(self) -> None:
+        directory, _, runtime = runtime_in_tempdir()
+        self.addCleanup(directory.cleanup)
+
+        request = ModelRequest(
+            agent_id="artemis",
+            provider="mock",
+            model="synapse-test",
+            user_message="você sabe meu nome?",
+            context={
+                "memory": [
+                    {
+                        "name": "user",
+                        "source": "memory/USER.md",
+                        "content": "# User Memory\n\n- Nome: Arthur\n",
+                    }
+                ],
+                "agent_identity": {"description": "Helpful agent"},
+                "agent_policy": {"allowed_tools": [], "denied_capabilities": []},
+            },
+        )
+        messages = build_chat_messages(request)
+        self.assertIn("[MEMÓRIA DO USUÁRIO]", messages[0]["content"])
+        self.assertIn("Nome: Arthur", messages[0]["content"])
+        self.assertIn("Helpful agent", messages[0]["content"])
+
+    def test_memory_prompt_is_truncated_when_too_large(self) -> None:
+        request = ModelRequest(
+            agent_id="artemis",
+            provider="mock",
+            model="synapse-test",
+            user_message="x" * 5000,
+            context={
+                "memory": [
+                    {
+                        "name": "user",
+                        "source": "memory/USER.md",
+                        "content": "# User Memory\n\n- Nome: Arthur\n" + ("y" * 12000),
+                    }
+                ],
+                "history": [{"role": "user", "content": "history " + ("z" * 12000)}],
+                "tasks": [{"id": "task-1", "title": "Task", "status": "open"}],
+                "agent_identity": {
+                    "description": "Helpful agent " + ("d" * 4000),
+                    "soul": "Soul " + ("s" * 4000),
+                    "skills": "Skills " + ("k" * 4000),
+                },
+                "agent_policy": {"allowed_tools": [], "denied_capabilities": []},
+            },
+        )
+        messages = build_chat_messages(request)
+        total_chars = sum(len(message["content"]) for message in messages)
+        self.assertLessEqual(total_chars, 18_000)
+        self.assertIn("context truncated", messages[0]["content"] + messages[1]["content"])
+
+    def test_memory_persists_between_sessions(self) -> None:
+        directory, settings, runtime = runtime_in_tempdir()
+        self.addCleanup(directory.cleanup)
+
+        first = runtime.chat.send_message(
+            runtime.context(),
+            agent_id="artemis",
+            user_message="meu nome é Arthur",
+        )
+        self.assertIn("Arthur", runtime.data_dir.resolve("memory/USER.md").read_text(encoding="utf-8"))
+
+        restarted = create_runtime(settings)
+        second = restarted.chat.send_message(
+            restarted.context(),
+            agent_id="artemis",
+            user_message="você sabe meu nome?",
+        )
+        loaded_memory = "\n".join(section["content"] for section in second.context["memory"])
+        self.assertIn("Arthur", loaded_memory)
+        self.assertNotEqual(first.session_id, second.session_id)
+
     def test_chat_events_are_emitted(self) -> None:
         directory, _, runtime = runtime_in_tempdir()
         self.addCleanup(directory.cleanup)
@@ -215,26 +293,24 @@ class ChatRuntimeTests(unittest.TestCase):
         class FakeChat:
             calls: list[dict[str, Any]] = field(default_factory=list)
 
-            def send_message(
+            def submit_turn(
                 self,
                 context: PermissionContext,
-                agent_id: str,
-                user_message: str,
+                content: str,
+                target_agent_id: str,
                 project_id: str | None = None,
-                session_id: str | None = None,
             ) -> ChatTurnResult:
                 self.calls.append(
                     {
                         "context": context,
-                        "agent_id": agent_id,
-                        "user_message": user_message,
+                        "agent_id": target_agent_id,
+                        "user_message": content,
                         "project_id": project_id,
-                        "session_id": session_id,
                     }
                 )
                 return ChatTurnResult(
-                    session_id=session_id or "api-session",
-                    agent_id=agent_id,
+                    session_id="api-session",
+                    agent_id=target_agent_id,
                     response="delegated",
                     message=ChatMessage(role="assistant", content="delegated"),
                     model={"provider": "mock", "model": "api"},
@@ -280,7 +356,6 @@ class ChatRuntimeTests(unittest.TestCase):
         self.assertEqual(call["agent_id"], "artemis")
         self.assertEqual(call["user_message"], "hello over api")
         self.assertEqual(call["project_id"], "project-a")
-        self.assertEqual(call["session_id"], "session-a")
 
     def test_agent_tool_call_read_file_with_permission_returns_content(self) -> None:
         directory, _, runtime = runtime_in_tempdir()

@@ -1,0 +1,19 @@
+{
+  "plugin_id": "faster_whisper_plugin",
+  "name": "Faster-Whisper Plugin",
+  "description": "High-performance local speech-to-text using Faster-Whisper.",
+  "version": "1.0.0",
+  "plugin_type": "speech",
+  "providers": ["faster_whisper"],
+  "capabilities": ["speech.transcribe"],
+  "adapters": ["faster_whisper_adapter"],
+  "enabled": false,
+  "installed": false,
+  "local_only": true,
+  "requires_network": false,
+  "requires_gpu": false,
+  "supported_platforms": ["windows", "linux", "darwin"],
+  "requirements": ["faster-whisper>=1.0.0"],
+  "entrypoint": "faster_whisper_plugin.entrypoint",
+  "metadata": {}
+}

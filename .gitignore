@@ -5,8 +5,9 @@ __pycache__/
 *.egg-info/
 build/
 dist/
+.cache/
 .pytest_cache/
-.mypy_cache/
+.mypy_cache*/
 .ruff_cache/
 .coverage
 coverage.xml
@@ -26,7 +27,7 @@ env/
 *.crt
 secrets.*
 
-# Node, React, and future Tauri desktop app
+# Node tooling for future governed clients
 node_modules/
 npm-debug.log*
 yarn-debug.log*
@@ -34,11 +35,15 @@ yarn-error.log*
 pnpm-debug.log*
 .npm/
 .pnpm-store/
-frontend/dist/
-frontend/build/
-frontend/.vite/
-src-tauri/target/
+backend/build/
+backend/dist/
+backend/synapse/resources/voice/piper/windows-amd64/extracted/
+backend/synapse/resources/voice/piper/windows-amd64/*.exe
+backend/synapse/resources/voice/piper/windows-amd64/*.dll
+.venv-release/
 target/
+Synapse.exe
+apps/frontend-v2/lint.out
 
 # Local IDE/editor files
 .idea/
@@ -48,6 +53,12 @@ target/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Generated workspace artifacts
+artifacts/temporary/
+artifacts/linkedin/
+artifacts/reports/generated/
+artifacts/*-e2e*/
 
 # Runtime-local DATA_DIR state. Keep bootstrap templates, ignore generated/local state.
 data/logs/**
@@ -63,3 +74,8 @@ data/devices/untrusted/*.yaml
 data/devices/revoked/*.yaml
 data/projects/**
 data/skills/**
+data/providers/credentials.yaml
+data/voice/voice-journal-v1.sqlite3
+data/voice/models/
+backend/synapse/resources/voice/models/faster-whisper/
+backend/synapse/resources/voice/voice-packs/**/*.onnx

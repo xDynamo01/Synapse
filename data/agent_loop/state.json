@@ -1,0 +1,13 @@
+{
+  "current_attention_id": null,
+  "current_decision_id": null,
+  "current_execution_ref": null,
+  "error": null,
+  "last_cycle_at": null,
+  "loop_id": "primary",
+  "metadata": {},
+  "next_cycle_at": null,
+  "previous_state": null,
+  "revision": 0,
+  "state": "stopped"
+}

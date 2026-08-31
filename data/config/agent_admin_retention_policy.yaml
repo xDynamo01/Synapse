@@ -1,0 +1,13 @@
+{
+  "agent_admin_retention": {
+    "enabled": true,
+    "delete_applied_after_days": 30,
+    "delete_rejected_after_days": 30,
+    "delete_failed_after_days": 60,
+    "delete_cancelled_after_days": 30,
+    "preserve_awaiting_approval": true,
+    "preserve_approved_not_applied": true,
+    "max_requests": 500,
+    "dry_run_default": true
+  }
+}

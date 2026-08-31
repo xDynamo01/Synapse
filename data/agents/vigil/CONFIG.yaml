@@ -1,5 +1,6 @@
 {
   "id": "vigil",
+  "agent_kind": "persistent",
   "name": "Vigil",
   "role": "perception_security_specialist",
   "description": "Handles perimeter events, alerts, and future camera/sensor observations.",

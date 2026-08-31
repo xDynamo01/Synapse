@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import json
 from dataclasses import asdict, dataclass, field
-from typing import Any
+from typing import Any, Sequence
 
 from synapse.agents.identity import AgentIdentityRuntime
 from synapse.agents.registry import AgentRegistry
@@ -9,6 +10,9 @@ from synapse.core.data_dir import DataDir
 from synapse.core.events import EventBus
 from synapse.core.permissions import PermissionContext, PermissionManager
 from synapse.policies.effective import EffectivePolicyRuntime
+from synapse.project_governance.contracts import ProjectContextReadPort
+from synapse.project_governance.errors import ProjectNotFound
+from synapse.skills.contracts import SkillResolutionPort
 from synapse.tasks.runtime import Task, TaskRuntime
 
 
@@ -51,6 +55,9 @@ class LoadedContext:
     tasks: list[TaskContext]
     history: list[HistoryContext]
     sections: list[ContextSection | TaskContext | HistoryContext]
+    conversation_context: dict[str, Any] | None = None
+    delegation_context: dict[str, Any] | None = None
+    multimodal_context: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -64,6 +71,9 @@ class LoadedContext:
             "tasks": [asdict(item) for item in self.tasks],
             "history": [asdict(item) for item in self.history],
             "sections": [asdict(item) for item in self.sections],
+            "conversation_context": self.conversation_context,
+            "delegation_context": self.delegation_context,
+            "multimodal_context": self.multimodal_context,
         }
 
 
@@ -77,6 +87,8 @@ class ContextLoader:
         identities: AgentIdentityRuntime,
         policies: EffectivePolicyRuntime,
         tasks: TaskRuntime,
+        skill_context: SkillResolutionPort | None = None,
+        project_context: ProjectContextReadPort | None = None,
     ):
         self.data_dir = data_dir
         self.permissions = permissions
@@ -85,14 +97,19 @@ class ContextLoader:
         self.identities = identities
         self.policies = policies
         self.tasks = tasks
+        self.skill_context = skill_context
+        self.project_context = project_context
 
     def load(
         self,
         context: PermissionContext,
         agent_id: str,
         project_id: str | None = None,
-        history: list[str | dict[str, str]] | None = None,
+        history: Sequence[str | dict[str, str]] | None = None,
         max_history_items: int = 5,
+        conversation_context: dict[str, Any] | None = None,
+        delegation_context: dict[str, Any] | None = None,
+        multimodal_context: dict[str, Any] | None = None,
     ) -> LoadedContext:
         self.permissions.require(context, "filesystem.read")
         self.agents.get(agent_id)
@@ -135,9 +152,41 @@ class ContextLoader:
         add_file("memory", "agent_memory", f"agents/{agent_id}/MEMORY.md")
         add_file("identity", "agent_skills", f"agents/{agent_id}/SKILLS.md")
 
+        if self.skill_context:
+            for loaded_skill in self.skill_context.load_assigned(
+                agent_id, project_id=project_id, context_budget=4000
+            ):
+                section = ContextSection(
+                    kind="skill",
+                    name=f"{loaded_skill.skill_id}@{loaded_skill.version}",
+                    source=f"skill:{loaded_skill.skill_id}@{loaded_skill.version}",
+                    content=loaded_skill.instructions,
+                    order=order,
+                )
+                order += 1
+                sections.append(section)
+
         if project_id:
-            add_file("project", "project", f"projects/{project_id}/PROJECT.md")
-            add_file("project", "project_memory", f"projects/{project_id}/MEMORY.md")
+            if self.project_context:
+                try:
+                    governed = self.project_context.read_project_context(project_id, budget=4000)
+                except ProjectNotFound:
+                    add_file("project", "project", f"projects/{project_id}/PROJECT.md")
+                    add_file("project", "project_memory", f"projects/{project_id}/MEMORY.md")
+                else:
+                    section = ContextSection(
+                        kind="project",
+                        name="governed_project_context",
+                        source=f"project:{project_id}@{governed.project_revision}",
+                        content=json.dumps(asdict(governed), default=str, sort_keys=True),
+                        order=order,
+                    )
+                    order += 1
+                    project.append(section)
+                    sections.append(section)
+            else:
+                add_file("project", "project", f"projects/{project_id}/PROJECT.md")
+                add_file("project", "project_memory", f"projects/{project_id}/MEMORY.md")
 
         for task in self._relevant_tasks(agent_id, project_id):
             task_context = TaskContext(
@@ -174,6 +223,9 @@ class ContextLoader:
             tasks=task_contexts,
             history=history_contexts,
             sections=sections,
+            conversation_context=conversation_context,
+            delegation_context=delegation_context,
+            multimodal_context=multimodal_context,
         )
         self.event_bus.emit(
             "context.loaded",
@@ -183,6 +235,9 @@ class ContextLoader:
                 "project_id": project_id,
                 "sections": len(sections),
                 "history_items": len(history_contexts),
+                "conversation_context": conversation_context is not None,
+                "delegation_context": delegation_context is not None,
+                "multimodal_context": multimodal_context is not None,
             },
         )
         return loaded
@@ -211,7 +266,7 @@ class ContextLoader:
 
     @staticmethod
     def _history_items(
-        history: list[str | dict[str, str]],
+        history: Sequence[str | dict[str, str]],
         max_history_items: int,
     ) -> list[dict[str, str]]:
         normalized: list[dict[str, str]] = []

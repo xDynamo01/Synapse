@@ -1,0 +1,19 @@
+{
+  "plugin_id": "lmstudio_plugin",
+  "name": "LM Studio Provider Plugin",
+  "description": "Local OpenAI-compatible chat completions through LM Studio.",
+  "version": "1.0.0",
+  "plugin_type": "model",
+  "providers": ["lmstudio_local"],
+  "capabilities": ["local_llm", "chat_completion"],
+  "adapters": ["lmstudio_openai_compatible_adapter"],
+  "enabled": false,
+  "installed": false,
+  "local_only": true,
+  "requires_network": false,
+  "requires_gpu": false,
+  "supported_platforms": ["windows", "linux", "darwin"],
+  "requirements": [],
+  "entrypoint": null,
+  "metadata": {"external_process_required": true}
+}

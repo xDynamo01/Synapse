@@ -1,0 +1,5 @@
+device_id: mock_camera
+enabled: true
+metadata:
+  mock: true
+name: Mock Camera

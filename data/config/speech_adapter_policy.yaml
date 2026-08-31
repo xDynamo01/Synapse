@@ -1,0 +1,10 @@
+{
+  "speech_adapters": {
+    "enabled": true,
+    "prefer_local_adapters": true,
+    "allow_network_adapters": false,
+    "allow_gpu_adapters": false,
+    "disabled_adapters": [],
+    "adapter_priority_overrides": {}
+  }
+}

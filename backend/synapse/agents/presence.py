@@ -25,5 +25,6 @@ class PresenceStore:
         statuses = self.list_statuses()
         statuses[agent_id] = status
         self.path.write_text(json.dumps(statuses, indent=2, sort_keys=True), encoding="utf-8")
-        self.event_bus.emit("agent.presence.changed", actor_id, {"agent_id": agent_id, "status": status})
-
+        self.event_bus.emit(
+            "agent.presence.changed", actor_id, {"agent_id": agent_id, "status": status}
+        )

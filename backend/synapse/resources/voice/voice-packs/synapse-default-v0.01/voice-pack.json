@@ -1,0 +1,196 @@
+{
+  "pack_id": "synapse-default-v0.01",
+  "display_name": "Synapse Default Voice Pack",
+  "version": "v0.01",
+  "provider": "piper",
+  "engine": "piper",
+  "expected_voice_count": 6,
+  "license_policy": "all included voice MODEL_CARD files state public domain datasets and explicit gendered voice descriptions",
+  "voices": [
+    {
+      "voice_id": "synapse-bryce",
+      "display_name": "Bryce",
+      "language": "English, United States",
+      "locale": "en-US",
+      "voice_profile": {
+        "gender": "masculine",
+        "style": "steady compact male voice",
+        "quality": "medium",
+        "sample_rate_hz": 22050,
+        "speakers": 1,
+        "classification_source": "Piper MODEL_CARD"
+      },
+      "provider": "piper",
+      "engine": "piper",
+      "asset_reference": "resource://voice/voice-packs/synapse-default-v0.01/assets/en_US-bryce-medium/en_US-bryce-medium.onnx",
+      "config_reference": "resource://voice/voice-packs/synapse-default-v0.01/assets/en_US-bryce-medium/en_US-bryce-medium.onnx.json",
+      "model_card_reference": "resource://voice/voice-packs/synapse-default-v0.01/assets/en_US-bryce-medium/MODEL_CARD",
+      "version": "v1.0.0",
+      "checksum": "dc9caa6c313199ffb5ac698b6e542fa6cba388aeaf2731e25262e33b9810aef1",
+      "config_checksum": "7ceb1bc4af6d4e41b6d1edbb86c67e91e01eaa71f66db4cd0ae92ac704d415be",
+      "model_card_checksum": "96042c4ddbd405f6e40e2938b069987f4016a35832114bbefed1ed04242ee532",
+      "license": "public domain",
+      "provenance": "rhasspy/piper-voices en/en_US/bryce/medium at revision v1.0.0; public domain",
+      "default": true,
+      "metadata": {
+        "source_repository": "https://huggingface.co/rhasspy/piper-voices",
+        "source_path": "en/en_US/bryce/medium"
+      }
+    },
+    {
+      "voice_id": "synapse-john",
+      "display_name": "John",
+      "language": "English, United States",
+      "locale": "en-US",
+      "voice_profile": {
+        "gender": "masculine",
+        "style": "clear narrated male voice",
+        "quality": "medium",
+        "sample_rate_hz": 22050,
+        "speakers": 1,
+        "classification_source": "Piper MODEL_CARD"
+      },
+      "provider": "piper",
+      "engine": "piper",
+      "asset_reference": "resource://voice/voice-packs/synapse-default-v0.01/assets/en_US-john-medium/en_US-john-medium.onnx",
+      "config_reference": "resource://voice/voice-packs/synapse-default-v0.01/assets/en_US-john-medium/en_US-john-medium.onnx.json",
+      "model_card_reference": "resource://voice/voice-packs/synapse-default-v0.01/assets/en_US-john-medium/MODEL_CARD",
+      "version": "v1.0.0",
+      "checksum": "789c6c875726e627ddee93d51d8727859abe9c091c3d141591f4b83c2072e988",
+      "config_checksum": "af60f177b6b550f3d7a302720c0fb89e7f94a82b5dca464775ef63b1c69ba09a",
+      "model_card_checksum": "a056da65cd70dcbda96fc3420fe8d3442dbf3c8b75f49cdf800a715b42e299d1",
+      "license": "public domain",
+      "provenance": "rhasspy/piper-voices en/en_US/john/medium at revision v1.0.0; LibriVox public domain",
+      "default": false,
+      "metadata": {
+        "source_repository": "https://huggingface.co/rhasspy/piper-voices",
+        "source_path": "en/en_US/john/medium"
+      }
+    },
+    {
+      "voice_id": "synapse-norman",
+      "display_name": "Norman",
+      "language": "English, United States",
+      "locale": "en-US",
+      "voice_profile": {
+        "gender": "masculine",
+        "style": "deeper audiobook male voice",
+        "quality": "medium",
+        "sample_rate_hz": 22050,
+        "speakers": 1,
+        "classification_source": "Piper MODEL_CARD"
+      },
+      "provider": "piper",
+      "engine": "piper",
+      "asset_reference": "resource://voice/voice-packs/synapse-default-v0.01/assets/en_US-norman-medium/en_US-norman-medium.onnx",
+      "config_reference": "resource://voice/voice-packs/synapse-default-v0.01/assets/en_US-norman-medium/en_US-norman-medium.onnx.json",
+      "model_card_reference": "resource://voice/voice-packs/synapse-default-v0.01/assets/en_US-norman-medium/MODEL_CARD",
+      "version": "v1.0.0",
+      "checksum": "b9739443232a80a59c7d18810dd856899bf16a7964725f5ab81ea49b1351cb71",
+      "config_checksum": "6c2db7f558a4a8deb9fe822583c1c5105f6c4e834dd0f9de8ad17a888ee9fe1d",
+      "model_card_checksum": "60eaf4d10009d1bd4a1aa555d337dae00f60421d72fee415b9139a021e7cb5d0",
+      "license": "public domain",
+      "provenance": "rhasspy/piper-voices en/en_US/norman/medium at revision v1.0.0; LibriVox public domain",
+      "default": false,
+      "metadata": {
+        "source_repository": "https://huggingface.co/rhasspy/piper-voices",
+        "source_path": "en/en_US/norman/medium"
+      }
+    },
+    {
+      "voice_id": "synapse-cori",
+      "display_name": "Cori",
+      "language": "English, Great Britain",
+      "locale": "en-GB",
+      "voice_profile": {
+        "gender": "feminine",
+        "style": "bright British female voice",
+        "quality": "medium",
+        "sample_rate_hz": 22050,
+        "speakers": 1,
+        "classification_source": "Piper MODEL_CARD"
+      },
+      "provider": "piper",
+      "engine": "piper",
+      "asset_reference": "resource://voice/voice-packs/synapse-default-v0.01/assets/en_GB-cori-medium/en_GB-cori-medium.onnx",
+      "config_reference": "resource://voice/voice-packs/synapse-default-v0.01/assets/en_GB-cori-medium/en_GB-cori-medium.onnx.json",
+      "model_card_reference": "resource://voice/voice-packs/synapse-default-v0.01/assets/en_GB-cori-medium/MODEL_CARD",
+      "version": "v1.0.0",
+      "checksum": "1899f98e5fb8310154f3c2973f4b8a929ba7245e722b3d3a85680b833d95f10d",
+      "config_checksum": "e262c16d7f192f69d4edd6b4ef8a5915379e67495fcc402f1ab15eeb33da3d36",
+      "model_card_checksum": "38d76dfde845837b184668f8bab1c6426ad740b1af0fcebc349037822739e536",
+      "license": "public domain",
+      "provenance": "rhasspy/piper-voices en/en_GB/cori/medium at revision v1.0.0; LibriVox public domain",
+      "default": false,
+      "metadata": {
+        "source_repository": "https://huggingface.co/rhasspy/piper-voices",
+        "source_path": "en/en_GB/cori/medium"
+      }
+    },
+    {
+      "voice_id": "synapse-kristin",
+      "display_name": "Kristin",
+      "language": "English, United States",
+      "locale": "en-US",
+      "voice_profile": {
+        "gender": "feminine",
+        "style": "warm US female voice",
+        "quality": "medium",
+        "sample_rate_hz": 22050,
+        "speakers": 1,
+        "classification_source": "Piper MODEL_CARD"
+      },
+      "provider": "piper",
+      "engine": "piper",
+      "asset_reference": "resource://voice/voice-packs/synapse-default-v0.01/assets/en_US-kristin-medium/en_US-kristin-medium.onnx",
+      "config_reference": "resource://voice/voice-packs/synapse-default-v0.01/assets/en_US-kristin-medium/en_US-kristin-medium.onnx.json",
+      "model_card_reference": "resource://voice/voice-packs/synapse-default-v0.01/assets/en_US-kristin-medium/MODEL_CARD",
+      "version": "v1.0.0",
+      "checksum": "5849957f929cbf720c258f8458692d6103fff2f0e3d3b19c8259474bb06a18d4",
+      "config_checksum": "5681426d4aead22195de70531eeeeddb46493cfaffc5764b2ea3db73428b651c",
+      "model_card_checksum": "8c181b1d5f7d8152b914faab941fcbe6b8f0495e63e5189d6f27b8c68c8393fc",
+      "license": "public domain",
+      "provenance": "rhasspy/piper-voices en/en_US/kristin/medium at revision v1.0.0; LibriVox public domain",
+      "default": false,
+      "metadata": {
+        "source_repository": "https://huggingface.co/rhasspy/piper-voices",
+        "source_path": "en/en_US/kristin/medium"
+      }
+    },
+    {
+      "voice_id": "synapse-lj",
+      "display_name": "LJ",
+      "language": "English, United States",
+      "locale": "en-US",
+      "voice_profile": {
+        "gender": "feminine",
+        "style": "studio narration female voice",
+        "quality": "medium",
+        "sample_rate_hz": 22050,
+        "speakers": 1,
+        "classification_source": "Piper MODEL_CARD"
+      },
+      "provider": "piper",
+      "engine": "piper",
+      "asset_reference": "resource://voice/voice-packs/synapse-default-v0.01/assets/en_US-ljspeech-medium/en_US-ljspeech-medium.onnx",
+      "config_reference": "resource://voice/voice-packs/synapse-default-v0.01/assets/en_US-ljspeech-medium/en_US-ljspeech-medium.onnx.json",
+      "model_card_reference": "resource://voice/voice-packs/synapse-default-v0.01/assets/en_US-ljspeech-medium/MODEL_CARD",
+      "version": "v1.0.0",
+      "checksum": "6f52a751e2349abe7a76735eb09dc1875298c77ea2342ffd2fef79ff81b87f22",
+      "config_checksum": "141d612cc0a95ed7efc1ca936b845c2364967f2e9217c5dbfcf69fc4d6c65860",
+      "model_card_checksum": "fbee1529c89d36b3fe76d7e9f3f832dce17f44900a52d76a9bda735654766b4d",
+      "license": "public domain",
+      "provenance": "rhasspy/piper-voices en/en_US/ljspeech/medium at revision v1.0.0; LJ Speech public domain",
+      "default": false,
+      "metadata": {
+        "source_repository": "https://huggingface.co/rhasspy/piper-voices",
+        "source_path": "en/en_US/ljspeech/medium"
+      }
+    }
+  ],
+  "metadata": {
+    "release": "Synapse v0.01",
+    "source_repository": "https://huggingface.co/rhasspy/piper-voices",
+    "source_revision": "v1.0.0"
+  }
+}

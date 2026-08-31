@@ -4,12 +4,14 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "backend"))
 
 from synapse.core.app import create_runtime
 from synapse.core.config import Settings
+from synapse.core.serialization import dump_structured_file, load_structured_file
 
 
 def runtime_in_tempdir():
@@ -33,6 +35,10 @@ def runtime_in_tempdir():
         target = settings.data_dir / relative_path
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+    system_path = settings.data_dir / "config" / "system.yaml"
+    system = load_structured_file(system_path)
+    system.setdefault("system", {})["default_agent_id"] = "orchestrator"
+    dump_structured_file(system_path, system)
     runtime = create_runtime(settings)
     return directory, runtime
 
@@ -210,7 +216,26 @@ class FoundationHardeningTests(unittest.TestCase):
         self.assertIn("view_notifications", record_text)
         self.assertIn("view_cameras", record_text)
 
+    def test_structured_write_retries_transient_windows_replace_denial(self) -> None:
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        path = Path(directory.name) / "presence" / "synapse.yaml"
+        attempts = 0
+        original_replace = __import__("os").replace
+
+        def flaky_replace(source: str | Path, target: str | Path) -> None:
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise PermissionError("transient access denied")
+            original_replace(source, target)
+
+        with patch("synapse.core.serialization.os.replace", flaky_replace):
+            dump_structured_file(path, {"agent_id": "synapse", "state": "thinking"})
+
+        self.assertEqual(load_structured_file(path)["state"], "thinking")
+        self.assertEqual(attempts, 2)
+
 
 if __name__ == "__main__":
     unittest.main()
-

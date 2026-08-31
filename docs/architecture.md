@@ -1,869 +1,475 @@
-# Synapse Foundation Architecture
+# Synapse V3 Architecture
 
-## Runtime Boundary
+Intelligence Trust Boundary is an independent bounded context outside the
+global SCC. Model Router and Tool Runtime consume neutral gate contracts;
+external MCP inherits Tool gating and bootstrap owns Storage/Health wiring.
+The graph is 72 contexts / 261 edges while the global SCC remains 13/35 and
+the exact module graph remains acyclic.
 
-The UI is a client. The API is an adapter. The runtime owns behavior.
+Project Governance + RFC is an independent bounded context outside the global
+SCC. Context, Missions and Skills consume neutral ports; Storage, documents,
+Tool execution and Health are bound only by bootstrap. The governed graph is
+71 contexts / 257 edges with the global SCC unchanged at 13/35.
 
-```text
-Client/UI
-  -> API Layer
-    -> RuntimeContainer
-      -> Core: config, data dir, permissions, events, model routing
-      -> Chat Runtime
-      -> Memory System
-      -> Agent Identity Runtime
-      -> Effective Policy Runtime
-      -> Context Loader
-      -> Agent Runtime
-      -> Model Adapters
-      -> Task Runtime
-      -> Tool System
-      -> Tool Router
-      -> Approval Manager
-      -> Agent Worker
-      -> Scheduler Runtime
-      -> Daemon Runner
-      -> Presence Runtime
-      -> Agent Lifecycle Runtime
-      -> Communication Runtime
-      -> Notification Runtime
-      -> Observability / Correlation
-      -> Command Runtime
-      -> Device Registry
+Skills Runtime Phase 1 is an independent bounded context outside the global
+SCC. Consumers import only neutral contracts; storage/tool adapters and all
+wiring live in bootstrap. See `docs/architecture/skills-runtime.md`.
+
+## Agent kinds and continuous primary interaction (2026-07-14)
+
+The backend has exactly three explicit kinds: Primary, persistent and ephemeral.
+Provisioning remains the durable creation authority; Mission/Swarm is the only
+entry to ephemeral creation. Primary references a persistent identity and main
+conversation and returns a frontend-neutral bootstrap without side effects. The
+legacy Agent Creator was removed. See `architecture/agent-kinds.md`,
+`architecture/primary-agent.md`, and `architecture/ephemeral-agents.md`.
+
+## Operational storage primitives (2026-07-14)
+
+Small operational collections now share neutral atomic write, collection locking,
+revision/schema contracts, deterministic pagination, recovery and retention. Four
+controlled pilots adopted the boundary; human-editable content and growing SQLite
+candidates remain unchanged. See `architecture/storage-primitives.md` and
+`architecture/storage-strategy.md`. The backend remains NOT READY.
+
+## Canonical provider taxonomy (2026-07-14)
+
+Provider identity and discovery now use one neutral, discovery-only
+`ProviderCatalog`, populated by explicit bootstrap projections. Model, Speech,
+Vision, Capture, Desktop, Insight and Notification execution remains in specialized
+domain ports/registries. Availability is separate from Health and Readiness; public
+surfaces are frozen. See `architecture/provider-taxonomy.md`. This does not mark the
+backend READY.
+
+## Health contributor boundary (2026-07-14)
+
+Health is inverted through one ordered registry and ten explicitly registered
+bounded-context contributors. `health/runtime.py` is a neutral collector with
+timeout and failure isolation; Readiness consumes only the canonical health
+snapshot protocol. The 32 component IDs, 82 summary fields and public API are
+equivalent. See `docs/architecture/health-contributors.md` and the Health
+contributors validation report.
+
+## API bounded-context boundary (2026-07-14)
+
+The 471 HTTP operations are owned by 13 bounded-context routers registered once
+in `synapse.api.router_registry`. `api/routes.py` is compatibility-only. Routers
+resolve the lifespan-owned container and call canonical facades; AST guardrails
+block stores, concrete providers, bootstrap dependencies, runtime construction,
+DataDir access, duplicate registration and duplicate operation IDs. The complete
+OpenAPI contract remains structurally identical. See
+`docs/architecture/api-routing.md` and the API decomposition validation report.
+
+## Command bounded-context boundary (2026-07-14)
+
+The 363 slash-command names are resolved by one canonical registry and owned by
+14 bounded-context handlers. `commands/runtime.py` is now a compatibility
+facade/dispatcher; bootstrap registers handlers explicitly. The frozen 339
+branch/24 alias surface is equivalent, while AST rules block store, DataDir,
+provider, API and bootstrap coupling in handlers. See
+`docs/architecture/command-runtime.md` and the command decomposition report.
+
+The backend remains **NOT READY**.
+
+## Phase 1 composition boundary (2026-07-14)
+
+Backend construction is owned by `synapse.bootstrap.application`, which
+coordinates nine feature builders and creates one `RuntimeContainer`. FastAPI
+lifespan owns construction/start/shutdown; `synapse.core.app` and
+`synapse.core.model_router` are compatibility adapters. AST rules prevent new
+reverse dependencies and cycle growth. See `docs/architecture/bootstrap.md`,
+`dependency-rules.md`, `lifecycle.md`, and the Phase 1 validation report.
+
+This stabilization does not mark the architecture READY: three SCCs and other
+Phase 2 blockers remain, although Health no longer belongs to the largest SCC.
+
+## Desktop Automation + Application Control Boundary
+
+Desktop Automation is the generic governed execution plane for applications,
+windows, accessibility elements, fallback input, transient visual evidence, and
+mandatory verification. `DesktopRuntime` orchestrates separate runtimes but
+performs no OS action itself. Native Windows UI Automation, Linux AT-SPI, and
+macOS Accessibility providers precede OCR, Vision, and element-relative input.
+Policy, Approval, Audit, Redaction, Vision, Perception, Insight, Mission, and
+Agent Loop are consumed only through their existing public ports. See
+`docs/backend/desktop-runtime.md`.
+
+## Insight + System Runtime Boundary
+
+Insight is the read-only operational-awareness plane. Separate System, Hardware,
+Disk, Process, Model Capability, Resource Pressure, and Diagnostics runtimes
+consume isolated Windows/Linux/macOS providers. Agent Loop sees the composed
+Insight facade, Mission sees only Resource Pressure, and Model Router sees only
+Model Capability. No other runtime imports an OS probe or `psutil`. Optional
+resources never become readiness requirements. See `docs/backend/insight.md`.
+
+## Platform Governance Boundary
+
+`EffectivePolicyRuntime`, `EventBus`, `HealthRuntime`, and `ReadinessRuntime`
+form the transverse governance plane. Functional domains retain ownership of
+their state and publish compatible policy decisions, correlation IDs, telemetry
+and health snapshots. Governance aggregates those contracts without becoming a
+second implementation of Agents, Tools, Missions, Models, Memory, or Voice.
+
+## Voice Domain Boundary
+
+Voice orchestrates separate Audio, Device, Speech Provider, VAD, persistence,
+ChatRuntime, and Perception-port boundaries. Conversation Mode calls only
+`ChatRuntime.submit_turn`; Perception integration uses an optional neutral sink.
+
+This document is the normative system architecture for Synapse V3. ADRs record
+why individual decisions were made; this specification defines how current and
+future components fit together.
+
+## Status Model
+
+- **Implemented**: executable code exists and has direct test coverage.
+- **In development**: code exists but is incomplete or still under backend
+  stabilization.
+- **Planned**: approved target with no complete implementation.
+- **Legacy**: retained implementation that is not the V3 target.
+
+## Architectural Intent
+
+Synapse is a local-first agent operating environment. The backend owns durable
+state and authority. Clients render state and submit commands but cannot own
+permissions, approvals, model policy, tool execution, or workflow transitions.
+
+Core properties:
+
+- modular domain runtimes with explicit inputs and outputs;
+- local data ownership through `DATA_DIR`;
+- replaceable model and external-service providers;
+- policy, permission, and approval checks before side effects;
+- event and audit records for operational traceability;
+- deterministic tests through explicit adapters and fixtures;
+- a desktop ADE as the primary planned product surface.
+
+## System Context
+
+```mermaid
+flowchart TB
+    User["User"] --> Client["Desktop ADE / API client"]
+    Client --> API["FastAPI and command adapters"]
+    API --> Runtime["RuntimeContainer"]
+    Runtime --> Domains["Domain runtimes"]
+    Domains --> Authority["Policy, permissions, approvals"]
+    Domains --> Providers["Models and external providers"]
+    Domains --> Data["Local DATA_DIR"]
+    Domains --> Events["Events, audit, health"]
 ```
 
-## DATA_DIR
+The FastAPI process is not a stateless web application. It hosts a runtime
+container whose services coordinate local persistence and providers.
 
-All persistent local state lives under one root:
+## Runtime Layers
 
-```text
-data/
-  config/
-  memory/
-  agents/
-    <agent_id>/
-      messages/
-  projects/
-  skills/
-  tasks/
-    active/
-    completed/
-    failed/
-  jobs/
-  daemon/
-    status.yaml
-  presence/
-    <agent_id>.yaml
-  lifecycle/
-    <agent_id>.yaml
-  communication/
-    mock/
-      drafts/
-  notifications/
-  logs/
-  library/
-  chats/
-  devices/
-    trusted/
-    untrusted/
-    revoked/
-```
+### 1. Adapters
 
-The runtime creates missing directories and seed files during bootstrap. New storage systems should be added inside `DATA_DIR`, not beside it.
+Status: **Implemented**, with some contracts still unstable.
 
-## Permission Flow
+- FastAPI routes under `backend/synapse/api/`.
+- Slash commands in `CommandRuntime`.
+- Scheduler jobs and daemon cycles.
+- Provider adapters for models, speech, vision, and other external boundaries.
 
-Every tool has one required permission string. For agent tools, authorization is resolved through `EffectivePolicyRuntime` before execution. `ToolRegistry.execute()` still checks the current `PermissionContext` before calling tool code as a final guard.
+Adapters translate transport data into domain calls. They must not implement
+domain policy.
 
-```text
-Agent action
-  -> AgentEffectivePolicy
-  -> ToolRouter
-  -> PermissionManager.require()
-  -> ApprovalManager when required
-  -> ToolRegistry.execute()
-  -> Tool.run()
-  -> EventBus.emit()
-```
+### 2. Application Domains
 
-Direct service methods that can mutate state also call `PermissionManager`. This keeps the invariant intact even when a future scheduler or background worker bypasses HTTP.
+Status varies by domain.
 
-## Effective Agent Policy
+- agents, identity, custom provisioning, administration;
+- chat and conversations;
+- delegation, execution, retry, timeout, recovery, dead letter;
+- missions and mission control;
+- tasks, scheduler, lifecycle, presence, notifications;
+- agent-to-agent communication and notifications;
+- models, model hub, providers;
+- tools, tool intents, MCP, execution router;
+- audio, voice, vision, perception and context fusion.
 
-`EffectivePolicyRuntime` resolves the operational policy for each agent. The runtime should consult this policy instead of making scattered decisions about permissions, tools, autonomy, approval, or device constraints.
+Frontend owns visualization and animation. Voice owns factual voice states and
+events. Perception owns multimodal observations, features and inferences. No
+Avatar or Embodiment Runtime exists in the target architecture.
 
-Inputs:
+Each runtime owns state transitions and emits domain events. Cross-domain calls
+must use runtime interfaces rather than reading another domain's files.
 
-- global permissions from `data/config/permissions.yaml`
-- explicit global denies from `data/config/permissions.yaml`
-- agent `CONFIG.yaml`
-- structured `AgentIdentity`
-- approval policy from `data/config/approval_policy.yaml`
-- optional device context from `PermissionContext.device_id`
+### 3. Authority
 
-Precedence:
+Status: **Implemented foundation**, **In development** for complete coverage.
 
-1. explicit blocks always win
-2. approval policy may require approval even when a tool is allowed
-3. agent `CONFIG.yaml` can restrict or request permissions only inside the global ceiling
-4. global permissions define the maximum permission ceiling
-5. `AgentIdentity` provides behavior preferences, not authorization by itself
-6. device constraints can restrict the result further
+- `PermissionManager` checks actor permissions and resource scope.
+- `AgentEffectivePolicyRuntime` composes global and agent policy.
+- `ApprovalManager` persists and transitions human approval requests.
+- provisioning, admin, tool, and other policy runtimes classify
+  risk before side effects.
 
-The resolved `AgentEffectivePolicy` includes:
-
-- `allowed_tools`
-- `forbidden_tools`
-- `preferred_tools`
-- `autonomy_profile`
-- `approval_required_for`
-- `can_delegate`
-- `default_model`
-- optional `risk_overrides`
-- optional `device_constraints`
-
-`ContextLoader` includes the policy as `agent_policy`. `AgentRuntime` uses the policy when exposing tool specs to models and when handling tool calls. `ToolRouter` validates the policy again when a policy is provided, so approval resume and direct router calls use the same gate.
-
-## Context Loader
-
-`ContextLoader` is the runtime-owned context composer. It returns a structured `LoadedContext`, not a prompt string.
-
-The load order is fixed:
-
-1. `memory/SYSTEM.md`
-2. `memory/USER.md`
-3. `memory/MEMORY.md`
-4. `agents/<agent_id>/SOUL.md`
-5. `agents/<agent_id>/MEMORY.md`
-6. `agents/<agent_id>/SKILLS.md`
-7. `projects/<project_id>/PROJECT.md`, when a project is provided
-8. `projects/<project_id>/MEMORY.md`, when a project is provided
-9. relevant tasks
-10. recent session history
-
-The returned object separates:
-
-- `agent_identity`: structured operational identity loaded from `SOUL.md`, `CONFIG.yaml`, and `SKILLS.md`
-- `agent_policy`: effective policy resolved from global permissions, agent config, identity, approval policy, and device context
-- `memory`: global, user, system, and agent memory
-- `identity`: agent soul and skills
-- `project`: project description and project memory
-- `tasks`: relevant persisted task records
-- `history`: recent session excerpts only, never memory
-
-## Chat Runtime
-
-`ChatRuntime` owns the real user-to-agent turn flow. The UI and API are clients.
+Order of enforcement:
 
 ```text
-User message
-  -> ChatRuntime
-  -> ContextLoader
-  -> AgentRuntime
-  -> ModelRouter
-  -> ModelAdapter
-  -> ChatRuntime persists session
-  -> EventBus
+validate input
+resolve identity and context
+resolve capability and policy
+check permissions/resource scope
+require or validate approval
+perform side effect
+persist result
+emit event and audit
 ```
 
-Chat sessions are persisted under:
+### 4. Persistence
+
+Status: **Implemented**, with migration coverage still expanding.
+
+`DataDir` resolves every operational path below a configurable root. Formats
+are selected by use case:
+
+- YAML or JSON for structured records;
+- Markdown for human-editable identity and memory files;
+- JSONL for append-only events and audit timelines;
+- binary files for audio, models, thumbnails, and future media assets.
+
+No domain may rely on an absolute developer path. New records require:
+
+- `schema_version` where schema evolution is expected;
+- stable record identifiers;
+- timestamps in ISO 8601 UTC format;
+- atomic write or rollback strategy for multi-file state;
+- migration or explicit compatibility behavior.
+
+See [Backend](backend.md) and [Security](security.md).
+
+### 5. Providers
+
+Status: **In development**.
+
+Providers isolate external systems from domain logic. A provider contract must
+define configuration, health, timeout, error mapping, capability discovery,
+and secret handling. Mock providers are test adapters and cannot be presented
+as production capability.
+
+## Runtime Container
+
+`backend/synapse/core/app.py` constructs the dependency graph. It is the
+composition root and may wire concrete runtimes, but it should not contain
+business rules.
+
+Target constraints:
+
+- one initialized service instance per runtime container;
+- explicit dependencies passed to constructors;
+- no module-level mutable singleton state;
+- deterministic temporary `DATA_DIR` support for tests;
+- startup validation of required policy and migration state;
+- health/readiness summaries derived from runtime status, not hardcoded flags.
+
+## Principal Flows
+
+### Agent Message
 
 ```text
-data/chats/sessions/<session_id>.json
+client -> chat/conversation adapter -> ContextFusionRuntime
+       -> authorized memory/history/mission/perception selection
+       -> ContextLoader compatibility adapter for identity/effective policy
+       -> AgentRuntime -> model adapter
+       -> optional tool intent / approval / execution
+       -> persisted message and events
 ```
 
-Session history is passed to `ContextLoader` as `history`; it is never written to memory files.
+Status: **Implemented / Frozen**. Conversation and Chat share a canonical turn
+service, durable message model, bounded context preparation, provider-neutral
+generation, tool metadata, real model summaries, attachment validation,
+streaming lifecycle events, cancellation, and structured errors. The focused
+suite has 97 passing tests and the global suite has no failures in this domain.
 
-If a chat message starts with `/`, `ChatRuntime` delegates to `CommandRuntime` and persists the command response in the same session. Non-command messages follow the normal agent/model flow.
-
-Chat events:
-
-- `chat.message_received`
-- `chat.context_loaded`
-- `chat.response_generated`
-- `chat.session_persisted`
-
-`ChatRuntime` also updates `PresenceRuntime` through `listening`, `thinking`, `speaking`, and `idle` states. If a tool call creates a pending approval, the agent remains in `waiting_approval`.
-
-## Presence Runtime
-
-`PresenceRuntime` is the durable state projection for what each agent is doing. It is not UI logic; it is a runtime-owned status layer for chat, workers, scheduler/daemon cycles, future voice/avatar surfaces, and operations.
-
-Presence records are persisted under:
+### Delegated Work
 
 ```text
-data/presence/<agent_id>.yaml
+requester -> delegation policy -> task
+          -> scheduling / inbox -> worker
+          -> execution -> completion or failure
+          -> retry / timeout / recovery / dead letter
 ```
 
-Each `AgentPresence` includes:
+Status: **Implemented and stabilized** at the domain-test level.
 
-- `agent_id`
-- `state`: `idle`, `listening`, `thinking`, `speaking`, `researching`, `working`, `waiting_approval`, `offline`, or `error`
-- optional `activity`
-- optional current task, job, session, and approval ids
-- optional `emotion`
-- `updated_at`
-- optional `correlation_id`
-
-Runtime integrations:
-
-- `ChatRuntime`: `listening`, `thinking`, `speaking`, `idle`, or preserved `waiting_approval`
-- `AgentRuntime`: `thinking`, `working`, `error`
-- `ToolRouter`/approval flow: `waiting_approval`
-- `AgentWorker`: `working`, `idle`, `error`
-- `SchedulerRuntime`: job-scoped `working`, `idle`, `error` for agent jobs
-
-Every transition emits `presence.updated` and inherits the active `CorrelationContext` when one exists.
-
-## Agent Lifecycle Runtime
-
-`LifecycleRuntime` tracks each agent's operational stage. It is distinct from Presence:
-
-- Lifecycle answers: what operational stage is the agent in?
-- Presence answers: what is the agent doing right now?
-
-Lifecycle records are persisted under:
+### Agent Provisioning
 
 ```text
-data/lifecycle/<agent_id>.yaml
+explicit user or authorized programmatic request
+  -> request validation
+  -> risk policy
+  -> optional approval
+  -> dry-run OR staging write
+  -> Registry + Identity validation
+  -> atomic commit / rollback
+  -> admin initialization
+  -> events and audit
 ```
 
-Lifecycle states:
+Status: **In development** in the local working tree. Documentation describes
+the target contract; do not infer release readiness from local tests alone.
 
-- `offline`
-- `booting`
-- `idle`
-- `waking`
-- `working`
-- `waiting`
-- `sleeping`
-- `error`
-- `shutdown`
-
-Each `AgentLifecycle` stores transition counters for boot, wake, sleep, and error transitions, plus optional reason, last error, transition timestamp, and correlation id.
-
-Runtime operations:
-
-- `boot(agent_id)`
-- `wake(agent_id, reason)`
-- `sleep(agent_id)`
-- `shutdown(agent_id)`
-- `error(agent_id, message)`
-- `get(agent_id)`
-- `list_all()`
-
-Lifecycle emits:
-
-- `agent.booted`
-- `agent.woken`
-- `agent.sleeping`
-- `agent.shutdown`
-- `agent.error`
-- `agent.lifecycle_changed`
-
-Initial integrations:
-
-- `boot` sets Presence to `idle`
-- `wake` sets Presence to `working`
-- `sleep` sets Presence to `idle`
-- `shutdown` sets Presence to `offline`
-- `AgentWorker` wakes an agent when pending inbox messages are processed and returns it to idle afterward
-- `SchedulerRuntime` wakes agents for `process_agent_inbox` jobs
-- `CommandRuntime` exposes `/lifecycle`, `/wake`, and `/sleep`
-- API exposes lifecycle read, wake, and sleep endpoints
-
-## Communication Runtime
-
-`CommunicationRuntime` is the runtime boundary for external communication systems. Agents do not call providers directly.
-
-Required flow:
+### Multimodal Context
 
 ```text
-Agent
-  -> ToolRouter / CommandRuntime / SchedulerRuntime
-  -> CommunicationRuntime
-  -> CommunicationProvider
-  -> Provider
+audio/vision/provider signal -> perception -> context fusion
+
+Perception is now split into four bounded layers: Capture owns authorization and
+visual lifecycle; Vision owns provider execution; Perception owns canonical
+validation, persistence, deduplication, expiry, and observations; Multimodal
+owns temporal correlation. Context Fusion is a downstream consumer of active
+observations and provenance. None of these layers implements World State or an
+agent action loop.
+                             -> agent context bridge -> AgentRuntime
 ```
 
-V1 supports listing, reading, classifying, and summarizing email messages, creating drafts, listing drafts, generating daily summaries, and generating a Hermes email briefing. It does not send email.
+Status: **In development**. Contracts and several runtimes exist; real provider
+coverage and global integration remain incomplete.
 
-Providers:
+## Agent Boundary
 
-- `MockCommunicationProvider`: fully offline and deterministic
-- `GmailCommunicationProvider`: prepared boundary, not configured yet
+An agent is identified by its canonical folder under `agents/{agent_id}`.
+`CONFIG.yaml` contains structured configuration; `SOUL.md` and `SKILLS.md`
+provide human-readable identity material. Registry lookup accepts compatible
+partial configs, while operational identity loading enforces required fields.
 
-Drafts are persisted locally under:
+Agents do not gain authority from role names. Capabilities, permissions,
+policy, and approval determine authority. `can_delegate` defaults to false.
 
-```text
-data/communication/mock/drafts/<draft_id>.yaml
-```
+See [Agents](agents.md).
 
-Hermes is the first operational communication agent. Hermes has `communication_skill` capabilities for `read_email`, `classify_email`, `summarize_email`, and `create_draft`.
+## Memory And Context Boundary
 
-Communication tools:
+Memory is durable knowledge, not chat history and not arbitrary prompt text.
+`MemoryStore` provides scoped persistence through `MemoryStorage`.
+`ContextFusionRuntime` is canonical and applies authorization, priority,
+deterministic budget estimates, deduplication, provenance, and omission tracking.
+It consumes only small consumer-owned read ports wired by bootstrap; concrete
+source runtimes do not cross this boundary. See
+[Context Fusion ports](architecture/context-fusion-ports.md).
+`ContextLoader` remains a compatibility adapter for agent identity/policy DTOs.
 
-- `read_email`: permission `communication.read`, risk `medium`
-- `summarize_email`: permission `communication.summarize`, risk `medium`
-- `create_email_draft`: permission `communication.draft`, risk `medium`
-- `list_email_drafts`: permission `communication.read`, risk `low`
+See [Memory](memory.md).
 
-The architecture reserves `send_email` as a future critical-risk action. It is not implemented in V1.
+## Model Boundary
 
-Communication events:
+## Tool Execution Boundary
 
-- `communication.message_read`
-- `communication.message_classified`
-- `communication.summary_generated`
-- `communication.draft_created`
-- `communication.briefing_generated`
+Agents, Conversation, commands and API submit untrusted tool intents to ToolRuntime.
+Registry lookup, schema validation, permission/risk decision, preview, approval,
+execution and audit precede results. MCP is an adapter behind the same boundary.
 
-Scheduler integration adds job type `check_email`, with payload fields `provider` and `agent_id`. Daemon can execute this job through normal scheduler cycles.
+Product runtimes call `ModelRouter`, which resolves an explicit `ModelSelection`
+and invokes the canonical provider adapter. LM Studio, Ollama and OpenAI-compatible
+transport details do not cross this boundary. Model Hub owns discovery/catalog;
+ProviderSettings owns endpoints and secrets; capability registries describe support
+but never execute generation.
 
-## Notification Runtime
+Domains request model capabilities through routing/provider contracts. They do
+not call LM Studio, Ollama, OpenAI-compatible servers, or cloud SDKs directly.
+Provider identifiers and model identifiers remain distinct. Secret material is
+never written to events or ordinary config records.
 
-`NotificationRuntime` is the local-first notification source for Synapse. It is independent of UI, mobile, voice, and avatar layers. Future surfaces should consume notifications from this runtime instead of generating their own.
+See [Models](models.md).
 
-Required flow:
+## Frontend Target
 
-```text
-Runtime/Event
-  -> NotificationRuntime
-  -> NotificationProvider
-```
+Status: **Not implemented**.
 
-The default provider is `LocalNotificationProvider`, which persists notifications under:
+ADR 0119 retires the old Electron ADE implementation. No desktop client, package target
+or frontend source tree is active in the repository.
 
-```text
-data/notifications/<notification_id>.yaml
-```
+The abandoned `frontend/` React application, `desktop/` Tauri shell and removed Electron
+ADE are historical only. No active frontend or backend-owned visual layout contract
+exists. A future frontend must consume ordinary domain APIs and keep presentation state
+outside backend authority.
 
-`ConsoleNotificationProvider` exists only for debug output.
+See [Frontend](frontend.md).
 
-Notification severities are `info`, `success`, `warning`, and `critical`.
+## Swarm Target
 
-Notification categories are `approval`, `communication`, `agent`, `scheduler`, `daemon`, `system`, `task`, `security`, and `unknown`.
+Status: **Planned**.
 
-Initial event integrations:
+Swarm is coordinated multi-agent execution, not unrestricted agent spawning.
+It depends on stabilized identity, provisioning, delegation,
+capability policy, bounded memory/context, scheduling, recovery, and audit.
+No swarm controller should be implemented by bypassing those runtimes.
 
-- `approval.requested` / `approval.created`
-- `approval.approved`
-- `approval.rejected`
-- `communication.briefing_generated`
-- `job.failed`
-- `agent.error`
-- `daemon.error`
-- `tool.failed`
-- `worker.message_failed`
+See [Swarm](swarm.md).
 
-Notification events:
+## API Contract Strategy
 
-- `notification.created`
-- `notification.read`
-- `notification.deleted`
+- Domain objects are serialized through explicit DTOs or dataclasses.
+- Validation failures map to 422; missing resources to 404; permission failures
+  to 403; unexpected exceptions do not expose internals.
+- Long-running or approval-gated operations return durable request IDs.
+- Commands and HTTP endpoints call the same runtime methods.
+- OpenAPI is generated by FastAPI but is not sufficient documentation by
+  itself.
 
-Notification Runtime observes Presence and Lifecycle related failures only through events; it does not mutate those runtimes.
+See [API](api.md).
 
-Notification cleanup is controlled by:
+## Observability
 
-```text
-data/config/notification_policy.yaml
-```
+Events carry identifiers, timestamps, actor, correlation, causation, parent,
+source, and structured payload where available. Audit answers who requested or
+authorized a durable state change. Health describes runtime state; readiness
+describes whether a capability is safe to accept work.
 
-Policy fields:
+Target rule: logs may aid diagnosis but are not a substitute for events,
+audits, or durable status records.
 
-- `retention_days`
-- `max_total_notifications`
-- `preserve_unread`
-- `preserve_critical`
+## Security Boundaries
 
-`cleanup_notifications()` deletes old read notifications and enforces the configured maximum while preserving unread and critical notifications when policy requires it.
-
-Cleanup events:
-
-- `notification.cleanup_started`
-- `notification.cleanup_completed`
-- `notification.cleanup_failed`
-
-Scheduler integration adds job type `notification_cleanup`. Daemon can execute cleanup through normal scheduler cycles.
-
-## Scheduler Recurring Jobs
-
-`SchedulerRuntime` supports local recurring job definitions for homelab maintenance and background routines.
-
-Recurring job policy lives at:
-
-```text
-data/config/scheduler_policy.yaml
-```
-
-Runtime state is persisted under:
-
-```text
-data/scheduler/recurring/<recurring_id>.yaml
-```
-
-Supported V1 recurring fields:
-
-- `id`
-- `type`
-- `payload`
-- `interval_minutes`
-- `enabled`
-- `priority`
-- `max_attempts`
-- `last_run_at`
-- `next_run_at`
-
-Supported V1 recurring job types:
-
-- `notification_cleanup`
-- `check_email`
-- `process_agent_inbox`
-
-`SchedulerRuntime.enqueue_due_recurring_jobs()` loads definitions, skips disabled or not-due jobs, enqueues due jobs, and advances `last_run_at`/`next_run_at`. `DaemonRunner.run_once()` calls this before running pending jobs.
-
-Recurring events:
-
-- `recurring.loaded`
-- `recurring.due`
-- `recurring.enqueued`
-- `recurring.skipped`
-- `recurring.failed`
-
-## Agent Runtime and Models
-
-`AgentRuntime` receives:
-
-- agent id
-- structured `AgentEffectivePolicy`
-- structured loaded context
-- user message
-- policy-filtered tool specs
-
-It delegates response generation to `ModelRouter`. When a model response includes structured tool calls, `AgentRuntime` does not execute tools directly. It sends them to `ToolRouter`.
-
-Before tool routing, `AgentRuntime` blocks tools explicitly forbidden by `AgentEffectivePolicy`. Other tool requests are sent to `ToolRouter`, which revalidates the policy and then calls `PermissionManager` and `ApprovalManager`.
-
-## Agent Identity Runtime
-
-`AgentIdentityRuntime` is responsible for loading and validating operational agent identity.
-
-It reads:
-
-- `agents/<agent_id>/SOUL.md`: identity narrative and operational rules
-- `agents/<agent_id>/CONFIG.yaml`: operation, model, permissions, autonomy, structured identity fields
-- `agents/<agent_id>/SKILLS.md`: capabilities
-
-It does not read `MEMORY.md`; memory remains separate.
-
-Structured identity fields:
-
-- `id`
-- `name`
-- `role`
-- `description`
-- `can_delegate`
-- `focus_areas`
-- `preferred_tools`
-- `forbidden_tools`
-- `default_model`
-- `autonomy_profile`
-- `communication_style`
-- `operational_rules`
-
-Base agents:
-
-- Artemis: orchestrator, can delegate, planning/coordination/briefings
-- Researcher: research specialist, cannot delegate, forbids `write_file`
-- Atlas: knowledge librarian, cannot delegate, forbids autonomous messaging and writes
-- Hermes: communication specialist, cannot delegate, forbids future `send_email`
-- Vigil: perception/security specialist, cannot delegate, forbids future `camera_control`
-
-Tool calling flow:
-
-```text
-AgentRuntime
-  -> EffectivePolicyRuntime
-  -> ToolRouter
-  -> PermissionManager
-  -> ApprovalManager (when risk policy requires it)
-  -> ToolRegistry.execute()
-  -> Tool implementation
-  -> EventBus
-```
-
-`ToolRouter` emits:
-
-- `tool.requested`
-- `tool.permission_checked`
-- `tool.executed`
-- `tool.failed`
-
-Tool calls use the agent as the permission actor (`actor_type=agent`). This means a user chatting with an agent does not automatically grant that agent the user's permissions.
-
-Each tool has a `risk_level`:
-
-- `low`
-- `medium`
-- `high`
-- `critical`
-
-Default risk examples:
-
-- `list_directory`: low
-- `read_file`: low
-- `create_task`: low
-- `send_agent_message`: medium
-- `write_file`: high
-
-The approval policy lives in:
-
-```text
-data/config/approval_policy.yaml
-```
-
-Default policy requires approval for `high` and `critical` tools. Explicit tool permission does not bypass approval by default.
-
-Approval requests are persisted under:
-
-```text
-data/approvals/<approval_id>.yaml
-```
-
-Approval statuses:
-
-- `pending`
-- `approved`
-- `rejected`
-- `expired`
-- `resumed`
-
-Approval events:
-
-- `approval.requested`
-- `approval.approved`
-- `approval.rejected`
-- `approval.expired`
-- `approval.resumed`
-
-When a tool requires approval, `ToolRouter` returns a `ToolCallResult` with `status="awaiting_approval"` and does not call `ToolRegistry.execute()`. If the same tool call is retried with an approved `approval_id`, `ToolRouter` validates the approval against agent, tool, risk level, and arguments before executing.
-
-Approval requests retain enough data to resume execution:
-
-- `agent_id`
-- optional `session_id`
-- `tool_name`
-- `tool_args`
-- `tool_call_id`
-- optional `original_message_id`
-- optional `project_id`
-
-Resume flow:
-
-```text
-/approve or POST /approvals/{id}/approve
-  -> ApprovalManager.approve()
-  -> ApprovalResumeRuntime.resume()
-  -> ToolRouter.execute_call()
-  -> PermissionManager.require()
-  -> ToolRegistry.execute()
-  -> ApprovalManager.mark_resumed()
-```
-
-Approval resume resolves a fresh `AgentEffectivePolicy` and revalidates permissions immediately before execution. A resumed approval cannot execute a second time.
-
-Current supported structured tool calls:
-
-- `read_file`
-- `list_directory`
-- `create_task`
-- `send_agent_message`
-
-`web_search` remains registered but unconfigured by default.
-
-`ModelRouter` selects a route from agent `CONFIG.yaml` when `preferred_model` exists. Otherwise it uses system model config. Registered adapters:
-
-- `MockModelAdapter`: deterministic, used for tests and dev/test fallback
-- `OllamaModelAdapter`: simple local Ollama `/api/chat` adapter
-- `OpenAICompatibleAdapter`: prepared boundary, not implemented yet
-
-`MockModelAdapter` supports deterministic tool-call tests with messages in this shape:
-
-```text
-tool:<tool_name> key=value key2="quoted value"
-```
-
-## Agent Files
-
-Each agent is a persistent directory:
-
-```text
-data/agents/<agent_id>/
-  SOUL.md
-  MEMORY.md
-  SKILLS.md
-  CONFIG.yaml
-  INBOX.md
-  messages/
-    <message_id>.yaml
-```
-
-The Brain/UI and runtime must read the same files. No separate shadow memory is allowed.
-
-`INBOX.md` is a human-readable projection. Operational message state lives in structured YAML records under `messages/`.
-
-Agent messages have:
-
-- `id`
-- `from_agent`
-- `to_agent`
-- `subject`
-- `body`
-- optional `task_id`
-- `status`: `pending`, `read`, `processed`, or `failed`
-- `created_at`
-- `updated_at`
-
-Every message creation or status change emits an event.
-
-## Agent Worker
-
-`AgentWorker` processes pending agent inbox messages without adding a UI or autonomous always-on loop.
-
-Worker flow:
-
-```text
-AgentWorker
-  -> AgentCommunication.list_messages(status=pending)
-  -> AgentCommunication.mark_read()
-  -> ContextLoader.load()
-  -> AgentRuntime.run()
-  -> optional AgentCommunication.send_agent_message()
-  -> AgentCommunication.mark_processed() or mark_failed()
-  -> EventBus
-```
-
-The worker uses the destination agent as the runtime actor (`actor_type=agent`). Tool calls produced during inbox processing go through the normal `AgentRuntime -> EffectivePolicyRuntime -> ToolRouter -> PermissionManager -> ApprovalManager` path.
-
-Autonomous replies are conservative. The worker only sends a reply to the original sender when `send_agent_message` is allowed by `AgentEffectivePolicy` and the agent can delegate or explicitly prefers `send_agent_message`. Agents that cannot delegate do not send autonomous messages unless their effective policy makes that behavior explicit.
-
-Worker events:
-
-- `worker.inbox_checked`
-- `worker.message_processing_started`
-- `worker.message_processed`
-- `worker.message_failed`
-
-## Background Scheduler / Queue
-
-`SchedulerRuntime` is the local-first background work boundary. It does not require an external database, broker, or daemon. Jobs are persisted as structured records under:
-
-```text
-data/jobs/<job_id>.yaml
-```
-
-Job statuses:
-
-- `pending`
-- `running`
-- `completed`
-- `failed`
-- `cancelled`
-
-Scheduler operations:
-
-- `enqueue`
-- `list_jobs`
-- `get_job`
-- `cancel_job`
-- `run_next`
-- `run_all_pending`
-- `retry_failed`
-
-Initial job type:
-
-- `process_agent_inbox`: calls `AgentWorker.process_inbox()` with payload `{ "agent_id": "<agent>" }`
-
-Job events:
-
-- `job.enqueued`
-- `job.started`
-- `job.completed`
-- `job.failed`
-- `job.cancelled`
-- `job.retried`
-
-The scheduler is intentionally pull-driven at this stage. Commands, API, tests, or a future homelab daemon can call `run_next` or `run_all_pending`; no always-on loop is started by default.
-
-## Synapse Daemon / Background Runner
-
-`DaemonRunner` is the first local background cycle runner. It provides deterministic single-cycle execution through `run_once()` and a simple `start_loop(interval_seconds)` boundary for future CLI/service use.
-
-Daemon status is persisted under:
-
-```text
-data/daemon/status.yaml
-```
-
-Status fields:
-
-- `running`
-- `last_tick_at`
-- `total_ticks`
-- `last_error`
-- `last_jobs_run`
-- `started_at`
-- `stopped_at`
-
-Each daemon cycle:
-
-1. emits `daemon.tick`
-2. calls `SchedulerRuntime.run_all_pending()`
-3. records jobs executed in persisted status
-4. catches runtime errors and emits `daemon.error`
-
-The runtime exposes `run_once()` through commands and API. It does not start a persistent process automatically.
-
-## Observability / Correlation
-
-Runtime flows use a `CorrelationContext` to connect events across chat, agents, tools, approvals, messages, jobs, daemon ticks, and tasks.
-
-Minimum correlation fields:
-
-- `correlation_id`
-- optional `causation_id`
-- optional `parent_id`
-- `source`
-- optional `session_id`
-- optional `agent_id`
-- optional `task_id`
-- optional `job_id`
-- optional `approval_id`
-
-Events are persisted as JSONL envelopes with:
-
-- `id`
-- `type`
-- `timestamp`
-- `correlation_id`
-- optional `causation_id`
-- `source`
-- `payload`
-
-`EventBus` remains backward-compatible with older event lines that do not include correlation fields. Those events load with `correlation_id=None` and `source="legacy"`.
-
-Durable records also carry optional correlation metadata when created inside an active `CorrelationContext`:
-
-- task records
-- agent message records
-- approval requests
-- jobs
-- chat sessions and chat messages
-
-Older persisted records without these fields remain readable and load with `None` correlation metadata.
-
-Trace access:
-
-- command `/trace <correlation_id>`
-- API `GET /trace/{correlation_id}`
-
-Trace responses include both correlated events and local durable records found in `DATA_DIR`.
-
-## Command Runtime
-
-`CommandRuntime` is a runtime client boundary for text commands. It does not own business logic; it delegates to runtime services and tools.
-
-Supported commands:
-
-- `/help`
-- `/agents`
-- `/agent <id>`
-- `/policy <agent_id>`
-- `/tasks`
-- `/memory`
-- `/call <agent> <message>`
-- `/task <title> --agent <agent>`
-- `/remember <text>`
-- `/search <query>`
-- `/approvals`
-- `/approve <approval_id>`
-- `/reject <approval_id>`
-- `/inbox <agent_id>`
-- `/process-inbox <agent_id>`
-- `/worker-status`
-- `/jobs`
-- `/enqueue-inbox <agent_id>`
-- `/run-jobs`
-- `/cancel-job <job_id>`
-- `/daemon-status`
-- `/daemon-run-once`
-- `/trace <correlation_id>`
-
-This runtime exists before UI so desktop, API, mobile, scheduler, and future voice input can share command behavior.
-
-## Device Registry
-
-`DeviceRegistry` prepares the remote access boundary without implementing login yet.
-
-Devices are persisted under:
-
-```text
-data/devices/
-  trusted/<device_id>.yaml
-  untrusted/<device_id>.yaml
-  revoked/<device_id>.yaml
-```
-
-Each record stores `device_id`, `trusted`, `revoked`, permissions, metadata, and timestamps. `EffectivePolicyRuntime` can use device records as an additional ceiling for agent tools when `PermissionContext.device_id` is present.
-
-Approval commands use device records when `PermissionContext.device_id` is present. A device must be trusted, not revoked, and have `approve_actions` or another configured approval permission.
-
-Approval API endpoints:
-
-- `GET /approvals/pending`
-- `POST /approvals/{approval_id}/approve`
-- `POST /approvals/{approval_id}/reject`
-
-Worker API endpoints:
-
-- `GET /agents/{agent_id}/inbox`
-- `POST /agents/{agent_id}/process-inbox`
-- `GET /workers/status`
-
-Scheduler API endpoints:
-
-- `GET /jobs`
-- `POST /jobs`
-- `POST /jobs/run`
-- `POST /jobs/{job_id}/cancel`
-
-Daemon API endpoints:
-
-- `GET /daemon/status`
-- `POST /daemon/run-once`
-
-Trace API endpoint:
-
-- `GET /trace/{correlation_id}`
-
-## Tool Contract
-
-Tools are registered with:
-
-- stable name
-- description
-- required permission
-- Python callable implementation
-
-This is intentionally close to OpenAPI tool server metadata without making OpenAPI the internal dependency.
-
-## Events
-
-Runtime actions append JSON lines to:
-
-```text
-data/logs/events.jsonl
-```
-
-Events are the base for Mission Control, audit views, background monitors, observability, and future mobile notifications.
+- future renderer processes are untrusted relative to desktop main and backend;
+- provider responses are untrusted input;
+- model output cannot directly authorize tools;
+- file paths remain within approved resource scopes;
+- approvals bind actor, operation, arguments, risk, and target;
+- secrets use protected storage and are redacted from telemetry;
+- plugins and MCP servers receive explicit capabilities, never ambient access.
+
+See [Security](security.md).
+
+## Evolution Rules
+
+1. Stabilize one backend domain before moving to another.
+2. Add a contract before adding a transport surface.
+3. Add migrations before changing durable schemas.
+4. Keep planned and implemented states visibly separate.
+5. Preserve local-first operation; network use is explicit and policy-bound.
+6. Do not move business logic into API routes, commands, desktop main, or UI.
+7. Use ADRs for decisions that alter these boundaries.
+
+## Continuous agent operating layer
+
+World State, Attention, disposition selection, and execution coordination are
+separate ownership boundaries. Frozen domains emit events and remain their own
+sources of truth. The operating layer projects bounded references, filters
+noise, consults governance, and routes authorized work back through canonical
+Chat, Tool, Mission, Approval, Notification, Observability, and Memory
+contracts. Scheduler and Daemon host bounded one-shot cycles; there is no
+parallel daemon or unrestricted autonomy controller.
+
+## Canonical Tool Execution Boundary
+
+All tool discovery and execution converges on one `RuntimeToolRegistry` and one
+`ToolRuntime`. Builtin, MCP, and Desktop operations are technology adapters behind
+that boundary; consumers depend on `ToolExecutionPort` and stable identities rather
+than adapter classes. The boundary owns schema validation, governance, preview,
+timeout/cancellation, idempotency, redacted history, verification, and canonical
+results. See [Canonical Tool Execution Boundary](architecture/tool-execution-boundary.md).
+# Administrative DataDir maintenance
+
+Administrative DataDir behavior is bounded by a neutral
+`DataMaintenanceRuntime`, one explicit contributor registry and owner-provided
+inspection/cleanup implementations. API and Commands accept registered scopes,
+not paths, and every destructive action originates in a durable checksummed,
+revisioned and expiring plan with confirmation, policy and conditional approval.
+The runtime never interprets domain records or resumes cleanup automatically.
+Global backup/restore is unavailable. The backend remains **NOT READY**; see
+`architecture/data-maintenance.md` and the phase validation report.

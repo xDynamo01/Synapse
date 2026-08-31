@@ -1,0 +1,9 @@
+{
+  "providers": {
+    "allow_network_providers": false,
+    "allow_gpu_providers": false,
+    "prefer_local_providers": true,
+    "disabled_providers": [],
+    "provider_priority_overrides": {}
+  }
+}

@@ -10,6 +10,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "backend"))
 
+from synapse.agent_loop.ports import Notification as AgentLoopNotification
 from synapse.core.app import create_runtime
 from synapse.core.config import Settings
 from synapse.notifications.models import Notification
@@ -24,9 +25,6 @@ DEFAULT_PERMISSIONS = [
     "tasks.create",
     "tasks.update",
     "web.search",
-    "communication.read",
-    "communication.summarize",
-    "communication.draft",
     "approvals.approve",
     "approvals.reject",
 ]
@@ -106,6 +104,37 @@ def make_notification(
 
 
 class NotificationRuntimeTests(unittest.TestCase):
+    def test_agent_loop_notification_sink_is_frontend_neutral_and_restart_safe(self) -> None:
+        directory, settings, runtime = runtime_in_tempdir()
+        self.addCleanup(directory.cleanup)
+
+        saved = runtime.agent_loop.notification_sink.notify(
+            AgentLoopNotification(
+                type="attention_required",
+                title="Review attention item",
+                summary="A canonical attention item needs review.",
+                severity="medium",
+                entity_refs=[{"type": "attention_item", "id": "attention-1"}],
+                correlation_id="correlation-1",
+                metadata={"attention_item_id": "attention-1", "api_key": "sk-secret123"},
+            )
+        )
+
+        self.assertTrue(runtime.data_dir.resolve(f"notifications/{saved.id}.yaml").exists())
+        self.assertEqual(runtime.notifications.get(saved.id).correlation_id, "correlation-1")
+        self.assertEqual(runtime.notifications.list_unread()[0].id, saved.id)
+        self.assertEqual(saved.metadata["attention_item_id"], "attention-1")
+        self.assertEqual(saved.metadata["entity_refs"][0]["id"], "attention-1")
+        self.assertEqual(saved.metadata["api_key"], "[REDACTED]")
+
+        restarted = create_runtime(settings)
+        persisted = restarted.notifications.get(saved.id)
+        self.assertEqual(persisted.source, "agent_loop")
+        acknowledged = restarted.notifications.mark_read(saved.id, restarted.context())
+        self.assertTrue(acknowledged.read)
+        restarted.notifications.delete_notification(saved.id, restarted.context())
+        self.assertEqual(restarted.notifications.list_notifications(), [])
+
     def test_create_notification_persists(self) -> None:
         directory, _, runtime = runtime_in_tempdir()
         self.addCleanup(directory.cleanup)
@@ -166,15 +195,6 @@ class NotificationRuntimeTests(unittest.TestCase):
         notification = runtime.notifications.list_unread()[0]
         self.assertEqual(notification.title, "Approval Required")
         self.assertEqual(notification.category, "approval")
-
-    def test_communication_briefing_generates_notification(self) -> None:
-        directory, _, runtime = runtime_in_tempdir()
-        self.addCleanup(directory.cleanup)
-
-        runtime.communication_runtime.generate_briefing("hermes")
-
-        titles = [notification.title for notification in runtime.notifications.list_unread()]
-        self.assertIn("Email Briefing Available", titles)
 
     def test_job_failed_generates_notification(self) -> None:
         directory, _, runtime = runtime_in_tempdir()

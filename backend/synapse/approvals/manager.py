@@ -13,6 +13,7 @@ from synapse.core.exceptions import NotFound, PermissionDenied, ValidationError
 from synapse.core.permissions import PermissionContext, PermissionManager
 from synapse.core.serialization import dump_structured_file, load_structured_file
 from synapse.observability.correlation import current_correlation_fields
+from synapse.resources import ResourceRef, check_resource_access
 
 APPROVAL_STATUSES = {"pending", "approved", "rejected", "expired", "resumed"}
 RISK_LEVELS = {"low", "medium", "high", "critical"}
@@ -35,6 +36,8 @@ class ApprovalRequest:
     risk_level: str
     reason: str
     tool_call_id: str
+    schema_version: int = 1
+    record_type: str = "approval"
     session_id: str | None = None
     original_message_id: str | None = None
     project_id: str | None = None
@@ -76,10 +79,7 @@ class ApprovalManager:
             raise ValidationError(f"Invalid risk level: {risk_level}")
         if agent_id in self.policy.bypass_agents:
             return False
-        if (
-            permission_explicitly_granted
-            and self.policy.explicit_permission_bypasses_approval
-        ):
+        if permission_explicitly_granted and self.policy.explicit_permission_bypasses_approval:
             return False
         return risk_level in set(self.policy.required_risk_levels)
 
@@ -121,7 +121,14 @@ class ApprovalManager:
         return [request for request in self._list_all() if request.status == "pending"]
 
     def approve(self, context: PermissionContext, approval_id: str) -> ApprovalRequest:
-        self.permissions.require(context, "approvals.approve")
+        check_resource_access(
+            agent_id=context.actor_id,
+            action="approve",
+            resource_ref=ResourceRef("approval", resource_id=approval_id),
+            context=context,
+            permission_manager=self.permissions,
+            required_permission="approvals.approve",
+        )
         self._require_device_can_approve(context)
         request = self.get_status(approval_id)
         if request.status != "pending":
@@ -131,7 +138,14 @@ class ApprovalManager:
         return updated
 
     def reject(self, context: PermissionContext, approval_id: str) -> ApprovalRequest:
-        self.permissions.require(context, "approvals.reject")
+        check_resource_access(
+            agent_id=context.actor_id,
+            action="reject",
+            resource_ref=ResourceRef("approval", resource_id=approval_id),
+            context=context,
+            permission_manager=self.permissions,
+            required_permission="approvals.reject",
+        )
         self._require_device_can_approve(context)
         request = self.get_status(approval_id)
         if request.status != "pending":
@@ -141,7 +155,10 @@ class ApprovalManager:
         return updated
 
     def expire(self, context: PermissionContext, approval_id: str) -> ApprovalRequest:
-        request = self.get_status(approval_id)
+        path = self._path(approval_id)
+        if not path.exists():
+            raise NotFound(f"Approval request not found: {approval_id}")
+        request = self._read(path)
         if request.status != "pending":
             raise ValidationError(f"Approval request is not pending: {approval_id}")
         updated = self._transition(request, "expired")
@@ -221,6 +238,8 @@ class ApprovalManager:
             risk_level=request.risk_level,
             reason=request.reason,
             tool_call_id=request.tool_call_id,
+            schema_version=request.schema_version,
+            record_type=request.record_type,
             session_id=request.session_id,
             original_message_id=request.original_message_id,
             project_id=request.project_id,
@@ -275,14 +294,22 @@ class ApprovalManager:
         return self.data_dir.resolve(f"approvals/{approval_id}.yaml")
 
     def _write(self, request: ApprovalRequest) -> None:
-        dump_structured_file(self._path(request.id), asdict(request))
+        try:
+            dump_structured_file(self._path(request.id), asdict(request))
+        except (OSError, UnicodeError, ValueError, TypeError) as exc:
+            raise ValidationError(f"Could not persist approval request: {request.id}") from exc
 
     @staticmethod
     def _read(path: Path) -> ApprovalRequest:
-        raw = load_structured_file(path)
+        try:
+            raw = load_structured_file(path)
+        except (OSError, UnicodeError, ValueError, TypeError) as exc:
+            raise ValidationError(f"Invalid approval request: {path.stem}") from exc
         raw.setdefault("tool_call_id", raw.get("id", "unknown"))
         raw.setdefault("correlation_id", None)
         raw.setdefault("causation_id", None)
         raw.setdefault("parent_id", None)
         raw.setdefault("source", None)
+        raw.setdefault("schema_version", 1)
+        raw.setdefault("record_type", "approval")
         return ApprovalRequest(**raw)

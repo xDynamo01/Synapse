@@ -1,0 +1,11 @@
+{
+  "multimodal_context": {
+    "enabled": true,
+    "include_for_conversations": true,
+    "include_for_missions": true,
+    "include_for_sessions": true,
+    "max_signals_per_context": 50,
+    "attach_health_summary": true,
+    "attach_readiness_summary": true
+  }
+}

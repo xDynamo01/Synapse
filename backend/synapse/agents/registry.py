@@ -2,10 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from synapse.agents.models import AgentConfig, agent_config_from_mapping
+from synapse.agents.models import AgentConfig, agent_config_from_mapping, load_agent_config
 from synapse.core.data_dir import DataDir
 from synapse.core.exceptions import NotFound
-from synapse.core.serialization import load_structured_file
 
 
 class AgentRegistry:
@@ -23,14 +22,16 @@ class AgentRegistry:
                 continue
             config_path = path / "CONFIG.yaml"
             if config_path.exists():
-                agents.append(agent_config_from_mapping(load_structured_file(config_path)))
+                raw = load_agent_config(config_path, path.name)
+                agents.append(agent_config_from_mapping(raw, path.name))
         return agents
 
     def get(self, agent_id: str) -> AgentConfig:
         config_path = self.data_dir.resolve(f"agents/{agent_id}/CONFIG.yaml")
         if not config_path.exists():
             raise NotFound(f"Agent not found: {agent_id}")
-        return agent_config_from_mapping(load_structured_file(config_path))
+        raw = load_agent_config(config_path, agent_id)
+        return agent_config_from_mapping(raw, agent_id)
 
     def ensure_agent_files(self, agent: AgentConfig) -> None:
         base = f"agents/{agent.id}"
@@ -38,4 +39,3 @@ class AgentRegistry:
         self.data_dir.ensure_file(f"{base}/MEMORY.md", f"# {agent.name} Memory\n\n")
         self.data_dir.ensure_file(f"{base}/SKILLS.md", "# Skills\n\n")
         self.data_dir.ensure_file(f"{base}/INBOX.md", "# Inbox\n")
-

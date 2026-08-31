@@ -4,14 +4,28 @@ from synapse.models.adapters import (
     OllamaModelAdapter,
     OpenAICompatibleAdapter,
 )
-from synapse.models.types import ModelRequest, ModelResponse
+from synapse.models.errors import ModelError
+from synapse.models.types import (
+    GenerationChunk,
+    ModelDescriptor,
+    ModelRequest,
+    ModelResponse,
+    ModelSelection,
+    ModelUsage,
+    ProviderDescriptor,
+)
 
 __all__ = [
     "BaseModelAdapter",
     "MockModelAdapter",
+    "GenerationChunk",
+    "ModelDescriptor",
+    "ModelError",
     "ModelRequest",
     "ModelResponse",
+    "ModelSelection",
+    "ModelUsage",
     "OllamaModelAdapter",
     "OpenAICompatibleAdapter",
+    "ProviderDescriptor",
 ]
-

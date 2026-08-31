@@ -9,10 +9,18 @@ description = "Local-first personal agent operating system runtime foundation."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+  "av>=14.0",
   "fastapi>=0.115",
+  "faster-whisper>=1.0.0",
+  "mss>=10.2.0",
+  "numpy>=2.0",
+  "pillow>=12.3.0",
+  "psutil>=6.1",
   "pydantic>=2.7",
   "pyyaml>=6.0.2",
+  "sounddevice>=0.5.0",
   "uvicorn[standard]>=0.30",
+  "webrtcvad-wheels>=2.0.14",
 ]
 
 [project.optional-dependencies]
@@ -20,6 +28,10 @@ dev = [
   "mypy>=1.10",
   "pytest>=8.0",
   "ruff>=0.6",
+]
+packaging = [
+  "pyinstaller>=6.19,<7",
+  "tzdata>=2025.2",
 ]
 
 [tool.setuptools.packages.find]
@@ -29,6 +41,7 @@ where = ["backend"]
 line-length = 100
 target-version = "py312"
 src = ["backend", "tests"]
+cache-dir = ".cache/ruff"
 
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F", "I"]
@@ -39,10 +52,18 @@ select = ["E4", "E7", "E9", "F", "I"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["backend"]
+cache_dir = ".cache/pytest"
 
 [tool.mypy]
 python_version = "3.12"
 mypy_path = "backend"
+cache_dir = ".cache/mypy/global"
 ignore_missing_imports = true
 check_untyped_defs = true
 warn_unused_ignores = true
+
+[tool.coverage.run]
+data_file = ".cache/coverage/.coverage"
+
+[tool.coverage.html]
+directory = ".cache/coverage/htmlcov"

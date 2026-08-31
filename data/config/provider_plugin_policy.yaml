@@ -1,0 +1,10 @@
+{
+  "provider_plugin_policy": {
+    "enabled": true,
+    "allow_network_plugins": false,
+    "allow_gpu_plugins": false,
+    "disabled_plugins": [],
+    "prefer_local_plugins": true,
+    "allow_experimental_plugins": false
+  }
+}

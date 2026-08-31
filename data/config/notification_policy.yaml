@@ -1,0 +1,8 @@
+{
+  "notifications": {
+    "retention_days": 30,
+    "max_total_notifications": 500,
+    "preserve_unread": true,
+    "preserve_critical": true
+  }
+}

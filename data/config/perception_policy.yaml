@@ -1,0 +1,17 @@
+perception:
+  enabled: true
+  allowed_sources: [voice, audio, vision, screen, camera, system, interaction, test]
+  max_signal_bytes: 262144
+  signal_retention_hours: 24
+  observation_retention_days: 30
+  raw_visual_retention_minutes: 15
+  persist_transcripts: false
+  screenshots_enabled: true
+  camera_enabled: false
+  ocr_enabled: false
+  persist_raw_visual: false
+  require_approval_for_sensitive_capture: true
+  sensitive_applications: []
+  sensitive_window_patterns: [private, incognito, password]
+  sensitive_regions: []
+  default_fusion_window_seconds: 15

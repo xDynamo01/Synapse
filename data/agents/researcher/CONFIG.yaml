@@ -1,5 +1,6 @@
 {
   "id": "researcher",
+  "agent_kind": "persistent",
   "name": "Researcher",
   "role": "research_specialist",
   "description": "Performs research, synthesis, and analysis for other agents.",
@@ -16,7 +17,16 @@
     "Do not write files.",
     "Summarize sources before giving recommendations."
   ],
-  "skills": ["research", "synthesis", "analysis"],
+  "skills": {
+    "legacy": ["research", "synthesis", "analysis"],
+    "assignments": [
+      {
+        "skill_id": "research-synthesis",
+        "version": "^1.0.0",
+        "scope": "agent"
+      }
+    ]
+  },
   "permissions": ["filesystem.read", "filesystem.list", "web.search", "agents.message"]
 }
 

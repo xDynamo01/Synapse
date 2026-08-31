@@ -4,12 +4,14 @@ from dataclasses import asdict
 from typing import Any
 
 from synapse.agents.communication import AgentCommunication
-from synapse.communication.runtime import CommunicationRuntime
 from synapse.core.data_dir import DataDir
 from synapse.core.exceptions import ToolExecutionError, ValidationError
 from synapse.core.permissions import PermissionContext
 from synapse.tasks.runtime import TaskRuntime
-from synapse.tools.base import ToolRegistry, ToolSpec
+from synapse.tools.base import Tool, ToolRegistry, ToolSpec
+from synapse.tools.models import ToolDefinition, ToolExecutionRequest
+from synapse.tools.registry import RuntimeToolRegistry
+from synapse.tools.search import SearchToolPort, UnconfiguredSearchTool
 
 
 class ReadFileTool:
@@ -119,16 +121,18 @@ class WebSearchTool:
         risk_level="medium",
     )
 
+    def __init__(self, consumer: SearchToolPort | None = None) -> None:
+        self._consumer = consumer or UnconfiguredSearchTool()
+
     def run(self, context: PermissionContext, **kwargs: Any) -> dict[str, Any]:
         query = str(kwargs.get("query", "")).strip()
         if not query:
             raise ValidationError("web_search requires query")
-        return {
-            "status": "unconfigured",
-            "query": query,
-            "results": [],
-            "message": "No local web search provider is configured yet.",
-        }
+        arguments: dict[str, object] = {"query": query}
+        for name in ("result_limit", "language", "locale", "correlation_id"):
+            if kwargs.get(name) is not None:
+                arguments[name] = kwargs[name]
+        return dict(self._consumer.search(context.actor_id, context.actor_type, arguments))
 
 
 class SendAgentMessageTool:
@@ -200,100 +204,132 @@ class UpdateTaskTool:
         return asdict(task)
 
 
-class ReadEmailTool:
-    spec = ToolSpec(
-        name="read_email",
-        description="Read an email message through Communication Runtime.",
-        permission="communication.read",
-        risk_level="medium",
-    )
-
-    def __init__(self, communication_runtime: CommunicationRuntime):
-        self.communication_runtime = communication_runtime
-
-    def run(self, context: PermissionContext, **kwargs: Any) -> dict[str, Any]:
-        message = self.communication_runtime.read_message(
-            message_id=str(kwargs["message_id"]),
-            provider=kwargs.get("provider"),
-        )
-        return asdict(message)
-
-
-class SummarizeEmailTool:
-    spec = ToolSpec(
-        name="summarize_email",
-        description="Summarize an email message through Communication Runtime.",
-        permission="communication.summarize",
-        risk_level="medium",
-    )
-
-    def __init__(self, communication_runtime: CommunicationRuntime):
-        self.communication_runtime = communication_runtime
-
-    def run(self, context: PermissionContext, **kwargs: Any) -> dict[str, Any]:
-        return self.communication_runtime.summarize_message(
-            message_id=str(kwargs["message_id"]),
-            provider=kwargs.get("provider"),
-        )
-
-
-class CreateEmailDraftTool:
-    spec = ToolSpec(
-        name="create_email_draft",
-        description="Create an email draft. Does not send email.",
-        permission="communication.draft",
-        risk_level="medium",
-    )
-
-    def __init__(self, communication_runtime: CommunicationRuntime):
-        self.communication_runtime = communication_runtime
-
-    def run(self, context: PermissionContext, **kwargs: Any) -> dict[str, Any]:
-        recipients = kwargs.get("recipients", [])
-        if isinstance(recipients, str):
-            recipients = [item.strip() for item in recipients.split(",") if item.strip()]
-        draft = self.communication_runtime.create_draft(
-            subject=str(kwargs["subject"]),
-            recipients=list(recipients),
-            body=str(kwargs.get("body", "")),
-            created_by_agent=context.actor_id,
-            provider=kwargs.get("provider"),
-        )
-        return asdict(draft)
-
-
-class ListEmailDraftsTool:
-    spec = ToolSpec(
-        name="list_email_drafts",
-        description="List email drafts through Communication Runtime.",
-        permission="communication.read",
-        risk_level="low",
-    )
-
-    def __init__(self, communication_runtime: CommunicationRuntime):
-        self.communication_runtime = communication_runtime
-
-    def run(self, context: PermissionContext, **kwargs: Any) -> dict[str, Any]:
-        drafts = self.communication_runtime.list_drafts(provider=kwargs.get("provider"))
-        return {"drafts": [asdict(draft) for draft in drafts]}
-
-
 def register_builtin_tools(
     registry: ToolRegistry,
     data_dir: DataDir,
     communication: AgentCommunication,
     task_runtime: TaskRuntime,
-    communication_runtime: CommunicationRuntime,
+    search: SearchToolPort | None = None,
 ) -> None:
     registry.register(ReadFileTool(data_dir))
     registry.register(WriteFileTool(data_dir))
     registry.register(ListDirectoryTool(data_dir))
     registry.register(SearchFilesTool(data_dir))
-    registry.register(WebSearchTool())
+    registry.register(WebSearchTool(search))
     registry.register(SendAgentMessageTool(communication))
     registry.register(CreateTaskTool(task_runtime))
     registry.register(UpdateTaskTool(task_runtime))
-    registry.register(ReadEmailTool(communication_runtime))
-    registry.register(SummarizeEmailTool(communication_runtime))
-    registry.register(CreateEmailDraftTool(communication_runtime))
-    registry.register(ListEmailDraftsTool(communication_runtime))
+
+
+def register_builtin_runtime_tools(
+    registry: RuntimeToolRegistry,
+    data_dir: DataDir,
+    communication: AgentCommunication,
+    task_runtime: TaskRuntime,
+    search: SearchToolPort | None = None,
+) -> None:
+    tools = (
+        ReadFileTool(data_dir),
+        WriteFileTool(data_dir),
+        ListDirectoryTool(data_dir),
+        SearchFilesTool(data_dir),
+        WebSearchTool(search),
+        SendAgentMessageTool(communication),
+        CreateTaskTool(task_runtime),
+        UpdateTaskTool(task_runtime),
+    )
+    schemas = {
+        "read_file": _schema({"path": {"type": "string"}}, ["path"]),
+        "write_file": _schema(
+            {
+                "path": {"type": "string"},
+                "content": {"type": "string"},
+                "append": {"type": "boolean"},
+            },
+            ["path"],
+        ),
+        "list_directory": _schema({"path": {"type": "string"}}),
+        "search_files": _schema(
+            {
+                "path": {"type": "string"},
+                "pattern": {"type": "string"},
+                "query": {"type": "string"},
+                "max_results": {"type": "integer"},
+            }
+        ),
+        "web_search": _schema(
+            {
+                "query": {"type": "string"},
+                "result_limit": {"type": "integer"},
+                "language": {"type": "string"},
+                "locale": {"type": "string"},
+                "correlation_id": {"type": "string"},
+            },
+            ["query"],
+        ),
+        "send_agent_message": _schema(
+            {
+                "from_agent_id": {"type": "string"},
+                "to_agent_id": {"type": "string"},
+                "body": {"type": "string"},
+                "subject": {"type": "string"},
+                "task_id": {"type": "string"},
+            },
+            ["from_agent_id", "to_agent_id", "body"],
+        ),
+        "create_task": _schema(
+            {
+                "title": {"type": "string"},
+                "description": {"type": "string"},
+                "metadata": {"type": "object"},
+            },
+            ["title"],
+        ),
+        "update_task": _schema(
+            {
+                "task_id": {"type": "string"},
+                "status": {"type": "string"},
+                "note": {"type": "string"},
+                "metadata": {"type": "object"},
+            },
+            ["task_id"],
+        ),
+    }
+    for tool in tools:
+        registry.register(
+            ToolDefinition(
+                tool_id=tool.spec.name,
+                display_name=tool.spec.name.replace("_", " ").title(),
+                description=tool.spec.description,
+                category="builtin",
+                input_schema=schemas[tool.spec.name],
+                output_schema={"type": "object"},
+                required_permission=tool.spec.permission,
+                risk_level=tool.spec.risk_level,
+                metadata={"legacy_catalog": True},
+            ),
+            _BuiltinToolAdapter(tool),
+        )
+
+
+class _BuiltinToolAdapter:
+    def __init__(self, tool: Tool) -> None:
+        self.tool = tool
+
+    def __call__(self, request: ToolExecutionRequest) -> dict[str, Any]:
+        return self.tool.run(
+            PermissionContext(
+                actor_id=request.agent_id or request.caller,
+                actor_type="agent" if request.agent_id else request.caller_type,
+            ),
+            **request.arguments,
+        )
+
+
+def _schema(
+    properties: dict[str, dict[str, Any]], required: list[str] | None = None
+) -> dict[str, Any]:
+    schema: dict[str, Any] = {"type": "object", "properties": properties}
+    if required:
+        schema["required"] = required
+    return schema

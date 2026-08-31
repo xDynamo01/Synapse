@@ -1,0 +1,13 @@
+schema_version: 1
+record_type: ephemeral_agent_policy
+limits:
+  max_ephemeral_agents_per_mission: 8
+  max_concurrent_ephemeral_agents: 4
+  max_ephemeral_agents_global: 16
+  max_agent_lifetime: 3600
+  max_context_budget: 32768
+  max_model_resource_budget: 4
+  max_tool_risk: medium
+  max_retries: 2
+  max_spawn_depth: 1
+  max_child_agents_per_agent: 4

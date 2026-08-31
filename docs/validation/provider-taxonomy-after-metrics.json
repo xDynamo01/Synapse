@@ -1,0 +1,141 @@
+{
+  "captured_at": "2026-07-14",
+  "result": "complete",
+  "backend_ready": false,
+  "taxonomy": {
+    "canonical_manifest": "CanonicalProviderManifest",
+    "transversal_catalog": "ProviderCatalog",
+    "transversal_catalog_count": 1,
+    "execution_methods_in_catalog": 0,
+    "specialized_registry_count_before": 4,
+    "specialized_registry_count_after": 4,
+    "specialized_registries": [
+      "ProviderRegistry",
+      "SpeechAdapterRegistry",
+      "ModelHubRegistry",
+      "ProviderPluginRegistry"
+    ],
+    "concrete_factory_family_count_before": 3,
+    "concrete_factory_family_count_after": 3,
+    "factory_convention": "ProviderFactory",
+    "capability_representations_before": 7,
+    "capability_representations_after": 8,
+    "canonical_capability_model_count": 1,
+    "canonical_availability_model_count": 1,
+    "canonical_configuration_descriptor_count": 1,
+    "settings_store_count_added": 0,
+    "health_system_count_added": 0,
+    "lifecycle_owner": "bootstrap and owning domain runtimes"
+  },
+  "runtime_catalog": {
+    "measured_platform": "windows",
+    "registered_provider_count": 20,
+    "domain_count": 10,
+    "provider_ids": [
+      "anthropic",
+      "fallback_ocr",
+      "fallback_vision",
+      "faster_whisper",
+      "google_gemini",
+      "groq",
+      "lmstudio_local",
+      "local",
+      "local_acoustic_analysis",
+      "local_image_metadata",
+      "mss_local",
+      "ollama_local",
+      "openai",
+      "openai_compatible",
+      "openrouter",
+      "piper",
+      "webrtcvad",
+      "windows",
+      "windows_input",
+      "windows_uia"
+    ],
+    "mock_provider_count": 0,
+    "not_configured_identity_count": 0,
+    "duplicate_identity_count": 0,
+    "identity_conflicts_resolved_as_explicit_aliases": [
+      {"canonical": "lmstudio_local", "execution_alias": "lmstudio"},
+      {"canonical": "ollama_local", "execution_alias": "ollama"},
+      {"canonical": "google_gemini", "execution_alias": "gemini"}
+    ]
+  },
+  "public_snapshot_after": {
+    "generic_provider_ids": ["faster_whisper", "lmstudio_local", "mock_avatar_renderer", "mock_stt", "mock_tts", "mock_voice_analysis", "piper"],
+    "provider_settings_ids": ["lmstudio_local", "ollama_local", "openai", "anthropic", "google_gemini", "groq", "openrouter", "openai_compatible"],
+    "model_hub_provider_ids": ["anthropic", "gemini", "groq", "lmstudio", "ollama", "openai", "openai_compatible", "openrouter"],
+    "speech_adapter_ids": ["faster_whisper_adapter", "local_voice_analysis_adapter", "piper_tts_adapter"],
+    "speech_provider_ids": ["faster_whisper", "local_acoustic_analysis", "piper"],
+    "vision": {"vision": "local_image_metadata", "ocr": "not_configured", "camera": "not_configured", "capture": "mss_local"},
+    "desktop": {"primary": "windows_uia", "input": "windows_input", "status": "healthy"},
+    "system_insight": {"provider": "windows", "status": "healthy"},
+    "notification": {"provider": "local", "status": "ok"},
+    "equivalent_to_before": true,
+    "absolute_paths_redacted": true
+  },
+  "selection": {
+    "production_mock_default": false,
+    "explicit_development_modes": ["SYNAPSE_DEV_MODE", "system.mode=test", "system.mode=development"],
+    "existing_explicit_fallbacks_preserved": ["desktop_visual", "system_insight_psutil"],
+    "routing_redesigned": false
+  },
+  "dependencies": {
+    "scc_before": [
+      {"contexts": 25, "internal_edges": 76},
+      {"contexts": 4, "internal_edges": 6},
+      {"contexts": 2, "internal_edges": 2}
+    ],
+    "scc_after": [
+      {"contexts": 25, "internal_edges": 76},
+      {"contexts": 4, "internal_edges": 6},
+      {"contexts": 2, "internal_edges": 2}
+    ],
+    "reduction_claimed": false,
+    "new_concrete_consumer_imports": 0
+  },
+  "performance": {
+    "startup_samples": 5,
+    "startup_median_ms": 177.38,
+    "startup_before_available": false,
+    "catalog_list_iterations_per_sample": 10000,
+    "catalog_list_median_us": 1.76,
+    "performance_improvement_claimed": false
+  },
+  "openapi": {
+    "paths": 425,
+    "operations": 471,
+    "unique_operation_ids": 471,
+    "schemas": 100,
+    "normalized_sha256": "bc0b2a3cab01aa9377bc80b50193089d288edd71901a9f650e3bd02ad48ea72f",
+    "equivalent_to_before": true
+  },
+  "validation": {
+    "architecture": {"passed": 56, "failed": 0, "duration_seconds": 15.87},
+    "focused_provider_domains": {"passed": 135, "failed": 0, "duration_seconds": 94.41},
+    "acceptance": {"passed": 64, "failed": 0, "duration_seconds": 28.31},
+    "global": {"collected": 1060, "passed": 1060, "failed": 0, "skipped": 0, "subtests_passed": 4, "duration_seconds": 583.52},
+    "ruff": "passed",
+    "git_diff_check": "passed"
+  },
+  "scope_guardrails": {
+    "storage_changed": false,
+    "unrelated_cycles_changed": false,
+    "agent_creator_changed": false,
+    "data_dir_maintenance_changed": false,
+    "tools_redesigned": false,
+    "api_or_commands_functionally_changed": false,
+    "health_or_readiness_functionally_changed": false,
+    "context_fusion_changed": false,
+    "sdk_or_frontend_created": false,
+    "commit_push_or_pr_performed": false
+  },
+  "remaining_blockers": [
+    "common Storage primitives",
+    "remaining architectural cycles",
+    "legacy Agent Creator",
+    "DataDir maintenance",
+    "final architectural audit"
+  ]
+}

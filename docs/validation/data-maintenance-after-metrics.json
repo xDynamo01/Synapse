@@ -1,0 +1,61 @@
+{
+  "date": "2026-07-14",
+  "status": "NOT READY",
+  "openapi": {
+    "before": {"paths": 438, "operations": 485, "schemas": 103},
+    "after": {"paths": 443, "operations": 490, "schemas": 107},
+    "after_sha256": "94a03c0c8ce5a829e0af5f3754f626bbcf83d442a4050ff76dffe241360f1a34",
+    "unique_operation_ids": 490
+  },
+  "commands": {
+    "canonical_before": 351,
+    "canonical_after": 356,
+    "aliases_after": 24,
+    "registered_names_after": 380,
+    "removed_generic_destructive": 3,
+    "added_canonical": 8
+  },
+  "boundaries": {
+    "registered_contributors": 4,
+    "maintenance_related_api_operations_before": 16,
+    "maintenance_related_api_operations_after": 21,
+    "api_command_direct_data_dir_accesses_before": 5,
+    "api_command_direct_data_dir_accesses_after": 0,
+    "api_command_filesystem_imports_for_maintenance_before": 0,
+    "api_command_filesystem_mutation_calls_after": 0,
+    "generic_destructive_delivery_operations_before": 6,
+    "generic_destructive_delivery_operations_after": 0,
+    "canonical_plan_execution_operations_after": 2,
+    "canonical_dry_run_surfaces_after": 2,
+    "canonical_approval_gated_surfaces_after": 2,
+    "absolute_paths_exposed_before": 0,
+    "absolute_paths_exposed_after": 0,
+    "unsafe_foundation_adapter_present_after": false,
+    "unsafe_foundation_adapter_files_removed": 1,
+    "arbitrary_path_fields": 0,
+    "global_backup_restore_capability": false,
+    "maintenance_plan_stores_after": 1,
+    "maintenance_execution_history_stores_after": 1,
+    "fresh_runtime_plan_records": 0,
+    "fresh_runtime_execution_records": 0,
+    "maintenance_production_lines_after": 1236,
+    "maintenance_production_lines_before": 0,
+    "directly_related_dependency_sccs_before": [[25, 76], [4, 6], [2, 2]],
+    "directly_related_dependency_sccs_after": [[25, 76], [4, 6], [2, 2]],
+    "note": "Unrelated SCCs were deliberately not changed. Existing delivery/DataDir line totals were not isolated as a comparable pre-edit metric; the new package line count is exact."
+  },
+  "performance_ms": {
+    "inspect_20_runs": {"min": 12.292, "mean": 13.516, "max": 16.463},
+    "plan_10_runs": {"min": 37.961, "mean": 42.190, "max": 49.702},
+    "restart_recovery": 130.060
+  },
+  "validation": {
+    "architecture": {"passed": 83, "failed": 0, "duration_seconds": 18.64},
+    "data_dir_foundation_storage_maintenance": {"passed": 37, "skipped": 2, "failed": 0, "duration_seconds": 27.37},
+    "api_commands": {"passed": 27, "failed": 0, "duration_seconds": 8.83},
+    "acceptance": {"passed": 73, "failed": 0, "duration_seconds": 39.40},
+    "global": {"collected": 1125, "passed": 1123, "failed": 0, "skipped": 2, "subtests_passed": 4, "duration_seconds": 623.03},
+    "ruff": "passed",
+    "git_diff_check": "passed_with_existing_line_ending_warnings"
+  }
+}

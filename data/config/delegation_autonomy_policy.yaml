@@ -1,0 +1,16 @@
+{
+  "delegation_autonomy": {
+    "enabled": true,
+    "allow_auto_accept": false,
+    "allow_auto_start": true,
+    "allow_auto_reject": false,
+    "max_auto_priority": "high",
+    "require_approval_for_critical": true,
+    "allowed_requester_agents": [],
+    "blocked_requester_agents": [],
+    "require_capability_match": false,
+    "require_due_at_for_auto_accept": false,
+    "manual_autonomy_blocks_auto_accept": true,
+    "conservative_default": true
+  }
+}

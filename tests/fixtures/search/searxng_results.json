@@ -1,0 +1,34 @@
+{
+  "query": "provider neutral query",
+  "results": [
+    {
+      "url": "HTTPS://Example.COM:443/article?utm_source=test#top",
+      "title": "First result",
+      "content": "Snippet returned by SearXNG.",
+      "engines": ["engine-a", "engine-b"],
+      "category": "general",
+      "publishedDate": "2026-08-12T16:30:00Z",
+      "score": 1.25,
+      "language": "en",
+      "mime_type": "text/html"
+    },
+    {
+      "url": "https://example.com/article",
+      "canonical_url": "https://publisher.example/article",
+      "title": "Duplicate normalized URL",
+      "content": "A second provider snippet.",
+      "engine": "engine-c"
+    },
+    {
+      "url": "https://other.example/no-date",
+      "title": "No date result",
+      "content": "No publication date was reported."
+    },
+    {
+      "url": "https://other.example/invalid-date",
+      "title": "Invalid date result",
+      "publishedDate": "not-a-date",
+      "source": "Provider source label"
+    }
+  ]
+}

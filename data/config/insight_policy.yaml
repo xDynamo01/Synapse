@@ -1,0 +1,10 @@
+{
+  "resource_pressure": {
+    "moderate": 0.70,
+    "high": 0.85,
+    "critical": 0.95
+  },
+  "persistence": {
+    "max_snapshots": 48
+  }
+}

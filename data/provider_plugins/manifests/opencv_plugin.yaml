@@ -1,0 +1,19 @@
+{
+  "plugin_id": "opencv_plugin",
+  "name": "OpenCV Vision Plugin",
+  "description": "Image processing and camera utility functions using OpenCV.",
+  "version": "1.0.0",
+  "plugin_type": "vision",
+  "providers": ["opencv"],
+  "capabilities": ["vision.capture", "vision.process"],
+  "adapters": ["opencv_adapter"],
+  "enabled": false,
+  "installed": false,
+  "local_only": true,
+  "requires_network": false,
+  "requires_gpu": false,
+  "supported_platforms": ["windows", "linux", "darwin"],
+  "requirements": ["opencv-python>=4.9.0"],
+  "entrypoint": "opencv_plugin.entrypoint",
+  "metadata": {}
+}

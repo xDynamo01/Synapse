@@ -1,0 +1,19 @@
+{
+  "plugin_id": "piper_plugin",
+  "name": "Piper TTS Plugin",
+  "description": "Fast local text-to-speech using Piper.",
+  "version": "1.0.0",
+  "plugin_type": "speech",
+  "providers": ["piper"],
+  "capabilities": ["speech.synthesize"],
+  "adapters": ["piper_adapter"],
+  "enabled": false,
+  "installed": false,
+  "local_only": true,
+  "requires_network": false,
+  "requires_gpu": false,
+  "supported_platforms": ["windows", "linux", "darwin"],
+  "requirements": ["piper-tts>=1.2.0"],
+  "entrypoint": "piper_plugin.entrypoint",
+  "metadata": {}
+}

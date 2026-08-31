@@ -5,14 +5,27 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
-JOB_STATUSES = {"pending", "running", "completed", "failed", "cancelled"}
-RECURRING_JOB_TYPES = {"notification_cleanup", "check_email", "process_agent_inbox"}
+JOB_STATUSES = {"pending", "paused", "running", "completed", "failed", "cancelled"}
+RECURRING_JOB_TYPES = {
+    "notification_cleanup",
+    "process_agent_inbox",
+    "process_agent_delegations",
+    "agent_admin_request_cleanup",
+    "retention_cleanup_domain",
+    "delegation_inbox_rebuild",
+    "delegation_timeout_scan",
+    "dead_letter_review_scan",
+    "mission_dispatch",
+    "agent_loop_cycle",
+}
 
 
 @dataclass(frozen=True)
 class Job:
     type: str
     payload: dict[str, Any]
+    schema_version: int = 1
+    record_type: str = "job"
     status: str = "pending"
     priority: int = 100
     attempts: int = 0
@@ -25,6 +38,15 @@ class Job:
     causation_id: str | None = None
     parent_id: str | None = None
     source: str | None = None
+    target: str | None = None
+    schedule: str = "one_shot"
+    next_run_at: str | None = None
+    last_run_at: str | None = None
+    last_result: dict[str, Any] | None = None
+    retry_policy: dict[str, Any] = field(default_factory=dict)
+    idempotency_key: str | None = None
+    misfire_policy: str = "run_once"
+    revision: int = 1
     id: str = field(default_factory=lambda: str(uuid4()))
     created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     updated_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
@@ -36,10 +58,12 @@ class Job:
         return due_at <= (now or datetime.now(UTC))
 
     def with_updates(self, **updates: Any) -> "Job":
-        payload = {
+        payload: dict[str, Any] = {
             "id": self.id,
             "type": self.type,
             "payload": self.payload,
+            "schema_version": self.schema_version,
+            "record_type": self.record_type,
             "status": self.status,
             "priority": self.priority,
             "attempts": self.attempts,
@@ -54,6 +78,15 @@ class Job:
             "causation_id": self.causation_id,
             "parent_id": self.parent_id,
             "source": self.source,
+            "target": self.target,
+            "schedule": self.schedule,
+            "next_run_at": self.next_run_at,
+            "last_run_at": self.last_run_at,
+            "last_result": self.last_result,
+            "retry_policy": self.retry_policy,
+            "idempotency_key": self.idempotency_key,
+            "misfire_policy": self.misfire_policy,
+            "revision": self.revision + 1,
         }
         payload.update(updates)
         return Job(**payload)
@@ -81,7 +114,7 @@ class RecurringJobDefinition:
         return datetime.fromisoformat(self.next_run_at) <= (now or datetime.now(UTC))
 
     def with_updates(self, **updates: Any) -> "RecurringJobDefinition":
-        payload = {
+        payload: dict[str, Any] = {
             "id": self.id,
             "type": self.type,
             "payload": self.payload,

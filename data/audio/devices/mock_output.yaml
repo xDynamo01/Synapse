@@ -1,0 +1,6 @@
+device_id: mock_output
+device_type: output
+enabled: true
+metadata:
+  mock: true
+name: Mock Audio Output

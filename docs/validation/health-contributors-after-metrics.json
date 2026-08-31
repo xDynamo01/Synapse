@@ -1,0 +1,251 @@
+{
+  "health_runtime_lines_before": 1325,
+  "health_runtime_lines_after": 229,
+  "health_runtime_import_statements_before": 20,
+  "health_runtime_import_statements_after": 10,
+  "health_concrete_domain_imports_before": 41,
+  "health_concrete_domain_imports_after": 0,
+  "readiness_runtime_lines_before": 805,
+  "readiness_runtime_lines_after": 805,
+  "readiness_concrete_health_runtime_imports_before": 1,
+  "readiness_concrete_health_runtime_imports_after": 0,
+  "contributors_before": 0,
+  "contributors_after": 10,
+  "registries_after": 1,
+  "contributor_ids": [
+    "platform",
+    "agents",
+    "delegation",
+    "missions",
+    "models",
+    "voice",
+    "perception",
+    "tools_execution",
+    "context_fusion",
+    "world_and_desktop"
+  ],
+  "component_ids": [
+    "agents",
+    "conversation",
+    "memory",
+    "models",
+    "tools",
+    "missions",
+    "voice",
+    "perception",
+    "signal_storage",
+    "multimodal",
+    "vision",
+    "context_bridge",
+    "perception_retention",
+    "policy",
+    "observability",
+    "world_state",
+    "attention",
+    "agent_loop",
+    "notification_sink",
+    "insight",
+    "hardware",
+    "gpu",
+    "cpu",
+    "ram",
+    "disk",
+    "drivers",
+    "model_availability",
+    "desktop_automation",
+    "external_providers",
+    "screen_capture",
+    "camera",
+    "ocr"
+  ],
+  "component_count_before": 32,
+  "component_count_after": 32,
+  "duplicate_component_ids": 0,
+  "largest_contributor": "platform",
+  "largest_contributor_lines": 96,
+  "collection_ms": {
+    "samples": 10,
+    "minimum": 255.417,
+    "average": 441.815,
+    "maximum": 1631.023
+  },
+  "timeout_seconds": 5.0,
+  "timeout_isolation_test_seconds": 0.01,
+  "isolated_failure_modes": [
+    "exception",
+    "timeout",
+    "invalid result",
+    "duplicate component ID",
+    "missing required contributor"
+  ],
+  "optional_missing_state": "not_configured",
+  "architecture_violations": 0,
+  "validation": {
+    "architecture": {
+      "passed": 39,
+      "failed": 0,
+      "skipped": 0,
+      "duration_seconds": 16.70
+    },
+    "health_readiness_contributors": {
+      "passed": 37,
+      "failed": 0,
+      "skipped": 0,
+      "duration_seconds": 49.59
+    },
+    "contributor_domains": {
+      "passed": 337,
+      "subtests_passed": 4,
+      "failed": 0,
+      "duration_seconds": 188.73
+    },
+    "acceptance": {
+      "passed": 64,
+      "failed": 0,
+      "skipped": 0,
+      "duration_seconds": 26.69
+    },
+    "global": {
+      "passed": 1018,
+      "subtests_passed": 4,
+      "failed": 0,
+      "skipped": 0,
+      "duration_seconds": 790.35
+    },
+    "ruff": "passed",
+    "git_diff_check": "passed"
+  },
+  "scc_before_reconstructed": [
+    {
+      "contexts": 32,
+      "internal_edges": 123
+    },
+    {
+      "contexts": 4,
+      "internal_edges": 6
+    },
+    {
+      "contexts": 2,
+      "internal_edges": 2
+    }
+  ],
+  "scc_after": [
+    {
+      "contexts": 26,
+      "internal_edges": 79
+    },
+    {
+      "contexts": 4,
+      "internal_edges": 6
+    },
+    {
+      "contexts": 2,
+      "internal_edges": 2
+    }
+  ],
+  "openapi": {
+    "equivalent": true,
+    "paths": 425,
+    "operations": 471,
+    "schemas": 100,
+    "sha256": "bc0b2a3cab01aa9377bc80b50193089d288edd71901a9f650e3bd02ad48ea72f"
+  },
+  "surface_equivalent": true,
+  "module_metrics": {
+    "agents": {
+      "lines": 61,
+      "imports": 4,
+      "classes": 1,
+      "component_ids": [
+        "agents"
+      ]
+    },
+    "delegation": {
+      "lines": 41,
+      "imports": 4,
+      "classes": 1,
+      "component_ids": []
+    },
+    "integration": {
+      "lines": 37,
+      "imports": 4,
+      "classes": 1,
+      "component_ids": [
+        "conversation",
+        "memory",
+        "context_bridge"
+      ]
+    },
+    "missions": {
+      "lines": 38,
+      "imports": 4,
+      "classes": 1,
+      "component_ids": [
+        "missions"
+      ]
+    },
+    "models": {
+      "lines": 94,
+      "imports": 6,
+      "classes": 1,
+      "component_ids": [
+        "models"
+      ]
+    },
+    "perception": {
+      "lines": 48,
+      "imports": 5,
+      "classes": 1,
+      "component_ids": [
+        "perception",
+        "signal_storage",
+        "vision",
+        "perception_retention"
+      ]
+    },
+    "platform": {
+      "lines": 96,
+      "imports": 5,
+      "classes": 1,
+      "component_ids": [
+        "policy",
+        "observability",
+        "notification_sink"
+      ]
+    },
+    "tools": {
+      "lines": 69,
+      "imports": 4,
+      "classes": 1,
+      "component_ids": [
+        "tools"
+      ]
+    },
+    "voice": {
+      "lines": 86,
+      "imports": 4,
+      "classes": 1,
+      "component_ids": [
+        "voice",
+        "multimodal"
+      ]
+    },
+    "world": {
+      "lines": 26,
+      "imports": 4,
+      "classes": 1,
+      "component_ids": [
+        "world_state",
+        "attention",
+        "agent_loop",
+        "desktop_automation"
+      ]
+    }
+  },
+  "preserved_findings": [
+    "Agent Creator availability remains a cross-domain compatibility fact in the Agents contributor.",
+    "Readiness policy mapping remains unchanged.",
+    "DataDir maintenance, Tools, Providers and Storage are unchanged.",
+    "Two unrelated SCCs (6 and 2 internal edges) remain."
+  ]
+}

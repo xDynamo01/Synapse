@@ -1,0 +1,125 @@
+{
+  "routes_py_lines_before": 6371,
+  "routes_py_lines_after": 8,
+  "domain_routers_before": 3,
+  "domain_routers_after": 13,
+  "registration_points": 1,
+  "largest_router": "missions",
+  "largest_router_lines": 1307,
+  "average_router_lines": 513.08,
+  "module_metrics": {
+    "agents": {
+      "lines": 795,
+      "imports": 9,
+      "handlers": 42,
+      "transport_dtos": 8,
+      "helpers": 0
+    },
+    "automation": {
+      "lines": 216,
+      "imports": 6,
+      "handlers": 17,
+      "transport_dtos": 2,
+      "helpers": 0
+    },
+    "conversations": {
+      "lines": 494,
+      "imports": 8,
+      "handlers": 21,
+      "transport_dtos": 9,
+      "helpers": 0
+    },
+    "desktop_automation": {
+      "lines": 204,
+      "imports": 7,
+      "handlers": 11,
+      "transport_dtos": 6,
+      "helpers": 3
+    },
+    "memory": {
+      "lines": 283,
+      "imports": 6,
+      "handlers": 13,
+      "transport_dtos": 6,
+      "helpers": 0
+    },
+    "missions": {
+      "lines": 1307,
+      "imports": 7,
+      "handlers": 103,
+      "transport_dtos": 17,
+      "helpers": 0
+    },
+    "models": {
+      "lines": 429,
+      "imports": 8,
+      "handlers": 36,
+      "transport_dtos": 5,
+      "helpers": 0
+    },
+    "perception": {
+      "lines": 498,
+      "imports": 10,
+      "handlers": 42,
+      "transport_dtos": 7,
+      "helpers": 0
+    },
+    "platform": {
+      "lines": 540,
+      "imports": 12,
+      "handlers": 48,
+      "transport_dtos": 10,
+      "helpers": 0
+    },
+    "system": {
+      "lines": 121,
+      "imports": 5,
+      "handlers": 21,
+      "transport_dtos": 0,
+      "helpers": 0
+    },
+    "tools": {
+      "lines": 435,
+      "imports": 6,
+      "handlers": 31,
+      "transport_dtos": 5,
+      "helpers": 0
+    },
+    "voice": {
+      "lines": 1143,
+      "imports": 12,
+      "handlers": 64,
+      "transport_dtos": 20,
+      "helpers": 0
+    },
+    "world_attention_loop": {
+      "lines": 205,
+      "imports": 6,
+      "handlers": 22,
+      "transport_dtos": 3,
+      "helpers": 0
+    }
+  },
+  "handlers": 471,
+  "router_helpers": 3,
+  "shared_transport_helpers": 4,
+  "known_business_logic_in_router_before": 12,
+  "known_business_logic_in_router_after": 0,
+  "compatibility_findings_after": [
+    "agent_creator_adapter cross-runtime legacy mapping",
+    "foundation_adapter DataDir maintenance facade gap"
+  ],
+  "paths": 425,
+  "operations": 471,
+  "schemas": 100,
+  "tags": [],
+  "status_codes": {
+    "200": 471,
+    "422": 354
+  },
+  "openapi_sha256_before": "bc0b2a3cab01aa9377bc80b50193089d288edd71901a9f650e3bd02ad48ea72f",
+  "openapi_sha256_after": "bc0b2a3cab01aa9377bc80b50193089d288edd71901a9f650e3bd02ad48ea72f",
+  "openapi_structurally_equal": true,
+  "duplicate_operation_ids": 0,
+  "duplicate_method_paths": 0
+}

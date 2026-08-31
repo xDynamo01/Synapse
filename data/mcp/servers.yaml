@@ -1,0 +1,61 @@
+servers:
+- description: Placeholder manifest for a future Blender MCP server.
+  display_name: Blender
+  enabled: false
+  installed: false
+  metadata:
+    connection_supported: false
+    seed: true
+  server_id: blender
+  transport: unconfigured
+  version: 0.0.0
+- description: Placeholder manifest for a future Browser MCP server.
+  display_name: Browser
+  enabled: false
+  installed: false
+  metadata:
+    connection_supported: false
+    seed: true
+  server_id: browser
+  transport: unconfigured
+  version: 0.0.0
+- description: Placeholder manifest for a future Docker MCP server.
+  display_name: Docker
+  enabled: false
+  installed: false
+  metadata:
+    connection_supported: false
+    seed: true
+  server_id: docker
+  transport: unconfigured
+  version: 0.0.0
+- description: Placeholder manifest for a future GitHub MCP server.
+  display_name: GitHub
+  enabled: false
+  installed: false
+  metadata:
+    connection_supported: false
+    seed: true
+  server_id: github
+  transport: unconfigured
+  version: 0.0.0
+- description: Placeholder manifest for a future Local Filesystem MCP server.
+  display_name: Local Filesystem
+  enabled: false
+  installed: false
+  metadata:
+    connection_supported: false
+    seed: true
+  server_id: local_fs
+  transport: unconfigured
+  version: 0.0.0
+- description: Placeholder manifest for a future Unreal Engine MCP server.
+  display_name: Unreal Engine
+  enabled: false
+  installed: false
+  metadata:
+    connection_supported: false
+    seed: true
+  server_id: unreal
+  transport: unconfigured
+  version: 0.0.0

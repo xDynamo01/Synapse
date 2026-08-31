@@ -8,7 +8,7 @@ Accepted
 
 ## Context
 
-Synapse needs a durable, observable way to represent what each agent is currently doing. Chat, workers, scheduler jobs, future voice/avatar surfaces, and future UI clients should not infer state by scraping logs or duplicating runtime logic.
+Synapse needs a durable, observable way to represent what each agent is currently doing. Chat, workers, scheduler jobs, Voice, and future UI clients should not infer state by scraping logs or duplicating runtime logic.
 
 ## Decision
 
@@ -25,4 +25,4 @@ Initial integrations update presence from Chat Runtime, Agent Runtime, ToolRoute
 
 Presence is a projection, not a source of authorization. Permission, approval, and policy decisions remain in their existing runtimes.
 
-The current implementation is intentionally single-record-per-agent and local-first. It does not yet track historical presence timelines, concurrent activities per agent, distributed locks, or richer emotional/avatar state.
+The current implementation is intentionally single-record-per-agent and local-first. It does not yet track historical presence timelines, concurrent activities per agent, distributed locks, or richer emotional state.

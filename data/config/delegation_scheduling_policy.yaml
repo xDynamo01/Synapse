@@ -1,0 +1,17 @@
+{
+  "delegation_scheduling": {
+    "enabled": true,
+    "status_order": ["in_progress", "accepted", "pending"],
+    "priority_weights": {
+      "critical": 400,
+      "high": 300,
+      "normal": 200,
+      "low": 100
+    },
+    "due_at_weight": 50,
+    "aging_weight": 1,
+    "max_items_per_agent_cycle": 1,
+    "allow_critical_first": true,
+    "preserve_fifo_within_same_score": true
+  }
+}

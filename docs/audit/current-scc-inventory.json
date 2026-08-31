@@ -1,0 +1,1018 @@
+{
+  "audit_date": "2026-07-15",
+  "worktree": {
+    "commit": "8196eb11c34442af563b20082bc1666755f4d8a9",
+    "branch": "backend-freeze-cleanup",
+    "state": "dirty before audit"
+  },
+  "graph_basis": "governed bounded-context runtime graph",
+  "nontrivial_scc_count": 3,
+  "sccs": [
+    {
+      "id": "SCC-01",
+      "contexts": [
+        "agents",
+        "approvals",
+        "avatar",
+        "context",
+        "conversations",
+        "decisions",
+        "delegation",
+        "embodiment",
+        "missions",
+        "models",
+        "policies",
+        "tools",
+        "voice"
+      ],
+      "node_count": 13,
+      "internal_edge_count": 35,
+      "import_occurrences": 52,
+      "classification": "critical global architectural SCC; reciprocal runtime/type ownership",
+      "priority": "P1",
+      "comparison": "latest comparable broad report was 25/76 (or 25/75 before one Tools edge); current 13/35; attribution across unavailable phase logs is limited",
+      "files": [
+        "backend/synapse/agents/admin.py",
+        "backend/synapse/agents/provisioning.py",
+        "backend/synapse/agents/runtime.py",
+        "backend/synapse/approvals/resume.py",
+        "backend/synapse/avatar/runtime.py",
+        "backend/synapse/context/loader.py",
+        "backend/synapse/conversations/runtime.py",
+        "backend/synapse/decisions/runtime.py",
+        "backend/synapse/delegation/autonomy_policy.py",
+        "backend/synapse/delegation/runtime.py",
+        "backend/synapse/embodiment/runtime.py",
+        "backend/synapse/missions/runtime.py",
+        "backend/synapse/models/adapters.py",
+        "backend/synapse/models/router.py",
+        "backend/synapse/models/types.py",
+        "backend/synapse/policies/effective.py",
+        "backend/synapse/tools/builtin.py",
+        "backend/synapse/tools/permission_bridge.py",
+        "backend/synapse/tools/runtime.py",
+        "backend/synapse/voice/runtime.py"
+      ],
+      "runtime_imports": 52,
+      "type_only_imports_between_members": 24,
+      "minimum_cycles": [
+        {
+          "path": [
+            "agents",
+            "context",
+            "agents"
+          ],
+          "hops": [
+            {
+              "source": "agents",
+              "target": "context",
+              "evidence": [
+                {
+                  "source_module": "synapse.agents.runtime",
+                  "target_module": "synapse.context.loader",
+                  "source_context": "agents",
+                  "target_context": "context",
+                  "file": "backend/synapse/agents/runtime.py",
+                  "line": 7,
+                  "symbol": "LoadedContext",
+                  "kind": "from",
+                  "type_only": false,
+                  "layer": "domain -> domain",
+                  "probable_reason": "shared behavior or constant",
+                  "uses_port": false,
+                  "through_bootstrap": false,
+                  "guardrail": "allowed or not prohibited by current executable guardrails"
+                }
+              ],
+              "frequency": 1
+            },
+            {
+              "source": "context",
+              "target": "agents",
+              "evidence": [
+                {
+                  "source_module": "synapse.context.loader",
+                  "target_module": "synapse.agents.identity",
+                  "source_context": "context",
+                  "target_context": "agents",
+                  "file": "backend/synapse/context/loader.py",
+                  "line": 6,
+                  "symbol": "AgentIdentityRuntime",
+                  "kind": "from",
+                  "type_only": false,
+                  "layer": "domain -> domain",
+                  "probable_reason": "synchronous runtime/service collaboration",
+                  "uses_port": false,
+                  "through_bootstrap": false,
+                  "guardrail": "allowed or not prohibited by current executable guardrails"
+                },
+                {
+                  "source_module": "synapse.context.loader",
+                  "target_module": "synapse.agents.registry",
+                  "source_context": "context",
+                  "target_context": "agents",
+                  "file": "backend/synapse/context/loader.py",
+                  "line": 7,
+                  "symbol": "AgentRegistry",
+                  "kind": "from",
+                  "type_only": false,
+                  "layer": "domain -> domain",
+                  "probable_reason": "synchronous runtime/service collaboration",
+                  "uses_port": false,
+                  "through_bootstrap": false,
+                  "guardrail": "allowed or not prohibited by current executable guardrails"
+                }
+              ],
+              "frequency": 2
+            }
+          ]
+        },
+        {
+          "path": [
+            "agents",
+            "models",
+            "agents"
+          ],
+          "hops": [
+            {
+              "source": "agents",
+              "target": "models",
+              "evidence": [
+                {
+                  "source_module": "synapse.agents.runtime",
+                  "target_module": "synapse.models.router",
+                  "source_context": "agents",
+                  "target_context": "models",
+                  "file": "backend/synapse/agents/runtime.py",
+                  "line": 10,
+                  "symbol": "ModelRouter",
+                  "kind": "from",
+                  "type_only": false,
+                  "layer": "domain -> domain",
+                  "probable_reason": "shared type or state projection",
+                  "uses_port": false,
+                  "through_bootstrap": false,
+                  "guardrail": "allowed or not prohibited by current executable guardrails"
+                },
+                {
+                  "source_module": "synapse.agents.runtime",
+                  "target_module": "synapse.models.types",
+                  "source_context": "agents",
+                  "target_context": "models",
+                  "file": "backend/synapse/agents/runtime.py",
+                  "line": 11,
+                  "symbol": "ModelResponse",
+                  "kind": "from",
+                  "type_only": false,
+                  "layer": "domain -> domain",
+                  "probable_reason": "shared type or state projection",
+                  "uses_port": false,
+                  "through_bootstrap": false,
+                  "guardrail": "allowed or not prohibited by current executable guardrails"
+                }
+              ],
+              "frequency": 2
+            },
+            {
+              "source": "models",
+              "target": "agents",
+              "evidence": [
+                {
+                  "source_module": "synapse.models.router",
+                  "target_module": "synapse.agents.models",
+                  "source_context": "models",
+                  "target_context": "agents",
+                  "file": "backend/synapse/models/router.py",
+                  "line": 6,
+                  "symbol": "AgentConfig",
+                  "kind": "from",
+                  "type_only": false,
+                  "layer": "domain -> domain",
+                  "probable_reason": "shared type or state projection",
+                  "uses_port": false,
+                  "through_bootstrap": false,
+                  "guardrail": "allowed or not prohibited by current executable guardrails"
+                }
+              ],
+              "frequency": 1
+            }
+          ]
+        },
+        {
+          "path": [
+            "agents",
+            "policies",
+            "agents"
+          ],
+          "hops": [
+            {
+              "source": "agents",
+              "target": "policies",
+              "evidence": [
+                {
+                  "source_module": "synapse.agents.runtime",
+                  "target_module": "synapse.policies.effective",
+                  "source_context": "agents",
+                  "target_context": "policies",
+                  "file": "backend/synapse/agents/runtime.py",
+                  "line": 12,
+                  "symbol": "EffectivePolicyRuntime",
+                  "kind": "from",
+                  "type_only": false,
+                  "layer": "domain -> domain",
+                  "probable_reason": "synchronous runtime/service collaboration",
+                  "uses_port": false,
+                  "through_bootstrap": false,
+                  "guardrail": "allowed or not prohibited by current executable guardrails"
+                }
+              ],
+              "frequency": 1
+            },
+            {
+              "source": "policies",
+              "target": "agents",
+              "evidence": [
+                {
+                  "source_module": "synapse.policies.effective",
+                  "target_module": "synapse.agents.identity",
+                  "source_context": "policies",
+                  "target_context": "agents",
+                  "file": "backend/synapse/policies/effective.py",
+                  "line": 8,
+                  "symbol": "AgentIdentityRuntime",
+                  "kind": "from",
+                  "type_only": false,
+                  "layer": "domain -> domain",
+                  "probable_reason": "synchronous runtime/service collaboration",
+                  "uses_port": false,
+                  "through_bootstrap": false,
+                  "guardrail": "allowed or not prohibited by current executable guardrails"
+                },
+                {
+                  "source_module": "synapse.policies.effective",
+                  "target_module": "synapse.agents.registry",
+                  "source_context": "policies",
+                  "target_context": "agents",
+                  "file": "backend/synapse/policies/effective.py",
+                  "line": 9,
+                  "symbol": "AgentRegistry",
+                  "kind": "from",
+                  "type_only": false,
+                  "layer": "domain -> domain",
+                  "probable_reason": "synchronous runtime/service collaboration",
+                  "uses_port": false,
+                  "through_bootstrap": false,
+                  "guardrail": "allowed or not prohibited by current executable guardrails"
+                }
+              ],
+              "frequency": 2
+            }
+          ]
+        },
+        {
+          "path": [
+            "agents",
+            "tools",
+            "agents"
+          ],
+          "hops": [
+            {
+              "source": "agents",
+              "target": "tools",
+              "evidence": [
+                {
+                  "source_module": "synapse.agents.runtime",
+                  "target_module": "synapse.tools.calls",
+                  "source_context": "agents",
+                  "target_context": "tools",
+                  "file": "backend/synapse/agents/runtime.py",
+                  "line": 19,
+                  "symbol": "ToolCallPlan",
+                  "kind": "from",
+                  "type_only": false,
+                  "layer": "domain -> domain",
+                  "probable_reason": "shared behavior or constant",
+                  "uses_port": false,
+                  "through_bootstrap": false,
+                  "guardrail": "allowed or not prohibited by current executable guardrails"
+                },
+                {
+                  "source_module": "synapse.agents.runtime",
+                  "target_module": "synapse.tools.calls",
+                  "source_context": "agents",
+                  "target_context": "tools",
+                  "file": "backend/synapse/agents/runtime.py",
+                  "line": 19,
+                  "symbol": "ToolCallResult",
+                  "kind": "from",
+                  "type_only": false,
+                  "layer": "domain -> domain",
+                  "probable_reason": "shared type or state projection",
+                  "uses_port": false,
+                  "through_bootstrap": false,
+                  "guardrail": "allowed or not prohibited by current executable guardrails"
+                },
+                {
+                  "source_module": "synapse.agents.runtime",
+                  "target_module": "synapse.tools.router",
+                  "source_context": "agents",
+                  "target_context": "tools",
+                  "file": "backend/synapse/agents/runtime.py",
+                  "line": 20,
+                  "symbol": "ToolRouter",
+                  "kind": "from",
+                  "type_only": false,
+                  "layer": "domain -> domain",
+                  "probable_reason": "synchronous runtime/service collaboration",
+                  "uses_port": false,
+                  "through_bootstrap": false,
+                  "guardrail": "allowed or not prohibited by current executable guardrails"
+                }
+              ],
+              "frequency": 3
+            },
+            {
+              "source": "tools",
+              "target": "agents",
+              "evidence": [
+                {
+                  "source_module": "synapse.tools.builtin",
+                  "target_module": "synapse.agents.communication",
+                  "source_context": "tools",
+                  "target_context": "agents",
+                  "file": "backend/synapse/tools/builtin.py",
+                  "line": 6,
+                  "symbol": "AgentCommunication",
+                  "kind": "from",
+                  "type_only": false,
+                  "layer": "domain -> domain",
+                  "probable_reason": "shared behavior or constant",
+                  "uses_port": false,
+                  "through_bootstrap": false,
+                  "guardrail": "allowed or not prohibited by current executable guardrails"
+                },
+                {
+                  "source_module": "synapse.tools.runtime",
+                  "target_module": "synapse.agents.admin",
+                  "source_context": "tools",
+                  "target_context": "agents",
+                  "file": "backend/synapse/tools/runtime.py",
+                  "line": 14,
+                  "symbol": "AgentAdminRuntime",
+                  "kind": "from",
+                  "type_only": false,
+                  "layer": "domain -> domain",
+                  "probable_reason": "synchronous runtime/service collaboration",
+                  "uses_port": false,
+                  "through_bootstrap": false,
+                  "guardrail": "allowed or not prohibited by current executable guardrails"
+                }
+              ],
+              "frequency": 2
+            }
+          ]
+        },
+        {
+          "path": [
+            "approvals",
+            "policies",
+            "approvals"
+          ],
+          "hops": [
+            {
+              "source": "approvals",
+              "target": "policies",
+              "evidence": [
+                {
+                  "source_module": "synapse.approvals.resume",
+                  "target_module": "synapse.policies.effective",
+                  "source_context": "approvals",
+                  "target_context": "policies",
+                  "file": "backend/synapse/approvals/resume.py",
+                  "line": 5,
+                  "symbol": "EffectivePolicyRuntime",
+                  "kind": "from",
+                  "type_only": false,
+                  "layer": "domain -> domain",
+                  "probable_reason": "synchronous runtime/service collaboration",
+                  "uses_port": false,
+                  "through_bootstrap": false,
+                  "guardrail": "allowed or not prohibited by current executable guardrails"
+                }
+              ],
+              "frequency": 1
+            },
+            {
+              "source": "policies",
+              "target": "approvals",
+              "evidence": [
+                {
+                  "source_module": "synapse.policies.effective",
+                  "target_module": "synapse.approvals.manager",
+                  "source_context": "policies",
+                  "target_context": "approvals",
+                  "file": "backend/synapse/policies/effective.py",
+                  "line": 10,
+                  "symbol": "ApprovalManager",
+                  "kind": "from",
+                  "type_only": false,
+                  "layer": "domain -> domain",
+                  "probable_reason": "synchronous runtime/service collaboration",
+                  "uses_port": false,
+                  "through_bootstrap": false,
+                  "guardrail": "allowed or not prohibited by current executable guardrails"
+                },
+                {
+                  "source_module": "synapse.policies.effective",
+                  "target_module": "synapse.approvals.manager",
+                  "source_context": "policies",
+                  "target_context": "approvals",
+                  "file": "backend/synapse/policies/effective.py",
+                  "line": 10,
+                  "symbol": "RISK_LEVELS",
+                  "kind": "from",
+                  "type_only": false,
+                  "layer": "domain -> domain",
+                  "probable_reason": "synchronous runtime/service collaboration",
+                  "uses_port": false,
+                  "through_bootstrap": false,
+                  "guardrail": "allowed or not prohibited by current executable guardrails"
+                }
+              ],
+              "frequency": 2
+            }
+          ]
+        },
+        {
+          "path": [
+            "approvals",
+            "tools",
+            "approvals"
+          ],
+          "hops": [
+            {
+              "source": "approvals",
+              "target": "tools",
+              "evidence": [
+                {
+                  "source_module": "synapse.approvals.resume",
+                  "target_module": "synapse.tools.calls",
+                  "source_context": "approvals",
+                  "target_context": "tools",
+                  "file": "backend/synapse/approvals/resume.py",
+                  "line": 6,
+                  "symbol": "ToolCallRequest",
+                  "kind": "from",
+                  "type_only": false,
+                  "layer": "domain -> domain",
+                  "probable_reason": "shared type or state projection",
+                  "uses_port": false,
+                  "through_bootstrap": false,
+                  "guardrail": "allowed or not prohibited by current executable guardrails"
+                },
+                {
+                  "source_module": "synapse.approvals.resume",
+                  "target_module": "synapse.tools.calls",
+                  "source_context": "approvals",
+                  "target_context": "tools",
+                  "file": "backend/synapse/approvals/resume.py",
+                  "line": 6,
+                  "symbol": "ToolCallResult",
+                  "kind": "from",
+                  "type_only": false,
+                  "layer": "domain -> domain",
+                  "probable_reason": "shared type or state projection",
+                  "uses_port": false,
+                  "through_bootstrap": false,
+                  "guardrail": "allowed or not prohibited by current executable guardrails"
+                },
+                {
+                  "source_module": "synapse.approvals.resume",
+                  "target_module": "synapse.tools.router",
+                  "source_context": "approvals",
+                  "target_context": "tools",
+                  "file": "backend/synapse/approvals/resume.py",
+                  "line": 7,
+                  "symbol": "ToolRouter",
+                  "kind": "from",
+                  "type_only": false,
+                  "layer": "domain -> domain",
+                  "probable_reason": "synchronous runtime/service collaboration",
+                  "uses_port": false,
+                  "through_bootstrap": false,
+                  "guardrail": "allowed or not prohibited by current executable guardrails"
+                }
+              ],
+              "frequency": 3
+            },
+            {
+              "source": "tools",
+              "target": "approvals",
+              "evidence": [
+                {
+                  "source_module": "synapse.tools.permission_bridge",
+                  "target_module": "synapse.approvals.manager",
+                  "source_context": "tools",
+                  "target_context": "approvals",
+                  "file": "backend/synapse/tools/permission_bridge.py",
+                  "line": 6,
+                  "symbol": "ApprovalManager",
+                  "kind": "from",
+                  "type_only": false,
+                  "layer": "domain -> domain",
+                  "probable_reason": "synchronous runtime/service collaboration",
+                  "uses_port": false,
+                  "through_bootstrap": false,
+                  "guardrail": "allowed or not prohibited by current executable guardrails"
+                }
+              ],
+              "frequency": 1
+            }
+          ]
+        },
+        {
+          "path": [
+            "decisions",
+            "tools",
+            "decisions"
+          ],
+          "hops": [
+            {
+              "source": "decisions",
+              "target": "tools",
+              "evidence": [
+                {
+                  "source_module": "synapse.decisions.runtime",
+                  "target_module": "synapse.tools.base",
+                  "source_context": "decisions",
+                  "target_context": "tools",
+                  "file": "backend/synapse/decisions/runtime.py",
+                  "line": 16,
+                  "symbol": "ToolRegistry",
+                  "kind": "from",
+                  "type_only": false,
+                  "layer": "domain -> domain",
+                  "probable_reason": "synchronous runtime/service collaboration",
+                  "uses_port": false,
+                  "through_bootstrap": false,
+                  "guardrail": "allowed or not prohibited by current executable guardrails"
+                }
+              ],
+              "frequency": 1
+            },
+            {
+              "source": "tools",
+              "target": "decisions",
+              "evidence": [
+                {
+                  "source_module": "synapse.tools.permission_bridge",
+                  "target_module": "synapse.decisions.models",
+                  "source_context": "tools",
+                  "target_context": "decisions",
+                  "file": "backend/synapse/tools/permission_bridge.py",
+                  "line": 10,
+                  "symbol": "DecisionRequest",
+                  "kind": "from",
+                  "type_only": false,
+                  "layer": "domain -> domain",
+                  "probable_reason": "shared type or state projection",
+                  "uses_port": false,
+                  "through_bootstrap": false,
+                  "guardrail": "allowed or not prohibited by current executable guardrails"
+                },
+                {
+                  "source_module": "synapse.tools.permission_bridge",
+                  "target_module": "synapse.decisions.runtime",
+                  "source_context": "tools",
+                  "target_context": "decisions",
+                  "file": "backend/synapse/tools/permission_bridge.py",
+                  "line": 11,
+                  "symbol": "DecisionRuntime",
+                  "kind": "from",
+                  "type_only": false,
+                  "layer": "domain -> domain",
+                  "probable_reason": "synchronous runtime/service collaboration",
+                  "uses_port": false,
+                  "through_bootstrap": false,
+                  "guardrail": "allowed or not prohibited by current executable guardrails"
+                }
+              ],
+              "frequency": 2
+            }
+          ]
+        },
+        {
+          "path": [
+            "missions",
+            "tools",
+            "missions"
+          ],
+          "hops": [
+            {
+              "source": "missions",
+              "target": "tools",
+              "evidence": [
+                {
+                  "source_module": "synapse.missions.runtime",
+                  "target_module": "synapse.tools.identities",
+                  "source_context": "missions",
+                  "target_context": "tools",
+                  "file": "backend/synapse/missions/runtime.py",
+                  "line": 70,
+                  "symbol": "DESKTOP_EXECUTE",
+                  "kind": "from",
+                  "type_only": false,
+                  "layer": "domain -> domain",
+                  "probable_reason": "shared behavior or constant",
+                  "uses_port": false,
+                  "through_bootstrap": false,
+                  "guardrail": "allowed or not prohibited by current executable guardrails"
+                },
+                {
+                  "source_module": "synapse.missions.runtime",
+                  "target_module": "synapse.tools.models",
+                  "source_context": "missions",
+                  "target_context": "tools",
+                  "file": "backend/synapse/missions/runtime.py",
+                  "line": 71,
+                  "symbol": "ToolExecutionRequest",
+                  "kind": "from",
+                  "type_only": false,
+                  "layer": "domain -> domain",
+                  "probable_reason": "shared type or state projection",
+                  "uses_port": false,
+                  "through_bootstrap": false,
+                  "guardrail": "allowed or not prohibited by current executable guardrails"
+                }
+              ],
+              "frequency": 2
+            },
+            {
+              "source": "tools",
+              "target": "missions",
+              "evidence": [
+                {
+                  "source_module": "synapse.tools.runtime",
+                  "target_module": "synapse.missions.runtime",
+                  "source_context": "tools",
+                  "target_context": "missions",
+                  "file": "backend/synapse/tools/runtime.py",
+                  "line": 22,
+                  "symbol": "MissionRuntime",
+                  "kind": "from",
+                  "type_only": false,
+                  "layer": "domain -> domain",
+                  "probable_reason": "synchronous runtime/service collaboration",
+                  "uses_port": false,
+                  "through_bootstrap": false,
+                  "guardrail": "allowed or not prohibited by current executable guardrails"
+                }
+              ],
+              "frequency": 1
+            }
+          ]
+        },
+        {
+          "path": [
+            "policies",
+            "tools",
+            "policies"
+          ],
+          "hops": [
+            {
+              "source": "policies",
+              "target": "tools",
+              "evidence": [
+                {
+                  "source_module": "synapse.policies.effective",
+                  "target_module": "synapse.tools.base",
+                  "source_context": "policies",
+                  "target_context": "tools",
+                  "file": "backend/synapse/policies/effective.py",
+                  "line": 23,
+                  "symbol": "ToolRegistry",
+                  "kind": "from",
+                  "type_only": false,
+                  "layer": "domain -> domain",
+                  "probable_reason": "synchronous runtime/service collaboration",
+                  "uses_port": false,
+                  "through_bootstrap": false,
+                  "guardrail": "allowed or not prohibited by current executable guardrails"
+                },
+                {
+                  "source_module": "synapse.policies.effective",
+                  "target_module": "synapse.tools.base",
+                  "source_context": "policies",
+                  "target_context": "tools",
+                  "file": "backend/synapse/policies/effective.py",
+                  "line": 23,
+                  "symbol": "ToolSpec",
+                  "kind": "from",
+                  "type_only": false,
+                  "layer": "domain -> domain",
+                  "probable_reason": "shared behavior or constant",
+                  "uses_port": false,
+                  "through_bootstrap": false,
+                  "guardrail": "allowed or not prohibited by current executable guardrails"
+                }
+              ],
+              "frequency": 2
+            },
+            {
+              "source": "tools",
+              "target": "policies",
+              "evidence": [
+                {
+                  "source_module": "synapse.tools.permission_bridge",
+                  "target_module": "synapse.policies.effective",
+                  "source_context": "tools",
+                  "target_context": "policies",
+                  "file": "backend/synapse/tools/permission_bridge.py",
+                  "line": 12,
+                  "symbol": "EffectivePolicyRuntime",
+                  "kind": "from",
+                  "type_only": false,
+                  "layer": "domain -> domain",
+                  "probable_reason": "synchronous runtime/service collaboration",
+                  "uses_port": false,
+                  "through_bootstrap": false,
+                  "guardrail": "allowed or not prohibited by current executable guardrails"
+                }
+              ],
+              "frequency": 1
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "SCC-02",
+      "contexts": [
+        "attention",
+        "world_state"
+      ],
+      "node_count": 2,
+      "internal_edge_count": 2,
+      "import_occurrences": 4,
+      "classification": "direct two-context cycle; composition adapter in domain package",
+      "priority": "P2",
+      "comparison": "2 contexts / 2 edges in latest comparable reports; unchanged",
+      "files": [
+        "backend/synapse/attention/decision.py",
+        "backend/synapse/attention/runtime.py",
+        "backend/synapse/world_state/sources.py"
+      ],
+      "runtime_imports": 4,
+      "type_only_imports_between_members": 0,
+      "minimum_cycles": [
+        {
+          "path": [
+            "attention",
+            "world_state",
+            "attention"
+          ],
+          "hops": [
+            {
+              "source": "attention",
+              "target": "world_state",
+              "evidence": [
+                {
+                  "source_module": "synapse.attention.decision",
+                  "target_module": "synapse.world_state.models",
+                  "source_context": "attention",
+                  "target_context": "world_state",
+                  "file": "backend/synapse/attention/decision.py",
+                  "line": 12,
+                  "symbol": "WorldStateSnapshot",
+                  "kind": "from",
+                  "type_only": false,
+                  "layer": "domain -> domain",
+                  "probable_reason": "shared type or state projection",
+                  "uses_port": false,
+                  "through_bootstrap": false,
+                  "guardrail": "allowed or not prohibited by current executable guardrails"
+                },
+                {
+                  "source_module": "synapse.attention.runtime",
+                  "target_module": "synapse.world_state.models",
+                  "source_context": "attention",
+                  "target_context": "world_state",
+                  "file": "backend/synapse/attention/runtime.py",
+                  "line": 26,
+                  "symbol": "WorldStateSnapshot",
+                  "kind": "from",
+                  "type_only": false,
+                  "layer": "domain -> domain",
+                  "probable_reason": "shared type or state projection",
+                  "uses_port": false,
+                  "through_bootstrap": false,
+                  "guardrail": "allowed or not prohibited by current executable guardrails"
+                }
+              ],
+              "frequency": 2
+            },
+            {
+              "source": "world_state",
+              "target": "attention",
+              "evidence": [
+                {
+                  "source_module": "synapse.world_state.sources",
+                  "target_module": "synapse.attention.models",
+                  "source_context": "world_state",
+                  "target_context": "attention",
+                  "file": "backend/synapse/world_state/sources.py",
+                  "line": 6,
+                  "symbol": "AttentionEvent",
+                  "kind": "from",
+                  "type_only": false,
+                  "layer": "domain -> domain",
+                  "probable_reason": "event/lifecycle notification",
+                  "uses_port": false,
+                  "through_bootstrap": false,
+                  "guardrail": "allowed or not prohibited by current executable guardrails"
+                },
+                {
+                  "source_module": "synapse.world_state.sources",
+                  "target_module": "synapse.attention.runtime",
+                  "source_context": "world_state",
+                  "target_context": "attention",
+                  "file": "backend/synapse/world_state/sources.py",
+                  "line": 7,
+                  "symbol": "AttentionRuntime",
+                  "kind": "from",
+                  "type_only": false,
+                  "layer": "domain -> domain",
+                  "probable_reason": "synchronous runtime/service collaboration",
+                  "uses_port": false,
+                  "through_bootstrap": false,
+                  "guardrail": "allowed or not prohibited by current executable guardrails"
+                }
+              ],
+              "frequency": 2
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "SCC-03",
+      "contexts": [
+        "audio",
+        "speech_adapters"
+      ],
+      "node_count": 2,
+      "internal_edge_count": 2,
+      "import_occurrences": 19,
+      "classification": "direct two-context cycle; concrete adapter dependency",
+      "priority": "P1",
+      "comparison": "previously part of audio/multimodal/perception/speech_adapters 4/6; now 2/2",
+      "files": [
+        "backend/synapse/audio/runtime.py",
+        "backend/synapse/speech_adapters/faster_whisper.py",
+        "backend/synapse/speech_adapters/interfaces.py",
+        "backend/synapse/speech_adapters/local_analysis.py",
+        "backend/synapse/speech_adapters/piper_tts.py",
+        "backend/synapse/speech_adapters/runtime.py"
+      ],
+      "runtime_imports": 19,
+      "type_only_imports_between_members": 0,
+      "minimum_cycles": [
+        {
+          "path": [
+            "audio",
+            "speech_adapters",
+            "audio"
+          ],
+          "hops": [
+            {
+              "source": "audio",
+              "target": "speech_adapters",
+              "evidence": [
+                {
+                  "source_module": "synapse.audio.runtime",
+                  "target_module": "synapse.speech_adapters.runtime",
+                  "source_context": "audio",
+                  "target_context": "speech_adapters",
+                  "file": "backend/synapse/audio/runtime.py",
+                  "line": 30,
+                  "symbol": "SpeechAdapterRuntime",
+                  "kind": "from",
+                  "type_only": false,
+                  "layer": "domain -> provider-adapter",
+                  "probable_reason": "synchronous runtime/service collaboration",
+                  "uses_port": false,
+                  "through_bootstrap": false,
+                  "guardrail": "allowed or not prohibited by current executable guardrails"
+                }
+              ],
+              "frequency": 1
+            },
+            {
+              "source": "speech_adapters",
+              "target": "audio",
+              "evidence": [
+                {
+                  "source_module": "synapse.speech_adapters.faster_whisper",
+                  "target_module": "synapse.audio.models",
+                  "source_context": "speech_adapters",
+                  "target_context": "audio",
+                  "file": "backend/synapse/speech_adapters/faster_whisper.py",
+                  "line": 11,
+                  "symbol": "AudioInputRequest",
+                  "kind": "from",
+                  "type_only": false,
+                  "layer": "provider-adapter -> domain",
+                  "probable_reason": "shared type or state projection",
+                  "uses_port": false,
+                  "through_bootstrap": false,
+                  "guardrail": "allowed or not prohibited by current executable guardrails"
+                },
+                {
+                  "source_module": "synapse.speech_adapters.faster_whisper",
+                  "target_module": "synapse.audio.models",
+                  "source_context": "speech_adapters",
+                  "target_context": "audio",
+                  "file": "backend/synapse/speech_adapters/faster_whisper.py",
+                  "line": 11,
+                  "symbol": "SpeechFeatures",
+                  "kind": "from",
+                  "type_only": false,
+                  "layer": "provider-adapter -> domain",
+                  "probable_reason": "shared type or state projection",
+                  "uses_port": false,
+                  "through_bootstrap": false,
+                  "guardrail": "allowed or not prohibited by current executable guardrails"
+                },
+                {
+                  "source_module": "synapse.speech_adapters.faster_whisper",
+                  "target_module": "synapse.audio.models",
+                  "source_context": "speech_adapters",
+                  "target_context": "audio",
+                  "file": "backend/synapse/speech_adapters/faster_whisper.py",
+                  "line": 11,
+                  "symbol": "TranscriptResult",
+                  "kind": "from",
+                  "type_only": false,
+                  "layer": "provider-adapter -> domain",
+                  "probable_reason": "shared type or state projection",
+                  "uses_port": false,
+                  "through_bootstrap": false,
+                  "guardrail": "allowed or not prohibited by current executable guardrails"
+                },
+                {
+                  "source_module": "synapse.speech_adapters.faster_whisper",
+                  "target_module": "synapse.audio.models",
+                  "source_context": "speech_adapters",
+                  "target_context": "audio",
+                  "file": "backend/synapse/speech_adapters/faster_whisper.py",
+                  "line": 11,
+                  "symbol": "TranscriptSegment",
+                  "kind": "from",
+                  "type_only": false,
+                  "layer": "provider-adapter -> domain",
+                  "probable_reason": "shared type or state projection",
+                  "uses_port": false,
+                  "through_bootstrap": false,
+                  "guardrail": "allowed or not prohibited by current executable guardrails"
+                },
+                {
+                  "source_module": "synapse.speech_adapters.interfaces",
+                  "target_module": "synapse.audio.models",
+                  "source_context": "speech_adapters",
+                  "target_context": "audio",
+                  "file": "backend/synapse/speech_adapters/interfaces.py",
+                  "line": 5,
+                  "symbol": "AudioInputRequest",
+                  "kind": "from",
+                  "type_only": false,
+                  "layer": "provider-adapter -> domain",
+                  "probable_reason": "shared type or state projection",
+                  "uses_port": false,
+                  "through_bootstrap": false,
+                  "guardrail": "allowed or not prohibited by current executable guardrails"
+                }
+              ],
+              "frequency": 18
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "recommended_target": "audio -> speech_adapters concrete SpeechAdapterRuntime dependency",
+  "package_nontrivial_sccs": [],
+  "methodology": "Tarjan SCCs over runtime imports in the governed bounded-context graph; bootstrap edges and documented core compatibility adapters excluded; TYPE_CHECKING evidence retained separately.",
+  "exclusions": [
+    "tests",
+    "docs",
+    "generated files",
+    "caches",
+    "egg-info",
+    "visualization scripts",
+    "TYPE_CHECKING imports from runtime reachability"
+  ],
+  "limitations": [
+    "Context aggregation may expose an architectural SCC even when the exact Python-module graph is acyclic.",
+    "Incomplete phase logs prevent causal attribution of every change from the last comparable 25/76 report."
+  ]
+}

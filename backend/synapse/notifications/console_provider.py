@@ -35,7 +35,9 @@ class ConsoleNotificationProvider:
         return list(self._notifications.values())
 
     def list_unread(self) -> list[Notification]:
-        return [notification for notification in self._notifications.values() if not notification.read]
+        return [
+            notification for notification in self._notifications.values() if not notification.read
+        ]
 
     def health_check(self) -> dict[str, object]:
         return {"provider": self.name, "status": "ok"}

@@ -1,0 +1,8 @@
+{
+  "speech_pipeline": {
+    "enabled": true,
+    "complete_mock_utterance_immediately": true,
+    "emit_perception_signals": true,
+    "emit_multimodal_events": true
+  }
+}

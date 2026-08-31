@@ -1,0 +1,4 @@
+default_chat_model: gemma-4-e2b-it-qat
+default_provider: lmstudio
+preferred_runtime: lmstudio
+updated_at: '2026-06-30T17:18:29.846854+00:00'

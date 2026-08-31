@@ -1,0 +1,40 @@
+{
+  "runtime_lines_before": 518,
+  "runtime_lines_after": 601,
+  "runtime_import_statements_before": 19,
+  "runtime_import_statements_after": 13,
+  "concrete_functional_domain_imports_before": 9,
+  "concrete_functional_domain_imports_after": 0,
+  "ports_created": 6,
+  "adapters_created": 6,
+  "ports": {
+    "ConversationContextReader": ["participants", "read"],
+    "MissionContextReader": ["get_mission", "list_task_ids", "get_task", "summarize"],
+    "PerceptionContextReader": ["list_signals", "list_observations"],
+    "MultimodalContextReader": ["participants"],
+    "MemoryContextReader": ["retrieve"],
+    "RuntimeStatusContextReader": ["health_summary", "readiness_summary"]
+  },
+  "scc_before": {"contexts": 26, "internal_edges": 79},
+  "context_fusion_scc_after": {"contexts": 1, "internal_edges": 0},
+  "remaining_related_scc_after": {"contexts": 25, "internal_edges": 75},
+  "unrelated_sccs_after": [{"contexts": 4, "internal_edges": 6}, {"contexts": 2, "internal_edges": 2}],
+  "removed_outgoing_edges": ["conversations", "delegation", "memory", "missions", "multimodal", "perception", "readiness"],
+  "build_context_ms": {"samples": 20, "minimum": 36.290, "average": 40.065, "maximum": 55.291},
+  "source_timeout_seconds": 5.0,
+  "timeout_isolation_test_seconds": 0.01,
+  "architecture_violations": 0,
+  "openapi": {"equivalent": true, "paths": 425, "operations": 471, "schemas": 100, "sha256": "bc0b2a3cab01aa9377bc80b50193089d288edd71901a9f650e3bd02ad48ea72f"},
+  "frozen_surface_hashes_unchanged": {"api": true, "commands": true, "health": true, "readiness": true},
+  "validation": {
+    "architecture": {"passed": 47, "failed": 0, "duration_seconds": 14.71},
+    "focused_initial": {"passed": 27, "failed": 0, "duration_seconds": 11.44},
+    "port_isolation_final": {"passed": 14, "failed": 0, "duration_seconds": 0.28},
+    "reader_domains": {"passed": 196, "failed": 0, "duration_seconds": 115.63},
+    "acceptance": {"passed": 64, "failed": 0, "duration_seconds": 26.30},
+    "global": {"passed": 1040, "subtests_passed": 4, "failed": 0, "skipped": 0, "duration_seconds": 528.93},
+    "ruff": "passed",
+    "git_diff_check": "passed"
+  },
+  "backend_ready": false
+}

@@ -1,0 +1,111 @@
+{
+  "captured_at": "2026-07-14",
+  "status": "complete_not_ready",
+  "public_registries_before": 2,
+  "public_registries_after": 1,
+  "technical_registries_preserved": [
+    "MCPRegistry",
+    "ExecutionTargetRegistry"
+  ],
+  "operational_authorities_before": 4,
+  "operational_authorities_after": 1,
+  "canonical_registry": "RuntimeToolRegistry",
+  "canonical_executor": "ToolRuntime.execute_tool_call",
+  "direct_consumer_execution_paths_before": 6,
+  "direct_consumer_execution_paths_after": 0,
+  "canonical_execution_paths_after": [
+    "legacy ToolRouter -> ToolRuntime -> BuiltinToolAdapter",
+    "ToolExecutionPort -> ToolRuntime -> registered runtime handler",
+    "ToolExecutionPort -> ToolRuntime -> MCPToolExecutorAdapter -> MCPRuntime",
+    "ToolExecutionPort -> ToolRuntime -> DesktopAutomationToolAdapter -> DesktopRuntime"
+  ],
+  "catalog": {
+    "public_test_mode_before": 10,
+    "public_test_mode_after": 10,
+    "legacy_builtin_ids_before": 8,
+    "legacy_builtin_ids_after": 8,
+    "desktop_internal_descriptors_after": 4,
+    "registered_descriptors_test_mode_after": 22,
+    "duplicate_public_ids_after": 0,
+    "public_ids_equivalent": true,
+    "schemas_equivalent": true,
+    "aliases_equivalent": true,
+    "mcp_identity_pattern": "mcp:<normalized-server>:<normalized-tool>"
+  },
+  "capabilities_after": {
+    "schema_validation": "canonical",
+    "policy_permissions_approval": "canonical_fail_closed",
+    "preview_dry_run": "canonical_and_side_effect_free",
+    "timeout": "canonical_structured_timed_out",
+    "active_cancellation": "canonical_for_declared_and_implemented_adapters",
+    "retry": "new_related_execution_through_canonical_boundary",
+    "rollback": "available_only_with_real_handler_implementation",
+    "verification": "structured_for_every_terminal_attempt",
+    "idempotency_restart": "restored_from_persisted_history",
+    "history": "single_redacted_jsonl_plus_runtime_lookup"
+  },
+  "runtime_source_lines_after": {
+    "tools/runtime.py": 707,
+    "tools/registry.py": 81,
+    "tools/router.py": 193,
+    "tools/contracts.py": 34
+  },
+  "dependency_graph": {
+    "largest_related_scc_after": {
+      "contexts": 25,
+      "internal_edges": 76
+    },
+    "unrelated_sccs_after": [
+      {"contexts": 4, "internal_edges": 6},
+      {"contexts": 2, "internal_edges": 2}
+    ],
+    "new_sccs": 0,
+    "finding": "No unrelated SCC was attacked; convergence adds the in-scope Missions-to-Tools dependency while the two unrelated SCCs remain unchanged."
+  },
+  "boundary_latency_ms": {
+    "samples": 100,
+    "direct_handler_median": 0.0001,
+    "canonical_median": 2.37465,
+    "added_median": 2.37455,
+    "canonical_mean": 2.48297,
+    "includes": "schema, governance decision, daemon-thread timeout coordination, verification, event emission and JSONL history"
+  },
+  "openapi": {
+    "equivalent": true,
+    "paths": 425,
+    "operations": 471,
+    "unique_operation_ids": 471,
+    "schemas": 100,
+    "sha256": "bc0b2a3cab01aa9377bc80b50193089d288edd71901a9f650e3bd02ad48ea72f"
+  },
+  "frozen_surface_hashes": {
+    "api_before": "22dea3274d633c813d52e1acb55c7a38533cc07d4904d814aa6136754ca486dc",
+    "api_after_internal_wiring": "335b4f6f56b9e008e2847ed7f6f55814c4086970a462ed37cb5f208b3f01ede6",
+    "commands_before": "31f6d7fc4fbc15eb3ca2f823df78a2e34c9ca4c273c8e8d56a042dcfa93b70f7",
+    "commands_after_internal_wiring": "a310cdb95ee1369f70f3cf3a981d175c4291c1b0ef7cbec2d71bbde502507758",
+    "health_unchanged": "312f780a4e5ac617542023fcb7d237b481ce5623547b5069951000d514bc3239",
+    "readiness_unchanged": "4728cb5bb40c5d1d3ec61ff5a044e13c6823820aac192de0286d46eb7c81e30d",
+    "context_fusion_unchanged": "36effa883a8619f1875691414a8e9e06535146345fb3d05ffddc9730c9cd62fe"
+  },
+  "validation": {
+    "architecture": {"collected": 52, "passed": 52, "failed": 0, "duration_seconds": 14.41},
+    "tools_execution_approval_mcp": {"passed": 116, "failed": 0, "duration_seconds": 60.26},
+    "consumer_selection_initial": {"passed": 182, "failed": 4, "duration_seconds": 97.34},
+    "consumer_compatibility_regressions_fixed": {"passed": 4, "failed": 0, "duration_seconds": 2.50},
+    "frozen_domains": {"passed": 85, "failed": 0, "duration_seconds": 52.88},
+    "final_boundary_and_consumers": {"passed": 143, "failed": 0, "duration_seconds": 57.50},
+    "global": {"collected": 1050, "passed": 1050, "failed": 0, "skipped": 0, "subtests_passed": 4, "duration_seconds": 535.63},
+    "ruff": "passed",
+    "git_diff_check": "passed"
+  },
+  "public_surface_differences": [],
+  "preserved_out_of_scope_findings": [
+    "general provider taxonomy",
+    "Storage primitive",
+    "unrelated cycles",
+    "Agent Creator",
+    "DataDir maintenance"
+  ],
+  "backend_ready": false,
+  "git_actions": {"commit": false, "push": false, "pull_request": false}
+}

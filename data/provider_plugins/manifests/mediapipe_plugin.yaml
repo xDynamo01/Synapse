@@ -1,0 +1,19 @@
+{
+  "plugin_id": "mediapipe_plugin",
+  "name": "MediaPipe Plugin",
+  "description": "Face, hand, and pose tracking using Google MediaPipe.",
+  "version": "1.0.0",
+  "plugin_type": "vision",
+  "providers": ["mediapipe"],
+  "capabilities": ["vision.pose_tracking", "vision.face_mesh"],
+  "adapters": ["mediapipe_adapter"],
+  "enabled": false,
+  "installed": false,
+  "local_only": true,
+  "requires_network": false,
+  "requires_gpu": false,
+  "supported_platforms": ["windows", "linux", "darwin"],
+  "requirements": ["mediapipe>=0.10.0"],
+  "entrypoint": "mediapipe_plugin.entrypoint",
+  "metadata": {}
+}

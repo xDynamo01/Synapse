@@ -1,0 +1,11 @@
+{
+  "admin_policy": {
+    "allow_user_admin_actions": true,
+    "require_approval_for_archive": false,
+    "require_approval_for_deactivate": false,
+    "require_approval_for_restore": false,
+    "protected_agents": [],
+    "blocked_admin_actions": [],
+    "admin_capabilities_required": {}
+  }
+}

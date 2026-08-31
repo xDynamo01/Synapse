@@ -1,0 +1,6 @@
+{
+  "scheduler_lock": {
+    "timeout_seconds": 300
+  },
+  "recurring_jobs": []
+}

@@ -1,0 +1,174 @@
+{
+  "runtime_lines_before": 6077,
+  "runtime_lines_after": 98,
+  "command_source_sha256_before": "5c8ce6379fa0e3ee89352e0d808818fbc16cc3f09bb7ba60b80e9da53133b923",
+  "handlers_before": 0,
+  "handlers_after": 14,
+  "registries_before": 0,
+  "registries_after": 1,
+  "largest_handler": "agents_admin",
+  "largest_handler_lines": 745,
+  "average_command_branches_per_handler": 24.21,
+  "common_parsing_helpers": 1,
+  "runtime_domain_handler_methods_before": 327,
+  "runtime_domain_handler_methods_after": 0,
+  "runtime_imports_before": 73,
+  "runtime_imports_after": 5,
+  "handler_direct_store_data_dir_accesses_before": 5,
+  "handler_direct_store_data_dir_accesses_after": 0,
+  "compatibility_transport_state_forwards_after": 5,
+  "command_branches_before": 339,
+  "command_branches_after": 339,
+  "command_names_before": 363,
+  "command_names_after": 363,
+  "aliases_before": 24,
+  "aliases_after": 24,
+  "duplicate_names_aliases": 0,
+  "surface_added": [],
+  "surface_removed": [],
+  "surface_equivalent": true,
+  "openapi": {
+    "equivalent": true,
+    "paths": 425,
+    "operations": 471,
+    "schemas": 100,
+    "sha256": "bc0b2a3cab01aa9377bc80b50193089d288edd71901a9f650e3bd02ad48ea72f"
+  },
+  "architecture_violations": 0,
+  "validation": {
+    "architecture": {
+      "passed": 32,
+      "failed": 0,
+      "skipped": 0,
+      "duration_seconds": 13.03
+    },
+    "command_domain": {
+      "files": 73,
+      "passed": 828,
+      "subtests_passed": 4,
+      "failed": 0,
+      "duration_seconds": 467.14
+    },
+    "acceptance": {
+      "passed": 64,
+      "failed": 0,
+      "skipped": 0,
+      "duration_seconds": 26.34
+    },
+    "global": {
+      "passed": 1004,
+      "subtests_passed": 4,
+      "failed": 0,
+      "skipped": 0,
+      "duration_seconds": 513.32
+    },
+    "ruff": "passed",
+    "git_diff_check": "passed"
+  },
+  "module_metrics": {
+    "agents_admin": {
+      "lines": 745,
+      "imports": 11,
+      "command_branches": 37,
+      "command_names": 37,
+      "operations": 38
+    },
+    "conversations": {
+      "lines": 196,
+      "imports": 8,
+      "command_branches": 7,
+      "command_names": 7,
+      "operations": 7
+    },
+    "core_operations": {
+      "lines": 683,
+      "imports": 8,
+      "command_branches": 37,
+      "command_names": 37,
+      "operations": 38
+    },
+    "delegation": {
+      "lines": 584,
+      "imports": 8,
+      "command_branches": 27,
+      "command_names": 27,
+      "operations": 31
+    },
+    "missions_swarm": {
+      "lines": 742,
+      "imports": 11,
+      "command_branches": 45,
+      "command_names": 49,
+      "operations": 38
+    },
+    "models_providers": {
+      "lines": 461,
+      "imports": 9,
+      "command_branches": 24,
+      "command_names": 24,
+      "operations": 23
+    },
+    "perception_vision": {
+      "lines": 422,
+      "imports": 8,
+      "command_branches": 28,
+      "command_names": 28,
+      "operations": 24
+    },
+    "platform_governance": {
+      "lines": 385,
+      "imports": 12,
+      "command_branches": 21,
+      "command_names": 39,
+      "operations": 20
+    },
+    "recovery_dead_letter": {
+      "lines": 164,
+      "imports": 6,
+      "command_branches": 8,
+      "command_names": 8,
+      "operations": 8
+    },
+    "system": {
+      "lines": 332,
+      "imports": 5,
+      "command_branches": 1,
+      "command_names": 1,
+      "operations": 1
+    },
+    "tools_execution": {
+      "lines": 599,
+      "imports": 11,
+      "command_branches": 28,
+      "command_names": 28,
+      "operations": 32
+    },
+    "voice_multimodal": {
+      "lines": 565,
+      "imports": 7,
+      "command_branches": 38,
+      "command_names": 38,
+      "operations": 33
+    },
+    "workers_recovery": {
+      "lines": 430,
+      "imports": 7,
+      "command_branches": 21,
+      "command_names": 23,
+      "operations": 20
+    },
+    "world_state": {
+      "lines": 213,
+      "imports": 8,
+      "command_branches": 17,
+      "command_names": 17,
+      "operations": 14
+    }
+  },
+  "preserved_findings": [
+    "Agent Creator remains unchanged.",
+    "DataDir maintenance command behavior remains unchanged.",
+    "Legacy memory and DataDir access is isolated behind CommandServices transport forwarding.",
+    "Domain policy, approval, retry, scheduling and revision behavior remains delegated to the existing canonical runtimes."
+  ]
+}

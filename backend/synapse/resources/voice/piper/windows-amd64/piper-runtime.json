@@ -1,0 +1,11 @@
+{
+  "runtime_id": "piper-windows-amd64-2023.11.14-2",
+  "version": "2023.11.14-2",
+  "platform": "windows-amd64",
+  "provider": "piper",
+  "source": "https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_windows_amd64.zip",
+  "license": "MIT for rhasspy/piper; bundled espeak-ng/onnxruntime components retain upstream licenses",
+  "archive_checksum": "f3c58906402b24f3a96d92145f58acba6d86c9b5db896d207f78dc80811efcea",
+  "executable_reference": "resource://voice/piper/windows-amd64/extracted/piper/piper.exe",
+  "executable_checksum": "96f3da3811151580073e40bb4dd20eb0fb8115f5f5f76e2fb54282b3edfa5c1f"
+}

@@ -1,0 +1,80 @@
+"""Frontend-neutral, project-scoped operational read model."""
+
+from .adapters import (
+    OperationalSourceRecord,
+    SourceAdaptationDisposition,
+    SourceAdaptationResult,
+    adapt_source_record,
+)
+from .contracts import OperationalProjectionReadPort
+from .models import (
+    EVENT_FORMAT_V1,
+    SNAPSHOT_FORMAT_V1,
+    OperationalEntity,
+    OperationalEntityKind,
+    OperationalFact,
+    OperationalFactKind,
+    OperationalRelation,
+    OperationalRelationKind,
+    OperationalStatus,
+    ProjectActivitySnapshot,
+    ResourceSummary,
+    safe_metadata,
+)
+from .reducer import (
+    ContradictoryOperationalFact,
+    CrossProjectFact,
+    InvalidOperationalFact,
+    OperationalProjectionError,
+    OperationalProjectionReducer,
+    OperationalRevisionGap,
+    StaleOperationalFact,
+)
+from .stream import (
+    CURSOR_FORMAT_V1,
+    ActivityResume,
+    CrossProjectCursor,
+    InvalidOperationalCursor,
+    OperationalCursor,
+    OperationalCursorError,
+    OperationalResyncRequired,
+    ProjectActivityFeed,
+)
+from .transport import fact_dict, snapshot_dict
+
+__all__ = [
+    "EVENT_FORMAT_V1",
+    "CURSOR_FORMAT_V1",
+    "SNAPSHOT_FORMAT_V1",
+    "ContradictoryOperationalFact",
+    "CrossProjectCursor",
+    "CrossProjectFact",
+    "InvalidOperationalFact",
+    "InvalidOperationalCursor",
+    "OperationalSourceRecord",
+    "OperationalEntity",
+    "OperationalEntityKind",
+    "OperationalFact",
+    "OperationalFactKind",
+    "OperationalCursor",
+    "OperationalCursorError",
+    "OperationalProjectionError",
+    "OperationalProjectionReducer",
+    "OperationalProjectionReadPort",
+    "OperationalRelation",
+    "OperationalRelationKind",
+    "OperationalResyncRequired",
+    "OperationalRevisionGap",
+    "OperationalStatus",
+    "ProjectActivitySnapshot",
+    "ProjectActivityFeed",
+    "ResourceSummary",
+    "SourceAdaptationDisposition",
+    "SourceAdaptationResult",
+    "ActivityResume",
+    "StaleOperationalFact",
+    "safe_metadata",
+    "adapt_source_record",
+    "fact_dict",
+    "snapshot_dict",
+]

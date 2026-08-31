@@ -1,0 +1,76 @@
+{
+  "captured_at": "2026-07-14",
+  "runtime": {
+    "path": "backend/synapse/context_fusion/runtime.py",
+    "lines": 518,
+    "sha256": "41cda6c41621b52a8afe79b28149bfffc615d0c2718628e8233fee15f04b68f5",
+    "import_statements": 19,
+    "concrete_domain_imports": 9
+  },
+  "frozen_surface_hashes": {
+    "api_tree_sha256": "22dea3274d633c813d52e1acb55c7a38533cc07d4904d814aa6136754ca486dc",
+    "commands_tree_sha256": "31f6d7fc4fbc15eb3ca2f823df78a2e34c9ca4c273c8e8d56a042dcfa93b70f7",
+    "health_tree_sha256": "312f780a4e5ac617542023fcb7d237b481ce5623547b5069951000d514bc3239",
+    "readiness_tree_sha256": "4728cb5bb40c5d1d3ec61ff5a044e13c6823820aac192de0286d46eb7c81e30d"
+  },
+  "source_order": [
+    "participants",
+    "conversation_payload",
+    "perception_signals",
+    "speech_features",
+    "mission_summary",
+    "delegation_summary",
+    "health_summary_when_requested",
+    "readiness_summary_when_requested",
+    "perception_observations",
+    "context_items",
+    "memory_records"
+  ],
+  "matrix": [
+    {"source":"Conversation","owner":"conversations","implementation":"ConversationRuntime","data":"participants, summary, messages","methods":["get_conversation","build_conversation_context","get_conversation_summary","list_conversation_messages"],"required":"when conversation_id is supplied","suggested_port":"ConversationContextReader","direction":"context_fusion -> port <- bootstrap adapter -> conversations","finding":"summary/message fallbacks are unreachable for a normal non-null conversation_id"},
+    {"source":"Mission","owner":"missions","implementation":"MissionRuntime","data":"mission, summary, task links","methods":["get_mission","summarize_mission","list_mission_tasks"],"required":"when mission_id is supplied","suggested_port":"MissionContextReader","direction":"context_fusion -> port <- bootstrap adapter -> missions","finding":"read-only public facade"},
+    {"source":"Mission context","owner":"missions","implementation":"MissionContextRuntime","data":"context summary","methods":["build_context"],"required":"when mission_id is supplied","suggested_port":"MissionContextReader","direction":"context_fusion -> port <- bootstrap adapter -> missions","finding":"only summary is consumed"},
+    {"source":"Delegation","owner":"delegation","implementation":"DelegationRuntime","data":"requester, assignee, status, task payload","methods":["get_task"],"required":"for linked tasks; missing task is skipped","suggested_port":"MissionContextReader","direction":"context_fusion -> port <- bootstrap adapter -> delegation","finding":"combined with mission reads to avoid leaking mission task-link DTOs"},
+    {"source":"Perception","owner":"perception","implementation":"PerceptionRuntime","data":"signals and observations","methods":["list_signals","list_observations"],"required":"runtime required; empty result allowed","suggested_port":"PerceptionContextReader","direction":"context_fusion -> port <- bootstrap adapter -> perception","finding":"ContextSignalGroup currently leaks PerceptionSignal"},
+    {"source":"Multimodal","owner":"multimodal","implementation":"MultimodalCommunicationRuntime","data":"session participants/existence","methods":["get_session"],"required":"when multimodal_session_id is supplied","suggested_port":"MultimodalContextReader","direction":"context_fusion -> port <- bootstrap adapter -> multimodal","finding":"only participants and existence are consumed"},
+    {"source":"Memory","owner":"memory","implementation":"MemoryStore","data":"authorized memory records","methods":["retrieve_memory"],"required":"optional","suggested_port":"MemoryContextReader","direction":"context_fusion -> port <- bootstrap adapter -> memory","finding":"authorization remains owned by MemoryStore"},
+    {"source":"Health","owner":"health","implementation":"HealthSnapshotSource","data":"summary snapshot","methods":["summary"],"required":"only when include_runtime_health is true","suggested_port":"RuntimeHealthContextReader","direction":"context_fusion -> port <- bootstrap adapter -> health","finding":"already a neutral protocol but not consumer-owned"},
+    {"source":"Readiness","owner":"readiness","implementation":"ReadinessSnapshotSource","data":"readiness snapshot","methods":["evaluate"],"required":"only when include_runtime_health is true","suggested_port":"RuntimeHealthContextReader","direction":"context_fusion -> port <- bootstrap adapter -> readiness","finding":"already a neutral protocol but not consumer-owned"},
+    {"source":"World State","owner":"world_state","implementation":null,"data":null,"methods":[],"required":"not a source","suggested_port":null,"direction":null,"finding":"requested scenario is identical because Context Fusion does not consult World State"},
+    {"source":"Agent","owner":"agents","implementation":null,"data":null,"methods":[],"required":"not a source","suggested_port":null,"direction":null,"finding":"agent_id is used only for memory owner selection"}
+  ],
+  "scc": {
+    "methodology": "AST bounded-context graph excluding api, bootstrap, commands and core adapters/foundation",
+    "contexts": 26,
+    "internal_edges": 79,
+    "context_fusion_outgoing_domain_edges": ["conversations","delegation","memory","missions","multimodal","perception","readiness"],
+    "reciprocal_direct_edges": []
+  },
+  "controlled_snapshots": {
+    "normalization": ["UUID -> <uuid>", "ISO timestamp -> <timestamp>"],
+    "chat_without_memory": {"items":["conversation_summary:c1","conversation_message:m1"],"tokens":5,"missing":["signals"],"error":null},
+    "chat_with_memory": {"items":["conversation_summary:c1","conversation_message:m1","memory:mem-1"],"tokens":9,"missing":["signals"],"error":null},
+    "perception_available": {"items":["conversation_summary:c1","conversation_message:m1","perception:obs-1"],"tokens":7,"missing":[],"signal_sensitivity":"sensitive","signal_provenance":[{"provider":"mock"}]},
+    "perception_unavailable": {"items":["conversation_summary:c1","conversation_message:m1"],"tokens":5,"missing":["signals"],"error":null},
+    "world_state_available": {"items":["conversation_summary:c1","conversation_message:m1"],"tokens":5,"missing":["signals"],"finding":"no World State read occurs"},
+    "small_budget": {"budget":8,"selected":["incoming_message:current","conversation_summary:c1"],"omitted":["conversation_message:m1","memory:mem-1"],"tokens":7},
+    "sensitive_content": {"items":["incoming_message:current","conversation_summary:c1","conversation_message:m1","perception:obs-1"],"rendered_contains_raw_input":true,"event_bus_redacts_payload":true},
+    "source_failure": {"error_type":"RuntimeError","error":"conversation source failed: SECRET","isolated":false},
+    "source_slow": {"configured_delay_per_perception_call_ms":50,"observed_elapsed_ms":101.408,"timeout":false},
+    "conversation_not_found": {"error_type":"NotFound","error":"Conversation not found: missing"}
+  },
+  "existing_tests": [
+    "tests/test_context_fusion_runtime.py",
+    "tests/test_memory_runtime.py::MemoryRuntimeTests::test_context_fusion_budget_provenance_and_deduplication",
+    "tests/test_agent_multimodal_context_bridge.py",
+    "tests/test_speech_adapters.py"
+  ],
+  "acceptance_consumers": ["Chat","Voice","Perception","Agent Worker","Mission Worker","API memory/context routes","Commands context handlers"],
+  "baseline_findings": [
+    "No source timeout exists.",
+    "Only NotFound is selectively isolated; other source exceptions propagate.",
+    "Memory is the only constructor-level optional source.",
+    "Context Fusion persists its own snapshot directly through DataDir.",
+    "World State and Agent Registry are not current sources and must not gain invented ports."
+  ]
+}

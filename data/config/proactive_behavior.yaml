@@ -1,0 +1,11 @@
+proactive_behavior:
+  mode: observe
+  max_proactive_actions_per_hour: 2
+  cooldown_seconds: 300
+  allowed_dispositions:
+    - record_only
+    - notify
+  quiet_hours: {}
+  notification_budget_per_hour: 4
+  mission_concurrency: 1
+  tool_risk_ceiling: low

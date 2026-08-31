@@ -1,0 +1,1 @@
+{"causation_id": null, "channel": "text", "correlation_id": null, "event_id": "5385cd45-d59c-4c09-b40d-256308676393", "event_type": "message", "metadata": {}, "payload": {"text": "hi"}, "source": "user", "target": null, "timestamp": "2026-06-25T15:10:06.795077+00:00"}

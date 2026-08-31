@@ -4,11 +4,13 @@ import json
 import sys
 import tempfile
 import unittest
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "backend"))
 
+from factories.agents import seed_delegation_pair
 from synapse.core.app import create_runtime
 from synapse.core.config import Settings
 
@@ -60,6 +62,7 @@ def runtime_in_tempdir():
     }
     write_json(settings.data_dir / "config" / "permissions.yaml", permissions)
     write_json(settings.data_dir / "config" / "system.yaml", system)
+    seed_delegation_pair(settings.data_dir)
     return directory, settings, create_runtime(settings)
 
 
@@ -74,6 +77,30 @@ def send_message(runtime, to_agent: str = "researcher", body: str = "Process me"
 
 
 class SchedulerTests(unittest.TestCase):
+    def test_delayed_job_waits_until_due(self) -> None:
+        directory, _, runtime = runtime_in_tempdir()
+        self.addCleanup(directory.cleanup)
+        job = runtime.scheduler.enqueue(
+            runtime.context(),
+            "notification_cleanup",
+            {},
+            scheduled_for=(datetime.now(UTC) + timedelta(hours=1)).isoformat(),
+        )
+
+        self.assertIsNone(runtime.scheduler.run_next(runtime.context()))
+        self.assertEqual(runtime.scheduler.get_job(job.id).status, "pending")
+
+    def test_agent_loop_cycle_job_uses_canonical_runtime(self) -> None:
+        directory, _, runtime = runtime_in_tempdir()
+        self.addCleanup(directory.cleanup)
+        job = runtime.scheduler.enqueue(runtime.context(), "agent_loop_cycle", {})
+
+        completed = runtime.scheduler.run_next(runtime.context())
+
+        self.assertEqual(completed.id, job.id)
+        self.assertEqual(completed.status, "completed")
+        self.assertEqual(completed.payload["result"]["cycle"]["trigger"], "scheduler.job")
+
     def test_enqueue_creates_pending_persisted_job(self) -> None:
         directory, _, runtime = runtime_in_tempdir()
         self.addCleanup(directory.cleanup)

@@ -1,5 +1,6 @@
 {
   "id": "orchestrator",
+  "agent_kind": "persistent",
   "name": "Orchestrator",
   "role": "Coordinates Synapse runtime activity.",
   "preferred_model": "ollama/llama3.1",

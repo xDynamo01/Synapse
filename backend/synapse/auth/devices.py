@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, overload
 
 from synapse.core.data_dir import DataDir
 from synapse.core.events import EventBus
@@ -75,6 +75,12 @@ class DeviceRegistry:
             for path in sorted(directory.glob("*.yaml")):
                 records.append(self._read(path))
         return sorted(records, key=lambda record: record.device_id)
+
+    @overload
+    def get_device(self, device_id: str, missing_ok: Literal[False] = False) -> DeviceRecord: ...
+
+    @overload
+    def get_device(self, device_id: str, missing_ok: Literal[True]) -> DeviceRecord | None: ...
 
     def get_device(self, device_id: str, missing_ok: bool = False) -> DeviceRecord | None:
         for state in ("trusted", "untrusted", "revoked"):

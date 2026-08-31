@@ -1,0 +1,18 @@
+{
+  "delegation_retry": {
+    "enabled": true,
+    "max_attempts_default": 3,
+    "max_attempts_by_priority": {
+      "critical": 2,
+      "high": 3,
+      "normal": 3,
+      "low": 2
+    },
+    "allow_retry_failed_tasks": true,
+    "allow_retry_completed_tasks": false,
+    "require_approval_for_critical_retry": true,
+    "require_approval_after_attempts": 2,
+    "reset_task_status_on_retry": true,
+    "default_retry_status": "accepted"
+  }
+}

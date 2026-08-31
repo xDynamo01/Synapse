@@ -1,0 +1,10 @@
+active_channels:
+- text
+- voice
+created_at: '2026-06-25T16:08:09.829147+00:00'
+metadata: {}
+participants:
+- user
+session_id: 63f71df6-f4a8-4dbd-91c4-4d39173c9eda
+status: active
+updated_at: '2026-06-25T16:08:09.838675+00:00'

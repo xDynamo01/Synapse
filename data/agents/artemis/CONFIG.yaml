@@ -1,5 +1,6 @@
 {
   "id": "artemis",
+  "agent_kind": "persistent",
   "name": "Artemis",
   "role": "orchestrator",
   "description": "Coordinates planning, delegation, briefings, and user-facing agent work.",

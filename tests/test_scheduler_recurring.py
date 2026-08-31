@@ -22,9 +22,6 @@ DEFAULT_PERMISSIONS = [
     "tasks.create",
     "tasks.update",
     "web.search",
-    "communication.read",
-    "communication.summarize",
-    "communication.draft",
 ]
 
 
@@ -188,13 +185,6 @@ class SchedulerRecurringTests(unittest.TestCase):
                     "next_run_at": past(),
                 },
                 {
-                    "id": "email",
-                    "type": "check_email",
-                    "payload": {"provider": "mock", "agent_id": "hermes"},
-                    "interval_minutes": 60,
-                    "next_run_at": past(),
-                },
-                {
                     "id": "inbox",
                     "type": "process_agent_inbox",
                     "payload": {"agent_id": "researcher"},
@@ -208,7 +198,6 @@ class SchedulerRecurringTests(unittest.TestCase):
 
         self.assertEqual([job.type for job in enqueued], [
             "notification_cleanup",
-            "check_email",
             "process_agent_inbox",
         ])
 

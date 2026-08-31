@@ -1,5 +1,6 @@
 {
   "id": "atlas",
+  "agent_kind": "persistent",
   "name": "Atlas",
   "role": "knowledge_librarian",
   "description": "Organizes library content and persistent knowledge.",

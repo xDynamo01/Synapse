@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from synapse.agents.models import AGENT_MESSAGE_STATUSES, AgentMessage
 from synapse.agents.registry import AgentRegistry
@@ -13,6 +14,10 @@ from synapse.core.permissions import PermissionContext, PermissionManager
 from synapse.core.serialization import dump_structured_file, load_structured_file
 from synapse.observability.correlation import current_correlation_fields
 
+if TYPE_CHECKING:
+    from synapse.agents.admin import AgentAdminRuntime
+    from synapse.conversations.runtime import ConversationRuntime
+
 
 class AgentCommunication:
     def __init__(
@@ -21,11 +26,15 @@ class AgentCommunication:
         registry: AgentRegistry,
         permissions: PermissionManager,
         event_bus: EventBus,
+        conversations: ConversationRuntime | None = None,
+        admin: AgentAdminRuntime | None = None,
     ):
         self.data_dir = data_dir
         self.registry = registry
         self.permissions = permissions
         self.event_bus = event_bus
+        self.conversations = conversations
+        self.admin = admin
 
     def send_agent_message(
         self,
@@ -35,26 +44,56 @@ class AgentCommunication:
         body: str,
         subject: str | None = None,
         task_id: str | None = None,
+        conversation_id: str | None = None,
+        correlation_id: str | None = None,
+        causation_id: str | None = None,
     ) -> AgentMessage:
         self.permissions.require(context, "agents.message")
         self.registry.get(from_agent_id)
         self.registry.get(to_agent_id)
+        if self.admin:
+            self.admin.assert_agent_runnable(to_agent_id)
 
+        fields = current_correlation_fields()
         message = AgentMessage(
             from_agent=from_agent_id,
             to_agent=to_agent_id,
             subject=subject or "Agent message",
             body=body,
             task_id=task_id,
-            **current_correlation_fields(),
+            correlation_id=correlation_id or fields.get("correlation_id"),
+            causation_id=causation_id or fields.get("causation_id"),
+            parent_id=fields.get("parent_id"),
+            source=fields.get("source"),
         )
+        conversation_message = None
+        if self.conversations:
+            conversation_message = self.conversations.send_message(
+                context=context,
+                sender_agent_id=from_agent_id,
+                receiver_agent_id=to_agent_id,
+                payload={
+                    "subject": message.subject,
+                    "body": message.body,
+                    "task_id": message.task_id,
+                    "legacy_message_id": message.id,
+                },
+                conversation_id=conversation_id,
+                message_id=message.id,
+                correlation_id=message.correlation_id,
+                causation_id=message.causation_id,
+                metadata={"source": "agent_communication"},
+            )
         inbox_entry = (
             f"\n## {message.created_at} | {message.from_agent} | {message.subject} | {message.id}\n\n"
             f"{message.body}\n"
         )
         self.data_dir.append_text(f"agents/{to_agent_id}/INBOX.md", inbox_entry)
         self._write_message(message)
-        self.event_bus.emit("agent.message.sent", context.actor_id, asdict(message))
+        payload = asdict(message)
+        if conversation_message:
+            payload["conversation_id"] = conversation_message.conversation_id
+        self.event_bus.emit("agent.message.sent", context.actor_id, payload)
         return message
 
     def list_messages(
@@ -88,7 +127,9 @@ class AgentCommunication:
     ) -> AgentMessage:
         return self._set_status(context, agent_id, message_id, "processed")
 
-    def mark_failed(self, context: PermissionContext, agent_id: str, message_id: str) -> AgentMessage:
+    def mark_failed(
+        self, context: PermissionContext, agent_id: str, message_id: str
+    ) -> AgentMessage:
         return self._set_status(context, agent_id, message_id, "failed")
 
     def _set_status(
@@ -121,6 +162,16 @@ class AgentCommunication:
             updated_at=datetime.now(UTC).isoformat(),
         )
         self._write_message(updated)
+        if self.conversations:
+            try:
+                if status == "read":
+                    self.conversations.receive_message(context, message_id)
+                elif status == "processed":
+                    self.conversations.acknowledge_message(context, message_id)
+                elif status == "failed":
+                    self.conversations.fail_message(context, message_id)
+            except NotFound:
+                pass
         self.event_bus.emit(
             "agent.message.status_changed",
             context.actor_id,

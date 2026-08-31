@@ -3,7 +3,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import asdict, dataclass
-from typing import Iterator
+from typing import Iterator, TypedDict
 from uuid import uuid4
 
 
@@ -52,6 +52,13 @@ _current_correlation: ContextVar[CorrelationContext | None] = ContextVar(
 )
 
 
+class CorrelationFields(TypedDict):
+    correlation_id: str | None
+    causation_id: str | None
+    parent_id: str | None
+    source: str | None
+
+
 def new_correlation(
     source: str,
     correlation_id: str | None = None,
@@ -80,7 +87,7 @@ def current_correlation() -> CorrelationContext | None:
     return _current_correlation.get()
 
 
-def current_correlation_fields() -> dict[str, str | None]:
+def current_correlation_fields() -> CorrelationFields:
     context = current_correlation()
     if not context:
         return {

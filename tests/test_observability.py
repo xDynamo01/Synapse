@@ -9,6 +9,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "backend"))
 
+from factories.agents import seed_test_agent
 from synapse.core.app import create_runtime
 from synapse.core.config import Settings
 from synapse.observability.correlation import correlation_scope, new_correlation
@@ -40,6 +41,13 @@ def runtime_in_tempdir():
         default_actor_id="local_owner",
     )
     create_runtime(settings)
+    for agent_id, role in (("artemis", "orchestrator"), ("researcher", "researcher")):
+        seed_test_agent(
+            settings.data_dir,
+            agent_id,
+            role=role,
+            extra={"permissions": DEFAULT_PERMISSIONS},
+        )
     permissions = {
         "subjects": {
             "local_owner": ["*"],

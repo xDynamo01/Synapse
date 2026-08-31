@@ -1,0 +1,19 @@
+{
+  "agent_provisioning": {
+    "default_autonomy_level": "manual",
+    "max_direct_create_autonomy_level": "manual",
+    "require_approval_for_high_risk_capabilities": true,
+    "require_approval_for_critical_capabilities": true,
+    "sensitive_capabilities": [
+      "filesystem.write",
+      "scheduler.run",
+      "approval.review"
+    ],
+    "sensitive_tools": ["write_file", "delete_file", "camera_control"],
+    "blocked_capabilities": [],
+    "blocked_tools": [],
+    "require_forbidden_tools_for_sensitive_agents": true,
+    "allow_direct_create": true,
+    "allow_direct_update": true
+  }
+}

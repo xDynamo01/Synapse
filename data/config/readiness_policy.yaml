@@ -1,0 +1,14 @@
+{
+  "readiness": {
+    "require_daemon": false,
+    "require_scheduler": true,
+    "require_capabilities": true,
+    "pending_approvals_state": "action_required",
+    "failed_jobs_state": "degraded",
+    "critical_notifications_state": "action_required",
+    "stale_lock_state": "action_required",
+    "require_world_state": true,
+    "require_policy": true,
+    "require_observability": true
+  }
+}

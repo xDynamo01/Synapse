@@ -1,0 +1,56 @@
+{
+  "captured_at": "2026-07-14",
+  "machine_note": "Non-gating local Windows benchmark; durable same-volume writes with flush/fsync.",
+  "aborted_stress_attempt": {
+    "file_records": 2500,
+    "timeout_seconds": 184.1,
+    "finding": "Per-record durable files are not recommended for this density."
+  },
+  "scenarios": [
+    {
+      "agents": 100,
+      "projected_agent_config_records": 100,
+      "operational_bundle_records": 100,
+      "modeled_associated_totals": {"conversations": 2000, "missions": 1000, "attempts": 3000, "events": 20000},
+      "base_file_records": 200,
+      "records_after_concurrent_writes": 232,
+      "write_ms": 2457.98,
+      "paginated_list_ms": 1744.01,
+      "pages": 2,
+      "listed": 200,
+      "paginated_list_peak_memory_bytes": 353860,
+      "restart_first_page_ms": 57.26,
+      "concurrent_32_writes_ms": 512.97,
+      "cleanup_dry_run_ms": 388.74,
+      "cleanup_eligible": 32,
+      "recovery_scan_ms": 137.61,
+      "recovery_valid": 232,
+      "disk_bytes": 42976
+    },
+    {
+      "agents": 500,
+      "projected_agent_config_records": 500,
+      "operational_bundle_records": 500,
+      "modeled_associated_totals": {"conversations": 10000, "missions": 5000, "attempts": 15000, "events": 100000},
+      "base_file_records": 1000,
+      "records_after_concurrent_writes": 1032,
+      "write_ms": 14556.96,
+      "paginated_list_ms": 7685.39,
+      "pages": 10,
+      "listed": 1000,
+      "paginated_list_peak_memory_bytes": 984560,
+      "restart_first_page_ms": 53.39,
+      "concurrent_32_writes_ms": 360.45,
+      "cleanup_dry_run_ms": 713.30,
+      "cleanup_eligible": 32,
+      "recovery_scan_ms": 638.53,
+      "recovery_valid": 1032,
+      "disk_bytes": 196576
+    }
+  ],
+  "interpretation": {
+    "file_collection": "Suitable for small or explicitly bounded operational collections with key lookup and simple filters.",
+    "sqlite_candidate": "Growing histories, multi-field queries, sustained writes, cross-record transactions, or collections approaching 1000+ files.",
+    "no_hard_performance_gate": true
+  }
+}

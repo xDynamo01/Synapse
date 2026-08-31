@@ -1,0 +1,122 @@
+{
+  "captured_at": "2026-07-14",
+  "result": "complete_controlled_pilot",
+  "backend_ready": false,
+  "inventory": {
+    "python_files_scanned": 88,
+    "source_of_truth_families": 48,
+    "classification_groups": ["A", "B", "C", "D", "E", "F"],
+    "pilots_selected": 4,
+    "pilots_migrated": 4,
+    "broad_migration_performed": false
+  },
+  "primitives": {
+    "neutral_package": "synapse.storage",
+    "canonical_atomic_writer_count": 1,
+    "relevant_atomic_implementations_before": 7,
+    "remaining_specialized_atomic_implementations_after": 6,
+    "canonical_collection_lock_count": 1,
+    "specialized_lock_families_before": 4,
+    "specialized_lock_families_after": 4,
+    "explicit_sequential_migration_registry": true,
+    "optimistic_revision": true,
+    "deterministic_cursor_pagination": true,
+    "maximum_page_size": 500,
+    "configurable_recovery": ["fail", "skip", "backup", "quarantine"],
+    "retention_dry_run": true,
+    "redacted_neutral_events": true
+  },
+  "pilots": [
+    {
+      "name": "FileMemoryStorage",
+      "file_shape_equivalent": true,
+      "public_shape_equivalent": true,
+      "schema_versioned": true,
+      "recovery": "fail_closed"
+    },
+    {
+      "name": "WorkerRegistry",
+      "file_shape_equivalent": true,
+      "public_shape_equivalent": true,
+      "schema_versioned": true,
+      "recovery": "configurable"
+    },
+    {
+      "name": "TaskAttemptRuntime",
+      "file_shape_equivalent": true,
+      "public_shape_equivalent": true,
+      "schema_versioned": true,
+      "recovery": "configurable"
+    },
+    {
+      "name": "LocalNotificationProvider",
+      "file_shape_equivalent": true,
+      "public_shape_equivalent": true,
+      "schema_versioned": true,
+      "recovery": "configurable"
+    }
+  ],
+  "scale": {
+    "results_file": "storage-scale-results.json",
+    "scenarios": [100, 500],
+    "performance_gate": false,
+    "file_collection_decision": "small_or_explicitly_bounded_collections",
+    "sqlite_evaluation_triggers": [
+      "growing_histories",
+      "multi_field_queries",
+      "sustained_concurrent_writes",
+      "cross_record_transactions",
+      "collections_approaching_1000_files"
+    ]
+  },
+  "dependencies": {
+    "scc_before": [
+      {"contexts": 25, "internal_edges": 76},
+      {"contexts": 4, "internal_edges": 6},
+      {"contexts": 2, "internal_edges": 2}
+    ],
+    "scc_after": [
+      {"contexts": 25, "internal_edges": 76},
+      {"contexts": 4, "internal_edges": 6},
+      {"contexts": 2, "internal_edges": 2}
+    ],
+    "reduction_claimed": false,
+    "storage_domain_imports": 0
+  },
+  "openapi": {
+    "paths": 425,
+    "operations": 471,
+    "unique_operation_ids": 471,
+    "schemas": 100,
+    "normalized_sha256": "bc0b2a3cab01aa9377bc80b50193089d288edd71901a9f650e3bd02ad48ea72f",
+    "equivalent_to_before": true
+  },
+  "validation": {
+    "architecture": {"passed": 61, "failed": 0, "duration_seconds": 32.85},
+    "focused_storage_and_pilots": {"passed": 96, "failed": 0, "skipped": 1, "duration_seconds": 64.03},
+    "acceptance": {"passed": 64, "failed": 0, "duration_seconds": 31.25},
+    "global": {"collected": 1078, "passed": 1077, "failed": 0, "skipped": 1, "subtests_passed": 4, "duration_seconds": 623.58},
+    "ruff": "passed",
+    "git_diff_check": "passed_with_existing_line_ending_warnings"
+  },
+  "scope_guardrails": {
+    "sqlite_migration_performed": false,
+    "human_editable_agent_or_policy_files_migrated": false,
+    "unrelated_cycles_changed": false,
+    "agent_creator_changed": false,
+    "data_dir_maintenance_changed": false,
+    "api_or_commands_functionally_changed": false,
+    "health_or_readiness_functionally_changed": false,
+    "context_fusion_changed": false,
+    "tools_or_providers_functionally_changed": false,
+    "sdk_or_frontend_created": false,
+    "commit_push_or_pr_performed": false
+  },
+  "remaining_blockers": [
+    "remaining architectural cycles",
+    "legacy Agent Creator",
+    "DataDir maintenance",
+    "broader store-by-store adoption decisions",
+    "final architectural audit"
+  ]
+}

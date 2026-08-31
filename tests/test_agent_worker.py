@@ -9,6 +9,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "backend"))
 
+from factories.agents import seed_delegation_pair, seed_test_agent
 from synapse.core.app import create_runtime
 from synapse.core.config import Settings
 from synapse.core.serialization import load_structured_file
@@ -74,6 +75,8 @@ def runtime_in_tempdir(
     }
     write_json(settings.data_dir / "config" / "permissions.yaml", permissions)
     write_json(settings.data_dir / "config" / "system.yaml", system)
+    seed_delegation_pair(settings.data_dir)
+    seed_test_agent(settings.data_dir, "atlas", name="Atlas", role="worker")
     update_agent_config(
         settings,
         "researcher",

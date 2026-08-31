@@ -5,11 +5,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from synapse.communication.runtime import CommunicationRuntime
+from synapse.agents.admin import AgentAdminRuntime
 from synapse.core.events import EventBus
 from synapse.core.exceptions import ValidationError
 from synapse.core.permissions import PermissionContext
 from synapse.core.serialization import dump_structured_file, load_structured_file
+from synapse.dead_letter.runtime import DeadLetterRuntime
+from synapse.delegation.timeout_policy import DelegationTimeoutPolicyRuntime
+from synapse.delegation_inbox.runtime import DelegationInboxRuntime
 from synapse.lifecycle.runtime import LifecycleRuntime
 from synapse.notifications.runtime import NotificationRuntime
 from synapse.observability.correlation import (
@@ -18,7 +21,9 @@ from synapse.observability.correlation import (
     new_correlation,
 )
 from synapse.presence.runtime import PresenceRuntime
+from synapse.retention.runtime import RetentionRuntime
 from synapse.scheduler.jobs import RECURRING_JOB_TYPES, Job, RecurringJobDefinition
+from synapse.scheduler.lock import SchedulerLock
 from synapse.scheduler.queue import JobQueue
 from synapse.workers.agent_worker import AgentWorker
 
@@ -31,16 +36,28 @@ class SchedulerRuntime:
         event_bus: EventBus,
         presence: PresenceRuntime | None = None,
         lifecycle: LifecycleRuntime | None = None,
-        communication: CommunicationRuntime | None = None,
         notifications: NotificationRuntime | None = None,
+        lock: SchedulerLock | None = None,
+        admin: AgentAdminRuntime | None = None,
+        retention: RetentionRuntime | None = None,
+        delegation_inbox: DelegationInboxRuntime | None = None,
+        delegation_timeout: DelegationTimeoutPolicyRuntime | None = None,
+        dead_letter: DeadLetterRuntime | None = None,
     ):
         self.queue = queue
         self.worker = worker
         self.event_bus = event_bus
         self.presence = presence
         self.lifecycle = lifecycle
-        self.communication = communication
         self.notifications = notifications
+        self.lock = lock
+        self.admin = admin
+        self.retention = retention
+        self.delegation_inbox = delegation_inbox
+        self.delegation_timeout = delegation_timeout
+        self.dead_letter = dead_letter
+        self.missions: Any | None = None
+        self.agent_loop: Any | None = None
 
     def enqueue(
         self,
@@ -51,11 +68,25 @@ class SchedulerRuntime:
         max_attempts: int = 3,
         scheduled_for: str | None = None,
         correlation_id: str | None = None,
+        target: str | None = None,
+        idempotency_key: str | None = None,
+        schedule: str = "one_shot",
+        misfire_policy: str = "run_once",
     ) -> Job:
+        if idempotency_key:
+            existing = next(
+                (
+                    item
+                    for item in self.queue.list_jobs()
+                    if item.idempotency_key == idempotency_key
+                    and item.status not in {"completed", "failed", "cancelled"}
+                ),
+                None,
+            )
+            if existing:
+                return existing
         correlation = current_correlation()
-        if correlation_id and (
-            correlation is None or correlation.correlation_id != correlation_id
-        ):
+        if correlation_id and (correlation is None or correlation.correlation_id != correlation_id):
             correlation = new_correlation(source="scheduler", correlation_id=correlation_id)
         correlation = correlation or new_correlation(source="scheduler")
         job = Job(
@@ -68,6 +99,11 @@ class SchedulerRuntime:
             causation_id=correlation.causation_id,
             parent_id=correlation.parent_id,
             source=correlation.source,
+            target=target,
+            idempotency_key=idempotency_key,
+            schedule=schedule,
+            next_run_at=scheduled_for,
+            misfire_policy=misfire_policy,
         )
         self.queue.add(job)
         with correlation_scope(correlation.child(source="scheduler", job_id=job.id)):
@@ -88,20 +124,66 @@ class SchedulerRuntime:
         self.event_bus.emit("job.cancelled", context.actor_id, asdict(updated))
         return updated
 
+    def pause_job(self, context: PermissionContext, job_id: str) -> Job:
+        job = self.queue.get(job_id)
+        if job.status == "paused":
+            return job
+        if job.status != "pending":
+            raise ValidationError(f"Cannot pause job with status {job.status}: {job_id}")
+        updated = self.queue.save(job.with_updates(status="paused"))
+        self.event_bus.emit("job.paused", context.actor_id, asdict(updated))
+        return updated
+
+    def resume_job(self, context: PermissionContext, job_id: str) -> Job:
+        job = self.queue.get(job_id)
+        if job.status == "pending":
+            return job
+        if job.status != "paused":
+            raise ValidationError(f"Cannot resume job with status {job.status}: {job_id}")
+        updated = self.queue.save(job.with_updates(status="pending"))
+        self.event_bus.emit("job.resumed", context.actor_id, asdict(updated))
+        return updated
+
     def run_next(self, context: PermissionContext) -> Job | None:
+        if self.lock and not self.lock.acquire():
+            return None
+        try:
+            return self._run_next_locked(context)
+        finally:
+            if self.lock:
+                self.lock.release()
+
+    def _run_next_locked(self, context: PermissionContext) -> Job | None:
         job = self.queue.next_pending()
         if not job:
             return None
         return self._run_job(context, job)
 
     def run_all_pending(self, context: PermissionContext) -> list[Job]:
+        if self.lock and not self.lock.acquire():
+            return []
         completed: list[Job] = []
-        while True:
-            job = self.run_next(context)
-            if not job:
-                break
-            completed.append(job)
-        return completed
+        try:
+            while True:
+                job = self._run_next_locked(context)
+                if not job:
+                    break
+                completed.append(job)
+            return completed
+        finally:
+            if self.lock:
+                self.lock.release()
+
+    def lock_status(self):
+        if not self.lock:
+            return {"locked": False, "owner_id": None, "acquired_at": None, "stale": False}
+        return asdict(self.lock.status())
+
+    def recover_stale_lock(self) -> dict[str, Any]:
+        if not self.lock:
+            return {"recovered": True, "locked": False}
+        recovered = self.lock.recover_stale()
+        return {"recovered": recovered, "lock": asdict(self.lock.status())}
 
     def retry_failed(self, context: PermissionContext) -> list[Job]:
         retried: list[Job] = []
@@ -139,9 +221,7 @@ class SchedulerRuntime:
                     created_at=state.created_at,
                 )
             if not definition.next_run_at:
-                definition = definition.with_updates(
-                    next_run_at=datetime.now(UTC).isoformat()
-                )
+                definition = definition.with_updates(next_run_at=datetime.now(UTC).isoformat())
                 self._save_recurring_state(definition)
             loaded.append(definition)
 
@@ -153,6 +233,18 @@ class SchedulerRuntime:
         return loaded
 
     def enqueue_due_recurring_jobs(
+        self,
+        context: PermissionContext,
+    ) -> list[Job]:
+        if self.lock and not self.lock.acquire():
+            return []
+        try:
+            return self._enqueue_due_recurring_jobs_locked(context)
+        finally:
+            if self.lock:
+                self.lock.release()
+
+    def _enqueue_due_recurring_jobs_locked(
         self,
         context: PermissionContext,
     ) -> list[Job]:
@@ -178,6 +270,7 @@ class SchedulerRuntime:
                     )
                     continue
                 self.event_bus.emit("recurring.due", context.actor_id, asdict(definition))
+                correlation = current_correlation()
                 job = self.enqueue(
                     context=context,
                     job_type=definition.type,
@@ -187,9 +280,7 @@ class SchedulerRuntime:
                     },
                     priority=definition.priority,
                     max_attempts=definition.max_attempts,
-                    correlation_id=current_correlation().correlation_id
-                    if current_correlation()
-                    else None,
+                    correlation_id=correlation.correlation_id if correlation else None,
                 )
                 now = datetime.now(UTC)
                 next_run = now + self._interval_delta(definition.interval_minutes)
@@ -296,26 +387,91 @@ class SchedulerRuntime:
             agent_id = str(job.payload.get("agent_id", "")).strip()
             if not agent_id:
                 raise ValidationError("process_agent_inbox requires payload.agent_id")
-            results = self.worker.process_inbox(context, agent_id)
-            failures = [result for result in results if result.status == "failed"]
+            inbox_results = self.worker.process_inbox(context, agent_id)
+            failures = [result for result in inbox_results if result.status == "failed"]
             if failures:
                 raise ValidationError(f"Worker failed to process {len(failures)} message(s).")
-            return {"results": [asdict(result) for result in results]}
-        if job.type == "check_email":
-            if not self.communication:
-                raise ValidationError("check_email requires CommunicationRuntime")
-            provider = str(job.payload.get("provider", "mock"))
-            agent_id = str(job.payload.get("agent_id", "hermes"))
-            briefing = self.communication.generate_briefing(
-                agent_id=agent_id,
-                provider=provider,
-            )
-            return {"briefing": asdict(briefing)}
+            return {"results": [asdict(result) for result in inbox_results]}
+        if job.type == "process_agent_delegations":
+            agent_id = str(job.payload.get("agent_id", "")).strip()
+            if not agent_id:
+                raise ValidationError("process_agent_delegations requires payload.agent_id")
+            limit = int(job.payload.get("limit", 1))
+            delegation_results = self.worker.process_delegations(context, agent_id, limit=limit)
+            delegation_failures = [
+                result for result in delegation_results if result.status == "failed"
+            ]
+            if delegation_failures:
+                raise ValidationError(
+                    f"Worker failed to process {len(delegation_failures)} delegation(s)."
+                )
+            return {"results": [asdict(result) for result in delegation_results]}
         if job.type == "notification_cleanup":
             if not self.notifications:
                 raise ValidationError("notification_cleanup requires NotificationRuntime")
-            result = self.notifications.cleanup_notifications()
-            return {"cleanup": asdict(result)}
+            notification_cleanup = self.notifications.cleanup_notifications()
+            return {"cleanup": asdict(notification_cleanup)}
+        if job.type == "agent_admin_request_cleanup":
+            if not self.admin:
+                raise ValidationError("agent_admin_request_cleanup requires AgentAdminRuntime")
+            dry_run = bool(job.payload.get("dry_run", False))
+            admin_cleanup = self.admin.cleanup_admin_action_requests(dry_run=dry_run)
+            return {"cleanup": asdict(admin_cleanup)}
+        if job.type == "retention_cleanup_domain":
+            if not self.retention:
+                raise ValidationError("retention_cleanup_domain requires RetentionRuntime")
+            domain_id = str(job.payload.get("domain_id", "")).strip()
+            if not domain_id:
+                raise ValidationError("retention_cleanup_domain requires payload.domain_id")
+            dry_run = bool(job.payload.get("dry_run", True))
+            retention_cleanup = self.retention.cleanup_domain(domain_id, dry_run=dry_run)
+            return {"cleanup": asdict(retention_cleanup)}
+        if job.type == "delegation_inbox_rebuild":
+            if not self.delegation_inbox:
+                raise ValidationError("delegation_inbox_rebuild requires DelegationInboxRuntime")
+            agent_id = str(job.payload.get("agent_id", "")).strip()
+            if agent_id:
+                entries = self.delegation_inbox.rebuild_agent_inbox(agent_id)
+                return {"agent_id": agent_id, "entries": [asdict(entry) for entry in entries]}
+            rebuilt = self.delegation_inbox.rebuild_all_inboxes()
+            return {
+                "agents": {
+                    agent_id: [asdict(entry) for entry in entries]
+                    for agent_id, entries in rebuilt.items()
+                }
+            }
+        if job.type == "delegation_timeout_scan":
+            if not self.delegation_timeout:
+                raise ValidationError(
+                    "delegation_timeout_scan requires DelegationTimeoutPolicyRuntime"
+                )
+            dry_run = bool(job.payload.get("dry_run", True))
+            return {
+                "timeout_scan": asdict(self.delegation_timeout.run_timeout_scan(dry_run=dry_run))
+            }
+        if job.type == "dead_letter_review_scan":
+            if not self.dead_letter:
+                raise ValidationError("dead_letter_review_scan requires DeadLetterRuntime")
+            return {"dead_letter": self.dead_letter.review_scan()}
+        if job.type == "mission_dispatch":
+            if not self.missions:
+                raise ValidationError("mission_dispatch requires MissionRuntime")
+            mission_id = job.target or str(job.payload.get("mission_id", ""))
+            if not mission_id:
+                raise ValidationError("mission_dispatch requires target mission_id")
+            return {
+                "mission_dispatch": asdict(
+                    self.missions.dispatch_ready_tasks(
+                        mission_id,
+                        job.payload.get("max_concurrency"),
+                        execute=bool(job.payload.get("execute", True)),
+                    )
+                )
+            }
+        if job.type == "agent_loop_cycle":
+            if not self.agent_loop:
+                raise ValidationError("agent_loop_cycle requires AgentLoopRuntime")
+            return {"cycle": asdict(self.agent_loop.run_cycle(trigger="scheduler.job"))}
         raise ValidationError(f"Unknown job type: {job.type}")
 
     def _recurring_from_policy(self, raw: dict[str, Any]) -> RecurringJobDefinition:
@@ -360,7 +516,7 @@ class SchedulerRuntime:
 
     @staticmethod
     def _agent_id_for_job(job: Job) -> str | None:
-        if job.type in {"process_agent_inbox", "check_email"}:
+        if job.type in {"process_agent_inbox", "process_agent_delegations"}:
             agent_id = str(job.payload.get("agent_id", "")).strip()
             return agent_id or None
         return None

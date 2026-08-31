@@ -16,4 +16,3 @@ class ValidationError(SynapseError):
 
 class ToolExecutionError(SynapseError):
     """Raised when a tool cannot complete its work."""
-

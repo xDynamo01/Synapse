@@ -9,6 +9,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "backend"))
 
+from factories.agents import seed_delegation_pair
 from synapse.core.app import create_runtime
 from synapse.core.config import Settings
 
@@ -60,6 +61,7 @@ def runtime_in_tempdir():
     }
     write_json(settings.data_dir / "config" / "permissions.yaml", permissions)
     write_json(settings.data_dir / "config" / "system.yaml", system)
+    seed_delegation_pair(settings.data_dir)
     return directory, settings, create_runtime(settings)
 
 

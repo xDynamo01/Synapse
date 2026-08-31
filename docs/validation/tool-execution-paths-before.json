@@ -1,0 +1,64 @@
+{
+  "captured_at": "2026-07-14",
+  "public_registries": 2,
+  "technical_registries": 2,
+  "registries": [
+    {"name":"ToolRegistry","role":"legacy public builtin catalog and executor","entries":8,"executes":true},
+    {"name":"RuntimeToolRegistry","role":"runtime public catalog","entries_test_mode":10,"executes":false},
+    {"name":"MCPRegistry","role":"provider-local server/tool reference catalog","entries":0,"executes":false},
+    {"name":"ExecutionTargetRegistry","role":"routing target catalog","entries":4,"executes":false}
+  ],
+  "operational_authorities": ["ToolRegistry.execute", "ToolRuntime.execute_tool_call", "MCPRuntime.execute_tool", "DesktopRuntime.execute"],
+  "legacy_tool_ids": ["create_task","list_directory","read_file","search_files","send_agent_message","update_task","web_search","write_file"],
+  "runtime_tool_ids_test_mode": ["agent.summary","audio.transcribe","conversation.summary","danger.mock","health.summary","mission.summary","provider.summary","readiness.summary","tool.summary","voice.transcribe"],
+  "mcp_public_identity_pattern": "mcp:<normalized-server>:<normalized-tool>",
+  "aliases": [],
+  "paths": [
+    {"entry":"Agent model tool call","requester":"AgentRuntime/Workers/Chat","registry":"ToolRegistry","contract":"ToolCallRequest/ToolCallResult","policy":"AgentEffectivePolicy + ToolRouter","approval":"ApprovalManager","executor":"ToolRegistry.execute -> builtin.run","persistence":"owner domain","audit":"tool.* events","result":"ToolCallResult","classification":"parallel legacy"},
+    {"entry":"Approval resume","requester":"ApprovalResumeRuntime","registry":"ToolRegistry","contract":"ToolCallRequest/ToolCallResult","policy":"resolved before ToolRouter","approval":"ApprovalManager","executor":"ToolRegistry.execute","persistence":"owner domain","audit":"tool.* events","result":"ToolCallResult","classification":"parallel legacy"},
+    {"entry":"Core commands /call /task /search","requester":"Commands","registry":"ToolRegistry","contract":"dict","policy":"PermissionManager in registry","approval":"none in direct call","executor":"ToolRegistry.execute","persistence":"owner domain","audit":"tool.started/succeeded/failed","result":"dict","classification":"parallel legacy"},
+    {"entry":"Runtime API/Commands","requester":"API and tools command handler","registry":"RuntimeToolRegistry","contract":"ToolExecutionRequest/Result","policy":"ToolPermissionBridge","approval":"ApprovalManager through bridge","executor":"ToolRuntime","persistence":"execution_log.jsonl + memory state","audit":"tool_runtime.*","result":"ToolExecutionResult","classification":"canonical candidate"},
+    {"entry":"Tool intent","requester":"ToolIntentRuntime","registry":"RuntimeToolRegistry","contract":"ToolExecutionRequest/Result","policy":"ToolPermissionBridge","approval":"intent review + bridge","executor":"ToolRuntime","persistence":"intent + execution log","audit":"tool_intent/tool_runtime events","result":"ToolExecutionResult","classification":"canonical candidate"},
+    {"entry":"Agent Loop tool action","requester":"AgentLoopRuntime","registry":"RuntimeToolRegistry","contract":"ToolExecutionRequest/Result","policy":"ToolPermissionBridge","approval":"ApprovalManager","executor":"ToolRuntime","persistence":"execution log","audit":"tool_runtime.*","result":"ToolExecutionResult","classification":"canonical candidate"},
+    {"entry":"MCP bridged execution","requester":"ToolRuntime handler","registry":"RuntimeToolRegistry plus MCPRegistry technical","contract":"ToolExecutionRequest/Result","policy":"ToolPermissionBridge","approval":"required","executor":"ToolRuntime -> MCPToolBridge handler -> MCPRuntime.execute_tool","persistence":"canonical log; MCP technical state","audit":"tool_runtime.*","result":"ToolExecutionResult","classification":"canonical with technical adapter"},
+    {"entry":"Agent Loop desktop action","requester":"AgentLoopRuntime","registry":"none","contract":"AutomationResult","policy":"Desktop governance","approval":"Desktop governance","executor":"DesktopRuntime.execute","persistence":"desktop planner/results","audit":"desktop.*","result":"AutomationResult","classification":"parallel direct"},
+    {"entry":"Mission desktop action","requester":"MissionRuntime","registry":"none","contract":"AutomationResult","policy":"Desktop governance","approval":"Desktop governance","executor":"DesktopRuntime.execute","persistence":"desktop planner/results","audit":"desktop.*","result":"AutomationResult","classification":"parallel direct"},
+    {"entry":"Desktop API/Commands","requester":"API and Commands","registry":"none","contract":"AutomationPlan/Result","policy":"Desktop governance","approval":"Desktop governance","executor":"DesktopRuntime preview/execute/cancel/recover","persistence":"desktop planner/results","audit":"desktop.*","result":"domain DTOs","classification":"parallel direct"}
+  ],
+  "surface_snapshots": {
+    "legacy_catalog_count": 8,
+    "runtime_catalog_count_test_mode": 10,
+    "mcp_tool_count": 0,
+    "mcp_seed_servers": ["blender","browser","docker","github","local_fs","unreal"],
+    "execution_targets": ["tool_runtime","mcp_bridge","provider_runtime","plugin_runtime"],
+    "preview_health":{"tool_id":"health.summary","risk_level":"low","approval_required":false,"permissions_required":["tools.execute"],"reversible":false,"estimated_duration":30.0,"config_hash":"a8e9b9d2eea66a3226ccaee16de4aabfd53856dda50325a7c5786f8682d6fff0"},
+    "invalid_schema":{"tool_id":"conversation.summary","success":false,"status":"failed","error":"Missing required arguments: conversation_id","error_type":"ToolError"},
+    "approval_required":{"tool_id":"danger.mock","success":false,"status":"awaiting_approval","approval_required":true},
+    "idempotency":{"same_call_id":true,"same_result":true,"status":"completed"},
+    "legacy_web_search":{"status":"unconfigured","query":"synapse","results":[],"message":"No local web search provider is configured yet."}
+  },
+  "capability_gaps": {
+    "preview_paths": ["ToolRuntime.preview", "DesktopRuntime.preview"],
+    "execute_paths": ["ToolRegistry.execute", "ToolRuntime.execute_tool_call", "MCPRuntime.execute_tool", "DesktopRuntime.execute"],
+    "retry_paths": ["ToolRuntime.retry", "DesktopRuntime.recover"],
+    "cancel_paths": ["ToolRuntime.cancel", "DesktopRuntime.cancel"],
+    "rollback_paths": ["ToolRuntime.rollback", "DesktopRuntime internal rollback"],
+    "restart_history":"ToolRuntime in-memory result lookup is not restored; JSONL is audit-only",
+    "verification":"Desktop has mandatory domain verification; generic ToolRuntime has no canonical verification record",
+    "timeout":"ToolDefinition declares timeout_default but ToolRuntime does not enforce it"
+  },
+  "frozen_surface_hashes": {
+    "api":"22dea3274d633c813d52e1acb55c7a38533cc07d4904d814aa6136754ca486dc",
+    "commands":"31f6d7fc4fbc15eb3ca2f823df78a2e34c9ca4c273c8e8d56a042dcfa93b70f7",
+    "health":"312f780a4e5ac617542023fcb7d237b481ce5623547b5069951000d514bc3239",
+    "readiness":"4728cb5bb40c5d1d3ec61ff5a044e13c6823820aac192de0286d46eb7c81e30d",
+    "context_fusion":"36effa883a8619f1875691414a8e9e06535146345fb3d05ffddc9730c9cd62fe"
+  },
+  "findings": [
+    "ToolRuntime/RuntimeToolRegistry is the strongest canonical candidate.",
+    "The legacy ToolRegistry both catalogs and executes, violating registry separation.",
+    "MCPRegistry and ExecutionTargetRegistry are technical catalogs, not public tool registries.",
+    "Desktop Automation is a governed domain executor but is bypassing the canonical tool boundary.",
+    "Timeout, active cancellation, generic verification and restartable history are declared or exposed but incomplete."
+  ]
+}

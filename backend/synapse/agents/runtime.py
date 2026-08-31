@@ -1,16 +1,21 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from synapse.agents.registry import AgentRegistry
 from synapse.context.loader import LoadedContext
 from synapse.core.events import EventBus
-from synapse.core.model_router import ModelRouter
 from synapse.core.permissions import PermissionContext
+from synapse.models.router import ModelRouter
 from synapse.models.types import ModelResponse
 from synapse.policies.effective import EffectivePolicyRuntime
 from synapse.presence.runtime import PresenceRuntime
+
+if TYPE_CHECKING:
+    from synapse.agent_tool_calling.runtime import AgentToolCallingRuntime
+    from synapse.tool_discovery.models import AgentToolCatalog
+    from synapse.tool_discovery.runtime import ToolDiscoveryRuntime
 from synapse.tools.calls import ToolCallPlan, ToolCallResult
 from synapse.tools.router import ToolRouter
 
@@ -23,6 +28,7 @@ class AgentRunResult:
     tools: list[dict[str, Any]] = field(default_factory=list)
     tool_calling: str = "supported"
     tool_results: list[ToolCallResult] = field(default_factory=list)
+    tool_calling_result: dict[str, Any] | None = None
 
 
 class AgentRuntime:
@@ -34,6 +40,8 @@ class AgentRuntime:
         tool_router: ToolRouter,
         event_bus: EventBus,
         presence: PresenceRuntime | None = None,
+        tool_discovery: ToolDiscoveryRuntime | None = None,
+        agent_tool_calling: AgentToolCallingRuntime | None = None,
     ):
         self.agents = agents
         self.policies = policies
@@ -41,6 +49,14 @@ class AgentRuntime:
         self.tool_router = tool_router
         self.event_bus = event_bus
         self.presence = presence
+        self.tool_discovery = tool_discovery
+        self.agent_tool_calling = agent_tool_calling
+
+    def available_tools(self, agent_id: str) -> AgentToolCatalog:
+        self.agents.get(agent_id)
+        if self.tool_discovery is None:
+            raise RuntimeError("Tool discovery runtime is unavailable")
+        return self.tool_discovery.catalog_for_agent(agent_id)
 
     def run(
         self,
@@ -51,6 +67,8 @@ class AgentRuntime:
         session_id: str | None = None,
         project_id: str | None = None,
         original_message_id: str | None = None,
+        model_provider_override: str | None = None,
+        model_override: str | None = None,
     ) -> AgentRunResult:
         try:
             self._set_presence(
@@ -62,7 +80,11 @@ class AgentRuntime:
             )
             agent = self.agents.get(agent_id)
             policy = self.policies.resolve(context, agent_id)
-            allowed_tools = policy.allowed_tool_specs
+            allowed_tools = [
+                tool
+                for tool in policy.allowed_tool_specs
+                if tool.get("name") not in {"agent.summary", "tool.summary"}
+            ]
             self.event_bus.emit(
                 "agent.run.started",
                 context.actor_id,
@@ -78,6 +100,8 @@ class AgentRuntime:
                 user_message=user_message,
                 context=loaded_context.to_dict(),
                 tools=allowed_tools,
+                provider_override=model_provider_override,
+                model_override=model_override,
             )
             tool_results: list[ToolCallResult] = []
             final_response = model_response.content
@@ -136,12 +160,21 @@ class AgentRuntime:
                 )
                 tool_results = [*blocked_results, *tool_results]
                 final_response = self._response_after_tools(model_response, tool_results)
+            tool_calling_result = None
+            if self.agent_tool_calling:
+                tool_calling_result = asdict(
+                    self.agent_tool_calling.process_agent_output(
+                        agent_id,
+                        final_response,
+                    )
+                )
             result = AgentRunResult(
                 agent_id=agent_id,
                 response=final_response,
                 model=self._model_metadata(model_response),
                 tools=allowed_tools,
                 tool_results=tool_results,
+                tool_calling_result=tool_calling_result,
             )
             self.event_bus.emit(
                 "agent.run.completed",

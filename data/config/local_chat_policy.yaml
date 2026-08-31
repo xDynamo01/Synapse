@@ -1,0 +1,8 @@
+local_chat:
+  enabled: true
+  include_conversation_summary: true
+  include_multimodal_context: false
+  max_context_messages: 10
+  persist_conversations: true
+  provider_id: lmstudio_local
+  require_explicit_provider: true

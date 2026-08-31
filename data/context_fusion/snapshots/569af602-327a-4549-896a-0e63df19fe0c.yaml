@@ -1,0 +1,271 @@
+consistency:
+  complete: true
+  metadata:
+    context_id: 569af602-327a-4549-896a-0e63df19fe0c
+  missing_sources: []
+  warnings: []
+generated_at: '2026-06-25T16:17:24.426848+00:00'
+snapshot:
+  delegation_summary: null
+  health_summary:
+    active_missions_count: 0
+    agent_template_count: 4
+    agents_attention:
+    - agent_id: artemis
+      source: presence
+      state: offline
+    - agent_id: atlas
+      source: presence
+      state: offline
+    - agent_id: hermes
+      source: presence
+      state: offline
+    - agent_id: orchestrator
+      source: presence
+      state: offline
+    - agent_id: researcher
+      source: presence
+      state: offline
+    - agent_id: vigil
+      source: presence
+      state: offline
+    app_shell_runtime_available: true
+    approvals_pending: 0
+    archived_agents: 0
+    audio_provider_unavailable_count: 0
+    audio_runtime_available: true
+    capability_count: 29
+    checks:
+    - id: agents.offline
+      label: Agents Offline
+      metadata:
+        agents:
+        - agent_id: artemis
+          source: presence
+          state: offline
+        - agent_id: atlas
+          source: presence
+          state: offline
+        - agent_id: hermes
+          source: presence
+          state: offline
+        - agent_id: orchestrator
+          source: presence
+          state: offline
+        - agent_id: researcher
+          source: presence
+          state: offline
+        - agent_id: vigil
+          source: presence
+          state: offline
+      severity: info
+      summary: agent(s) offline
+    - id: daemon.stopped
+      label: Daemon Stopped
+      metadata: {}
+      severity: warning
+      summary: daemon is not running
+    context_fusion_runtime_available: true
+    daemon:
+      last_error: null
+      last_jobs_run: []
+      last_tick_at: null
+      running: false
+      started_at: null
+      stopped_at: null
+      total_ticks: 0
+    dead_letter_open_count: 0
+    decision_runtime_available: true
+    delegation_execution:
+      available: true
+      failed_recent: 0
+      total: 0
+    delegation_inbox:
+      agents_indexed: 0
+      available: true
+      corrupted_agents: []
+      entries: 0
+      rebuild_failures: 0
+    delegation_timeout:
+      available: true
+      timeout_candidates: 0
+    failed_jobs: 0
+    failed_missions_count: 0
+    inactive_agents: 0
+    migrations:
+      available: true
+      current_versions:
+        approval: 1
+        job: 1
+        notification: 1
+      last_history: null
+      migrations_available: 0
+      updated_at: '2026-06-25T16:17:24.276511+00:00'
+    missions_critical_count: 0
+    missions_warning_count: 0
+    missions_with_critical_context: 0
+    multimodal_runtime_available: true
+    pending_admin_action_requests: 0
+    pending_agent_provisioning_requests: 0
+    pending_jobs: 0
+    perception_runtime_available: true
+    perception_signal_count: 2
+    provider_runtime_available: true
+    providers_unavailable_count: 0
+    recovery_candidates_count: 0
+    recurring_jobs_due: 0
+    retention:
+      available: true
+      domains:
+      - default_dry_run: true
+        domain_id: agent_admin_requests
+        enabled: true
+        policy:
+          delete_applied_after_days: 30
+          delete_cancelled_after_days: 30
+          delete_failed_after_days: 60
+          delete_rejected_after_days: 30
+          dry_run_default: true
+          enabled: true
+          max_requests: 500
+          preserve_approved_not_applied: true
+          preserve_awaiting_approval: true
+        policy_path: E:\Projetos\Synapse\data\config\agent_admin_retention_policy.yaml
+        status:
+          counts: {}
+          dry_run_default: true
+          policy:
+            delete_applied_after_days: 30
+            delete_cancelled_after_days: 30
+            delete_failed_after_days: 60
+            delete_rejected_after_days: 30
+            dry_run_default: true
+            enabled: true
+            max_requests: 500
+            preserve_approved_not_applied: true
+            preserve_awaiting_approval: true
+          total_requests: 0
+      - default_dry_run: true
+        domain_id: notifications
+        enabled: true
+        policy:
+          max_total_notifications: 500
+          preserve_critical: true
+          preserve_unread: true
+          retention_days: 30
+        policy_path: E:\Projetos\Synapse\data\config\notification_policy.yaml
+        status:
+          enabled: true
+          total: 0
+      enabled_domains: 2
+      total_domains: 2
+    runner:
+      created_at: '2026-06-22T15:53:24.347979+00:00'
+      hostname: Dynamo01-PC
+      last_seen_at: '2026-06-22T15:53:24.347979+00:00'
+      process_id: 19056
+      role: daemon
+      runner_id: 9d297bed-ba0f-4050-af94-c557ca9b7d32
+      status: offline
+    scheduler_lock:
+      acquired_at: null
+      locked: false
+      owner_id: null
+      path: E:\Projetos\Synapse\data\locks\scheduler.lock
+      stale: false
+    status: warning
+    ui_contract_runtime_available: true
+    unread_critical_notifications: 0
+    vision_provider_unavailable_count: 0
+    vision_runtime_available: true
+  interaction_context:
+    context_id: 569af602-327a-4549-896a-0e63df19fe0c
+    conversation_id: null
+    created_at: '2026-06-25T16:17:24.256583+00:00'
+    metadata: {}
+    mission_id: null
+    multimodal_session_id: ad045135-7d9d-4f9f-b0e2-8280027279d5
+    participants:
+    - user
+    updated_at: '2026-06-25T16:17:24.256587+00:00'
+  latest_conversation_summary: null
+  latest_messages: []
+  metadata:
+    source: context_fusion
+  mission_summary: null
+  readiness_summary:
+    checks:
+    - health_check_id: null
+      id: ui_contracts.ready
+      metadata: {}
+      state: ready
+      summary: UI contract runtime is available.
+    - health_check_id: null
+      id: app_shell.ready
+      metadata: {}
+      state: ready
+      summary: App shell runtime is available.
+    - health_check_id: null
+      id: providers.ready
+      metadata:
+        providers_unavailable_count: 0
+      state: ready
+      summary: Provider runtime is available.
+    - health_check_id: null
+      id: multimodal.ready
+      metadata: {}
+      state: ready
+      summary: Multimodal communication runtime is available.
+    - health_check_id: null
+      id: audio.ready
+      metadata:
+        audio_provider_unavailable_count: 0
+      state: ready
+      summary: Audio runtime is available.
+    - health_check_id: null
+      id: vision.ready
+      metadata:
+        vision_provider_unavailable_count: 0
+      state: ready
+      summary: Vision runtime is available.
+    - health_check_id: null
+      id: perception.ready
+      metadata:
+        perception_signal_count: 2
+      state: ready
+      summary: Perception runtime is available.
+    - health_check_id: null
+      id: context_fusion.ready
+      metadata: {}
+      state: ready
+      summary: Context fusion runtime is available.
+    health_status: warning
+    policy:
+      critical_notifications_state: action_required
+      failed_jobs_state: degraded
+      pending_approvals_state: action_required
+      require_capabilities: true
+      require_daemon: false
+      require_scheduler: true
+      require_templates: false
+      stale_lock_state: action_required
+    state: ready
+  signal_group:
+    body_signals: []
+    face_signals: []
+    metadata:
+      total_signals: 1
+    speech_signals:
+    - confidence: null
+      metadata: {}
+      multimodal_session_id: ad045135-7d9d-4f9f-b0e2-8280027279d5
+      payload:
+        text: hi
+      session_id: null
+      signal_id: a5c8eaa5-2aae-4b62-9e0f-5a50543700f8
+      signal_type: speech
+      source_provider: null
+      source_runtime: audio
+      timestamp: '2026-06-25T16:17:24.247223+00:00'
+    system_signals: []
+    voice_signals: []

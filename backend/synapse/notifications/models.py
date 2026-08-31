@@ -26,12 +26,15 @@ class Notification:
     severity: str
     source: str
     category: str
+    schema_version: int = 1
+    record_type: str = "notification"
     read: bool = False
     read_at: str | None = None
     correlation_id: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     id: str = field(default_factory=lambda: str(uuid4()))
     created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    updated_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
 
 @dataclass(frozen=True)

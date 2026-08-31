@@ -9,6 +9,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "backend"))
 
+from factories.agents import seed_test_agent
 from synapse.core.app import create_runtime
 from synapse.core.config import Settings
 from synapse.core.permissions import PermissionContext
@@ -37,6 +38,16 @@ def runtime_in_tempdir(
         default_actor_id="local_owner",
     )
     create_runtime(settings)
+    seed_test_agent(
+        settings.data_dir,
+        "artemis",
+        role="orchestrator",
+        extra={
+            "permissions": agent_permissions or [],
+            "forbidden_tools": forbidden_tools or [],
+            "preferred_tools": preferred_tools or [],
+        },
+    )
 
     permissions = {
         "subjects": {

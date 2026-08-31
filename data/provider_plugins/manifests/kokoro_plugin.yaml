@@ -1,0 +1,19 @@
+{
+  "plugin_id": "kokoro_plugin",
+  "name": "Kokoro TTS Plugin",
+  "description": "High-quality text-to-speech using Kokoro model.",
+  "version": "1.0.0",
+  "plugin_type": "speech",
+  "providers": ["kokoro"],
+  "capabilities": ["speech.synthesize"],
+  "adapters": ["kokoro_adapter"],
+  "enabled": false,
+  "installed": false,
+  "local_only": true,
+  "requires_network": false,
+  "requires_gpu": true,
+  "supported_platforms": ["windows", "linux"],
+  "requirements": ["kokoro-onnx>=0.1.0"],
+  "entrypoint": "kokoro_plugin.entrypoint",
+  "metadata": {}
+}
