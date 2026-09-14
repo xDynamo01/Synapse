@@ -17,6 +17,7 @@ from synapse.core.serialization import load_structured_file
 from synapse.providers.runtime import ProviderRuntime
 from synapse.speech_adapters.execution import SpeechExecutionPort
 from synapse.speech_adapters.faster_whisper import FasterWhisperSpeechToTextAdapter
+from synapse.speech_adapters.kokoro_tts import KokoroTextToSpeechAdapter
 from synapse.speech_adapters.local_analysis import LocalVoiceAnalysisAdapter
 from synapse.speech_adapters.models import (
     SpeechAdapterCapability,
@@ -301,6 +302,8 @@ class SpeechAdapterRuntime:
 
     def _build_adapter(self, manifest: SpeechAdapterManifest) -> object:
         factory_name = self._adapter_factory_name(manifest)
+        if factory_name == "kokoro_tts":
+            return KokoroTextToSpeechAdapter(manifest, self.data_dir, self.execution)
         if factory_name == "faster_whisper":
             return FasterWhisperSpeechToTextAdapter(manifest, self.data_dir)
         if factory_name == "piper_tts":

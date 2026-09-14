@@ -63,9 +63,9 @@ def test_frozen_formats_schema_and_migration_checksum_are_exact() -> None:
 def test_frozen_runtime_and_source_graph_baselines_are_exact() -> None:
     runtime = _runtime_context_graph()
     source = context_graph()
-    assert len(runtime) == 304
+    assert len(runtime) == 306  # Primary MoM: api -> mom -> core.
     assert [(len(members), edges) for members, edges in cyclic_components(runtime)] == [(11, 31)]
-    assert len(source) == 339
+    assert len(source) == 341  # Primary MoM adds the same two source edges.
     assert sorted(
         (len(members), edges) for members, edges in cyclic_components(source)
     ) == [(3, 4), (24, 80)]

@@ -12,54 +12,9 @@
     "build:renderer": "vite build",
     "dev": "npm run build:main && electron dist/main/main/main.js",
     "lint": "eslint \"src/**/*.{ts,tsx}\" \"tests/**/*.ts\"",
-    "package:win": "npm run build && npm run build:backend-sidecar && electron-builder --win nsis --x64",
-    "release:artifacts": "node scripts/write-release-artifacts.mjs",
     "test": "vitest run",
     "test:electron-smoke": "npm run build && cross-env SYNAPSE_ELECTRON_SMOKE=1 electron dist/main/main/main.js",
-    "build:root-exe": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-root-launcher.ps1",
     "runtime:hygiene": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/clean-stale-runtime-artifacts.ps1"
-  },
-  "build": {
-    "appId": "local.synapse.desktop",
-    "productName": "Synapse",
-    "asar": true,
-    "directories": {
-      "output": "release"
-    },
-    "files": [
-      "dist/**/*",
-      "assets/icons/**/*",
-      "assets/media/**/*",
-      "package.json"
-    ],
-    "extraResources": [
-      {
-        "from": "../../backend/dist/synapse_backend",
-        "to": "synapse-backend"
-      }
-    ],
-    "win": {
-      "icon": "assets/icons/synapse.ico",
-      "target": [
-        {
-          "target": "nsis",
-          "arch": [
-            "x64"
-          ]
-        }
-      ],
-      "artifactName": "Synapse-Setup-v0.01.${ext}"
-    },
-    "nsis": {
-      "oneClick": false,
-      "perMachine": false,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true,
-      "shortcutName": "Synapse",
-      "uninstallDisplayName": "Synapse"
-    },
-    "npmRebuild": false
   },
   "devDependencies": {
     "@types/node": "26.2.0",
@@ -70,7 +25,6 @@
     "@vitejs/plugin-react": "6.1.0",
     "cross-env": "10.1.0",
     "electron": "43.4.1",
-    "electron-builder": "26.15.3",
     "eslint": "10.9.1",
     "eslint-plugin-react-hooks": "7.1.1",
     "pixi.js": "8.20.0",

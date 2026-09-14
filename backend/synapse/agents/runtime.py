@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
 from synapse.agents.registry import AgentRegistry
@@ -8,7 +8,7 @@ from synapse.context.loader import LoadedContext
 from synapse.core.events import EventBus
 from synapse.core.permissions import PermissionContext
 from synapse.models.router import ModelRouter
-from synapse.models.types import ModelResponse
+from synapse.models.types import ModelRequest, ModelResponse
 from synapse.policies.effective import EffectivePolicyRuntime
 from synapse.presence.runtime import PresenceRuntime
 
@@ -69,6 +69,7 @@ class AgentRuntime:
         original_message_id: str | None = None,
         model_provider_override: str | None = None,
         model_override: str | None = None,
+        model_request: ModelRequest | None = None,
     ) -> AgentRunResult:
         try:
             self._set_presence(
@@ -85,6 +86,12 @@ class AgentRuntime:
                 for tool in policy.allowed_tool_specs
                 if tool.get("name") not in {"agent.summary", "tool.summary"}
             ]
+            if self.tool_router.tools is not None:
+                allowed_tools = [
+                    {**tool, "parameters": self.tool_router.tools.get_tool(tool["name"]).input_schema}
+                    for tool in allowed_tools
+                    if self.tool_router.tools.get_tool(tool["name"]).enabled
+                ]
             self.event_bus.emit(
                 "agent.run.started",
                 context.actor_id,
@@ -95,7 +102,9 @@ class AgentRuntime:
                     "policy": policy.to_dict(),
                 },
             )
-            model_response = self.models.generate(
+            model_response = self.models.generate_request(
+                replace(model_request, tools=allowed_tools)
+            ) if model_request is not None else self.models.generate(
                 agent=agent,
                 user_message=user_message,
                 context=loaded_context.to_dict(),
@@ -124,8 +133,11 @@ class AgentRuntime:
                 allowed_calls = []
                 forbidden = set(policy.forbidden_tools)
                 for call in plan.calls:
-                    if call.name in forbidden:
+                    if call.name in forbidden or call.name not in {tool["name"] for tool in allowed_tools}:
                         error = f"Tool is forbidden by agent policy for {agent.id}: {call.name}"
+                        spec = next((item for item in self.tool_router.list_specs() if item.name == call.name), None)
+                        if call.name not in forbidden and spec and spec.permission not in policy.allowed_permissions:
+                            error = f"agent:{agent.id} lacks permission {spec.permission}"
                         blocked_results.append(
                             ToolCallResult(
                                 request=call,
@@ -160,6 +172,18 @@ class AgentRuntime:
                 )
                 tool_results = [*blocked_results, *tool_results]
                 final_response = self._response_after_tools(model_response, tool_results)
+                if all(item.status != "awaiting_approval" for item in tool_results):
+                    result_context = loaded_context.to_dict()
+                    result_context["tool_execution_results"] = [asdict(item) for item in tool_results]
+                    followup = self.models.generate_request(
+                        replace(model_request, context=result_context, tools=[])
+                    ) if model_request is not None else self.models.generate(
+                        agent=agent, user_message=user_message, context=result_context,
+                        tools=[], provider_override=model_provider_override,
+                        model_override=model_override,
+                    )
+                    if followup.content and not followup.tool_calls:
+                        final_response = followup.content
             tool_calling_result = None
             if self.agent_tool_calling:
                 tool_calling_result = asdict(
@@ -202,7 +226,13 @@ class AgentRuntime:
         return {
             "provider": response.provider,
             "model": response.model,
-            "metadata": response.metadata,
+            "metadata": {
+                **response.metadata, "latency_ms": response.latency_ms,
+                "input_count": response.usage.input_tokens,
+                "output_count": response.usage.output_tokens,
+                "total_count": response.usage.total_tokens,
+                "finish_reason": response.finish_reason,
+            },
         }
 
     @staticmethod

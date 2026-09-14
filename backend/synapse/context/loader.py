@@ -114,6 +114,7 @@ class ContextLoader:
         self.permissions.require(context, "filesystem.read")
         self.agents.get(agent_id)
         agent_identity = self.identities.load_identity(agent_id).to_dict()
+        agent_identity["personality"] = self.agents.personality(agent_id)
         agent_policy = self.policies.resolve(context, agent_id).to_dict()
 
         order = 0

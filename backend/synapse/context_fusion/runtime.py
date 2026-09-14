@@ -4,11 +4,12 @@ from contextvars import copy_context
 from dataclasses import asdict
 from queue import Queue
 from threading import Thread
-from typing import Any, Callable, TypeVar
+from typing import Any, Callable, Sequence, TypeVar
 
 from synapse.context_fusion.contracts import (
     ContextFusionSettings,
     ConversationContextReader,
+    MemoryContextRead,
     MemoryContextReader,
     MissionContextReader,
     MultimodalContextReader,
@@ -167,7 +168,12 @@ class ContextFusionRuntime:
                 if options.get("include_runtime_health")
                 else None
             ),
-            metadata={"source": "context_fusion"},
+            metadata={
+                "source": "context_fusion",
+                "include_project_knowledge": options.get("include_project_knowledge") is True,
+                "retrieval_query": str(options.get("retrieval_query") or ""),
+                "retrieval_intent": options.get("retrieval_intent") or {},
+            },
         )
         consistency = self.validate_context(snapshot)
         perception_items = (
@@ -345,13 +351,14 @@ class ContextFusionRuntime:
             scopes = [
                 "system",
                 "user",
-                "knowledge",
                 "agent",
                 "conversation",
                 "session",
                 "task",
                 "mission",
             ]
+            if self._include_project_knowledge(snapshot, incoming_message):
+                scopes.append("knowledge")
             owner_ids = [
                 value
                 for value in [
@@ -363,10 +370,29 @@ class ContextFusionRuntime:
                 ]
                 if value
             ]
-            memories = self._read(
-                "memory",
-                lambda: memory_reader.retrieve(permission_context, scopes, owner_ids, 30),
-            )
+            filters = self._memory_filters(snapshot)
+            memory_limit = 5 if filters is not None else 30
+            retrieval_query = str(snapshot.metadata.get("retrieval_query") or incoming_message or "")
+            if filters is None:
+                def read_memory() -> Sequence[MemoryContextRead]:
+                    return memory_reader.retrieve(
+                        permission_context,
+                        retrieval_query,
+                        scopes,
+                        owner_ids,
+                        memory_limit,
+                    )
+            else:
+                def read_memory() -> Sequence[MemoryContextRead]:
+                    return memory_reader.retrieve(
+                        permission_context,
+                        retrieval_query,
+                        scopes,
+                        owner_ids,
+                        memory_limit,
+                        filters=filters,
+                    )
+            memories = self._read("memory", read_memory)
             for memory_item in memories:
                 add(
                     "memory",
@@ -378,6 +404,9 @@ class ContextFusionRuntime:
                     metadata={
                         "revision": memory_item.revision,
                         "source": memory_item.source,
+                        **memory_item.metadata,
+                        "rag_retrieval": memory_item.scope == "knowledge",
+                        "trusted_instruction": False,
                     },
                 )
         deduplicated: dict[str, ContextItem] = {}
@@ -397,6 +426,28 @@ class ContextFusionRuntime:
                 continue
             deduplicated[key] = item
         return sorted(deduplicated.values(), key=lambda value: (-value.priority, value.id))
+
+    @staticmethod
+    def _include_project_knowledge(
+        snapshot: ContextSnapshot, incoming_message: str | None
+    ) -> bool:
+        metadata = snapshot.metadata if isinstance(snapshot.metadata, dict) else {}
+        if metadata.get("include_project_knowledge") is True:
+            return True
+        if not incoming_message:
+            return False
+        return False
+
+    @staticmethod
+    def _memory_filters(snapshot: ContextSnapshot) -> dict[str, Any] | None:
+        metadata = snapshot.metadata if isinstance(snapshot.metadata, dict) else {}
+        intent = metadata.get("retrieval_intent") if isinstance(metadata, dict) else None
+        if not isinstance(intent, dict) or intent.get("allowed") is not True:
+            return None
+        project_id = intent.get("project_id")
+        if not project_id:
+            return None
+        return {"tags": ["project_knowledge", f"project:{project_id}"]}
 
     @staticmethod
     def _apply_budget(

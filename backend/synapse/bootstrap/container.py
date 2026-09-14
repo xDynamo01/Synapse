@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from synapse.bootstrap.adapters.coding_sessions import DeferredCodingSessionsRuntime
@@ -15,6 +15,9 @@ from synapse.core.data_dir import DataDir
 from synapse.core.events import EventBus
 from synapse.core.permissions import PermissionContext, PermissionManager
 from synapse.deployment_composition import DeploymentRuntime
+from synapse.mom.runtime import MoMRuntime
+from synapse.project_knowledge.runtime import ProjectKnowledgeRuntime
+from synapse.search_composition import SearchRuntime
 
 
 @dataclass
@@ -99,6 +102,8 @@ class RuntimeContainer:
     skills_phase2: DeferredSkillsPhase2Runtime
     sandbox: DeferredSandboxRuntime
     repository_runtime: DeferredRepositoryRuntime
+    search: SearchRuntime
+    project_knowledge: ProjectKnowledgeRuntime
     world_state: Any
     attention: Any
     attention_decisions: Any
@@ -128,6 +133,7 @@ class RuntimeContainer:
     speech_pipeline: Any
     commands: Any
     chat: Any
+    mom: MoMRuntime
     application_lifecycle: LifecycleManager = field(default_factory=LifecycleManager)
     bootstrap_metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -142,3 +148,28 @@ class RuntimeContainer:
             actor_type=actor_type,
             device_id=device_id,
         )
+
+    def sidecar_startup_readiness(self) -> dict[str, object]:
+        startup_report = self.application_lifecycle.start_report
+        if startup_report is None:
+            return {
+                "schema": "synapse-sidecar-startup-ready-v1",
+                "ready": False,
+                "startup_status": "missing-startup-report",
+                "resources": [],
+            }
+        required_by_resource = {
+            resource.name: resource.required for resource in self.application_lifecycle.resources
+        }
+        return {
+            "schema": "synapse-sidecar-startup-ready-v1",
+            "ready": startup_report.status in {"ready", "degraded"},
+            "startup_status": startup_report.status,
+            "resources": [
+                {
+                    **asdict(item),
+                    "required": required_by_resource.get(item.resource, True),
+                }
+                for item in startup_report.results
+            ],
+        }

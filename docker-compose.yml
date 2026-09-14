@@ -7,7 +7,18 @@ services:
       SYNAPSE_DATA_DIR: /data
       SYNAPSE_HOST: 0.0.0.0
       SYNAPSE_PORT: 8717
+      SYNAPSE_SEARXNG_URL: http://searxng:8080
     volumes:
       - ./data:/data
     restart: unless-stopped
 
+  searxng:
+    image: searxng/searxng:latest
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      SEARXNG_BASE_URL: http://127.0.0.1:8080/
+      SEARXNG_SECRET: ${SEARXNG_SECRET:-synapse-local-dev-only-change-me}
+    volumes:
+      - ./scripts/search/searxng-settings.yml:/etc/searxng/settings.yml:ro
+    restart: unless-stopped

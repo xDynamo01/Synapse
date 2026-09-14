@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import socket
 import time
+from collections import deque
 from dataclasses import asdict
 from datetime import UTC, datetime
 from typing import Any
@@ -21,13 +22,12 @@ from synapse.model_providers.models import (
     LMStudioModel,
 )
 from synapse.models.adapters import (
-    OpenAICompatibleAdapter,
     build_chat_messages,
     estimate_chat_message_characters,
     estimate_chat_tokens,
     reduce_chat_messages,
 )
-from synapse.models.types import ModelRequest, ModelResponse
+from synapse.models.types import ModelRequest, ModelResponse, ModelUsage
 from synapse.models.errors import ModelError
 
 
@@ -35,6 +35,7 @@ class LMStudioProviderRuntime:
     def __init__(self, data_dir: DataDir, event_bus: EventBus):
         self.data_dir = data_dir
         self.event_bus = event_bus
+        self._telemetry: deque[dict[str, Any]] = deque(maxlen=80)
 
     def load_config(self) -> LMStudioConfig:
         path = self.data_dir.resolve("config/lmstudio_provider.yaml")
@@ -133,149 +134,153 @@ class LMStudioProviderRuntime:
         if not model:
             raise ToolExecutionError("LM Studio model is not configured.")
         timeout_seconds = chat_request.timeout_seconds or config.timeout_seconds
+        return self._native_chat_completion(config, chat_request, model, timeout_seconds)
+
+    def _native_chat_completion(
+        self,
+        config: LMStudioConfig,
+        chat_request: LMStudioChatRequest,
+        model: str,
+        timeout_seconds: int,
+    ) -> LMStudioChatResult:
+        endpoint = _native_chat_endpoint(config.base_url)
+        budgeted_messages = reduce_chat_messages(
+            chat_request.messages,
+            total_char_limit=_input_context_limit(config.max_context_chars),
+            user_char_limit=max(800, _input_context_limit(config.max_context_chars) // 2),
+        )
         payload: dict[str, Any] = {
             "model": model,
-            "messages": chat_request.messages,
+            "input": _native_input_text(budgeted_messages),
+            "stream": True,
         }
         if chat_request.temperature is not None:
             payload["temperature"] = chat_request.temperature
         if chat_request.max_tokens is not None:
-            payload["max_tokens"] = chat_request.max_tokens
-        input_char_limit = _input_context_limit(config.max_context_chars)
-        budgeted_messages = reduce_chat_messages(
-            chat_request.messages,
-            total_char_limit=input_char_limit,
-            user_char_limit=max(800, input_char_limit // 2),
+            payload["max_output_tokens"] = chat_request.max_tokens
+        metadata = chat_request.metadata or {}
+        activity_payload = _activity_payload(metadata, model)
+        self._emit_native_activity(activity_payload, "prompt_processing", "Prompt processing", "Preparing model context")
+        http_request = request.Request(
+            endpoint,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json", "Accept": "text/event-stream"},
+            method="POST",
         )
-        request_profile = _profile_messages(budgeted_messages)
-        original_profile = _profile_messages(chat_request.messages)
-        if request_profile["character_count"] > input_char_limit:
-            raise ToolExecutionError(
-                "O contexto está grande demais para este modelo/provider."
-            )
-        self.event_bus.emit(
-            "lmstudio.chat_request_profiled",
-            "lmstudio_local",
-            {
-                "endpoint": config.base_url.rstrip("/") + "/chat/completions",
-                "model": model,
-                "provider": "lmstudio",
-                "payload_fields": sorted(payload.keys()),
-                "roles": [str(message.get("role", "")) for message in budgeted_messages],
-                "has_tools": False,
-                "has_response_format": False,
-                "has_stop": False,
-                "has_temperature": chat_request.temperature is not None,
-                "has_max_tokens": chat_request.max_tokens is not None,
-                "timeout_seconds": timeout_seconds,
-                "context_capacity_chars": config.max_context_chars,
-                "input_char_limit": input_char_limit,
-                "original": original_profile,
-                **request_profile,
-            },
-        )
-
+        content_parts: list[str] = []
+        raw_events: list[dict[str, Any]] = []
+        stats: dict[str, Any] = {}
+        response_id: str | None = None
         started = time.perf_counter()
         try:
-            raw = self._http_post_json(
-                config.base_url.rstrip("/") + "/chat/completions",
-                {**payload, "messages": budgeted_messages},
-                timeout_seconds,
-            )
+            with request.urlopen(http_request, timeout=timeout_seconds) as response:
+                for event_name, data in _iter_sse_events(response):
+                    if not isinstance(data, dict):
+                        continue
+                    raw_events.append({"event": event_name, "type": data.get("type")})
+                    event_type = str(data.get("type") or event_name)
+                    if event_type in {"prompt_processing.start", "prompt_processing.progress", "prompt_processing.end"}:
+                        self._emit_native_activity(activity_payload, "prompt_processing", "Prompt processing", _progress_task(data, "Preparing model context"))
+                    elif event_type in {"reasoning.start", "reasoning.delta", "reasoning.end"}:
+                        self._emit_native_activity(activity_payload, "reasoning", "Reasoning", "Model reasoning in progress")
+                    elif event_type in {"message.start", "message.delta", "message.end"}:
+                        self._emit_native_activity(activity_payload, "generating", "Generating response", "Model is producing output")
+                        if event_type == "message.delta":
+                            delta = data.get("content")
+                            if isinstance(delta, str):
+                                content_parts.append(delta)
+                    elif event_type == "chat.end":
+                        result = data.get("result")
+                        if isinstance(result, dict):
+                            response_id = _optional_str(result.get("response_id"))
+                            stats_value = result.get("stats")
+                            if isinstance(stats_value, dict):
+                                stats = stats_value
+                            if not content_parts:
+                                content_parts.extend(_message_outputs(result.get("output")))
         except Exception as exc:
-            if _is_timeout_error(exc):
-                reduced_messages = reduce_chat_messages(
-                    budgeted_messages,
-                    total_char_limit=max(800, input_char_limit // 2),
-                    user_char_limit=max(400, input_char_limit // 4),
-                )
-                reduced_profile = _profile_messages(reduced_messages)
-                self.event_bus.emit(
-                    "lmstudio.chat_request_reduced",
-                    "lmstudio_local",
-                    {
-                        "model": model,
-                        "provider": "lmstudio",
-                        "timeout_seconds": timeout_seconds,
-                        "original": request_profile,
-                        "reduced": reduced_profile,
-                    },
-                )
-                try:
-                    raw = self._http_post_json(
-                        config.base_url.rstrip("/") + "/chat/completions",
-                        {**payload, "messages": reduced_messages},
-                        timeout_seconds,
-                    )
-                except Exception as retry_exc:
-                    if _is_timeout_error(retry_exc):
-                        raise ToolExecutionError(
-                            "LM Studio generation timed out after governed context reduction."
-                        ) from retry_exc
-                    raise ToolExecutionError(
-                        f"LM Studio chat request failed: {retry_exc}"
-                    ) from retry_exc
-            else:
-                fallback_model = self._fallback_model_for_unloaded_error(model, config, exc)
-                if fallback_model:
-                    fallback_payload = {**payload, "model": fallback_model}
-                    self.event_bus.emit(
-                        "lmstudio.model_unloaded_fallback",
-                        "lmstudio_local",
-                        {
-                            "requested_model": model,
-                            "fallback_model": fallback_model,
-                            "provider": "lmstudio",
-                        },
-                    )
-                    try:
-                        raw = self._http_post_json(
-                            config.base_url.rstrip("/") + "/chat/completions",
-                            {**fallback_payload, "messages": budgeted_messages},
-                            timeout_seconds,
-                        )
-                        model = fallback_model
-                    except Exception as fallback_exc:
-                        raise ToolExecutionError(
-                            f"LM Studio chat request failed: {fallback_exc}"
-                        ) from fallback_exc
-                else:
-                    raise ToolExecutionError(f"LM Studio chat request failed: {exc}") from exc
+            raise ToolExecutionError(f"LM Studio native chat request failed: {_exception_text(exc)}") from exc
         latency_ms = int((time.perf_counter() - started) * 1000)
-        try:
-            choice = raw["choices"][0]
-            content = choice["message"]["content"]
-        except (KeyError, IndexError, TypeError) as exc:
-            raise ToolExecutionError(
-                "LM Studio response did not include choices[0].message.content."
-            ) from exc
-        if not isinstance(content, str):
-            raise ToolExecutionError("LM Studio response content is not text.")
+        content = "".join(content_parts)
         if not content.strip():
-            raise ToolExecutionError("empty_model_response: LM Studio returned empty content.")
-        result = LMStudioChatResult(
-            model=str(raw.get("model") or model),
-            content=content,
-            finish_reason=choice.get("finish_reason"),
-            latency_ms=latency_ms,
-            raw_metadata={"id": raw.get("id"), "usage": raw.get("usage")},
-        )
-        self.event_bus.emit(
-            "lmstudio.chat_completed",
-            "lmstudio_local",
+            raise ToolExecutionError("empty_model_response: LM Studio native API returned empty content.")
+        usage = _usage_from_native_stats(stats)
+        self._emit_native_activity(
             {
-                "model": result.model,
-                "finish_reason": result.finish_reason,
-                "latency_ms": result.latency_ms,
-                "request": request_profile,
+                **activity_payload,
+                **_activity_metrics_from_usage(usage, latency_ms),
             },
+            "completed",
+            "Response generated",
+            "Assistant response complete",
+            status="completed",
         )
-        return result
+        return LMStudioChatResult(
+            model=model,
+            content=content,
+            finish_reason="stop",
+            latency_ms=latency_ms,
+            raw_metadata={"id": response_id, "stats": stats, "usage": _openai_usage_from_usage(usage)},
+        )
+
+    def _emit_native_activity(
+        self,
+        payload: dict[str, Any],
+        phase: str,
+        current_operation: str,
+        current_task: str,
+        *,
+        status: str = "processing",
+    ) -> None:
+        if not payload.get("conversation_id"):
+            return
+        activity = {
+            **payload,
+            "provider_id": "lmstudio",
+            "phase": phase,
+            "status": status,
+            "current_operation": current_operation,
+            "current_task": current_task,
+        }
+        self._append_telemetry(activity)
+        self.event_bus.emit(f"lmstudio.native.{phase}", "lmstudio_local", activity)
+
+    def _append_telemetry(self, payload: dict[str, Any]) -> None:
+        self._telemetry.append(
+            {
+                "occurred_at": _now(),
+                **{
+                    key: value
+                    for key, value in payload.items()
+                    if key
+                    in {
+                        "provider_id",
+                        "model_name",
+                        "conversation_id",
+                        "phase",
+                        "status",
+                        "current_operation",
+                        "current_task",
+                        "input_count",
+                        "output_count",
+                        "total_count",
+                        "latency_ms",
+                        "first_output_ms",
+                        "output_rate",
+                    }
+                    and isinstance(value, (str, int, float, bool))
+                },
+            }
+        )
+
+    def recent_telemetry(self, limit: int = 24) -> list[dict[str, Any]]:
+        count = max(1, min(limit, 80))
+        return list(self._telemetry)[-count:]
 
     def explain_status(self) -> dict[str, Any]:
         config = self.load_config()
         health = self.health()
-        return {"config": asdict(config), "health": asdict(health)}
+        return {"config": asdict(config), "health": asdict(health), "telemetry": {"recent": self.recent_telemetry()}}
 
     def _fallback_model_for_unloaded_error(
         self,
@@ -395,6 +400,124 @@ def _safe_http_error_body(exc: HTTPError) -> str:
     return text.replace("\r", " ").replace("\n", " ").strip()[:1000]
 
 
+def _native_chat_endpoint(base_url: str) -> str:
+    root = base_url.rstrip("/")
+    if root.endswith("/v1"):
+        root = root[:-3]
+    return root.rstrip("/") + "/api/v1/chat"
+
+
+def _native_input_text(messages: list[dict[str, Any]]) -> str:
+    lines = []
+    for message in messages:
+        role = str(message.get("role") or "user").strip() or "user"
+        content = str(message.get("content") or "").strip()
+        if content:
+            lines.append(f"{role}: {content}")
+    return "\n\n".join(lines)
+
+
+def _iter_sse_events(response: Any):
+    event_name = "message"
+    data_lines: list[str] = []
+    for encoded in response:
+        line = encoded.decode("utf-8", errors="replace").strip()
+        if not line:
+            if data_lines:
+                raw_data = "\n".join(data_lines)
+                try:
+                    parsed = json.loads(raw_data)
+                except json.JSONDecodeError:
+                    parsed = raw_data
+                yield event_name, parsed
+            event_name = "message"
+            data_lines = []
+            continue
+        if line.startswith("event:"):
+            event_name = line.removeprefix("event:").strip()
+        elif line.startswith("data:"):
+            data_lines.append(line.removeprefix("data:").strip())
+
+
+def _activity_payload(metadata: dict[str, Any], model: str) -> dict[str, Any]:
+    return {
+        "model_name": model,
+        "agent_id": _optional_str(metadata.get("agent_id")) or "artemis",
+        "conversation_id": _optional_str(metadata.get("conversation_id")),
+        "session_id": _optional_str(metadata.get("session_id")),
+        "project_id": _optional_str(metadata.get("project_id")),
+    }
+
+
+def _progress_task(data: dict[str, Any], fallback: str) -> str:
+    progress = data.get("progress")
+    if isinstance(progress, (int, float)) and not isinstance(progress, bool):
+        return f"Preparing model context ({round(float(progress) * 100)}%)"
+    return fallback
+
+
+def _message_outputs(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    outputs = []
+    for item in value:
+        if not isinstance(item, dict) or item.get("type") != "message":
+            continue
+        content = item.get("content")
+        if isinstance(content, str):
+            outputs.append(content)
+    return outputs
+
+
+def _usage_from_native_stats(stats: dict[str, Any]) -> ModelUsage:
+    input_count = _optional_int(stats.get("input_tokens"))
+    output_count = _optional_int(stats.get("total_output_tokens"))
+    return ModelUsage(
+        input_tokens=input_count,
+        output_tokens=output_count,
+        total_tokens=(input_count + output_count) if input_count is not None and output_count is not None else None,
+        time_to_first_token_ms=_seconds_to_ms(stats.get("time_to_first_token_seconds")),
+        tokens_per_second=_optional_float(stats.get("tokens_per_second")),
+    )
+
+
+def _activity_metrics_from_usage(usage: ModelUsage, latency_ms: int) -> dict[str, Any]:
+    return {
+        "latency_ms": latency_ms,
+        "input_count": usage.input_tokens,
+        "output_count": usage.output_tokens,
+        "total_count": usage.total_tokens,
+        "first_output_ms": usage.time_to_first_token_ms,
+        "output_rate": usage.tokens_per_second,
+    }
+
+
+def _openai_usage_from_usage(usage: ModelUsage) -> dict[str, int | None]:
+    return {
+        "prompt_tokens": usage.input_tokens,
+        "completion_tokens": usage.output_tokens,
+        "total_tokens": usage.total_tokens,
+    }
+
+
+def _seconds_to_ms(value: object) -> int | None:
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return int(float(value) * 1000)
+    return None
+
+
+def _optional_float(value: object) -> float | None:
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    return None
+
+
+def _optional_str(value: object) -> str | None:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
 class LMStudioModelAdapter:
     provider = "lmstudio"
 
@@ -406,8 +529,13 @@ class LMStudioModelAdapter:
             LMStudioChatRequest(
                 model=request_payload.model,
                 messages=build_chat_messages(request_payload),
+                temperature=request_payload.temperature,
+                max_tokens=request_payload.max_tokens,
+                timeout_seconds=int(request_payload.timeout_seconds),
+                metadata=request_payload.metadata,
             )
         )
+        usage = _usage_from_lmstudio_metadata(result.raw_metadata)
         return ModelResponse(
             content=result.content,
             provider=self.provider,
@@ -416,8 +544,11 @@ class LMStudioModelAdapter:
                 "raw_provider": "lmstudio_local",
                 "finish_reason": result.finish_reason,
                 "latency_ms": result.latency_ms,
+                "first_output_ms": usage.time_to_first_token_ms,
+                "output_rate": usage.tokens_per_second,
             },
             finish_reason=result.finish_reason,
+            usage=usage,
             latency_ms=result.latency_ms,
         )
 
@@ -425,40 +556,12 @@ class LMStudioModelAdapter:
         return [item.model_id for item in self.runtime.list_models()]
 
     def stream(self, request_payload: ModelRequest):
-        config = self.runtime.load_config()
-        delegated_request = ModelRequest(
-            **{
-                **request_payload.__dict__,
-                "provider": "openai_compatible",
-                "base_url": config.base_url,
-                "timeout_seconds": float(config.timeout_seconds),
-                "stream": True,
-            }
+        del request_payload
+        raise ModelError(
+            "lmstudio_native_stream_not_implemented",
+            "LM Studio provider is configured for native API only; streaming needs a native adapter.",
+            status_code=501,
         )
-        request_profile = _profile_openai_compatible_request(
-            delegated_request,
-            config.base_url.rstrip("/") + "/chat/completions",
-        )
-        self.runtime.event_bus.emit(
-            "lmstudio.stream_request_profiled",
-            "lmstudio_local",
-            request_profile,
-        )
-        try:
-            return OpenAICompatibleAdapter().stream(delegated_request)
-        except ModelError as exc:
-            self.runtime.event_bus.emit(
-                "lmstudio.stream_request_failed",
-                "lmstudio_local",
-                {
-                    **request_profile,
-                    "error_code": exc.code,
-                    "error_message": str(exc),
-                    "http_status": exc.details.get("http_status"),
-                    "response_body": exc.details.get("response_body"),
-                },
-            )
-            raise
 
     def cancel(self, generation_id: str) -> None:
         from synapse.models.errors import ModelError
@@ -471,45 +574,26 @@ class LMStudioModelAdapter:
 
     @staticmethod
     def capabilities() -> set[str]:
-        return {"text_generation", "streaming", "tool_calling", "structured_output"}
+        return {"text_generation", "tool_calling", "structured_output"}
 
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def _profile_openai_compatible_request(
-    request_payload: ModelRequest,
-    endpoint: str,
-) -> dict[str, Any]:
-    messages = build_chat_messages(request_payload)
-    payload_fields = ["model", "messages", "stream"]
-    if request_payload.temperature is not None:
-        payload_fields.append("temperature")
-    if request_payload.max_tokens is not None:
-        payload_fields.append("max_tokens")
-    if request_payload.stop_sequences:
-        payload_fields.append("stop")
-    if request_payload.tools:
-        payload_fields.append("tools")
-    if request_payload.response_format:
-        payload_fields.append("response_format")
-    return {
-        "endpoint": endpoint,
-        "provider_id": "lmstudio",
-        "delegated_provider_id": request_payload.provider,
-        "model": request_payload.model,
-        "payload_fields": sorted(payload_fields),
-        "message_count": len(messages),
-        "roles": [str(message.get("role", "")) for message in messages],
-        "has_tools": bool(request_payload.tools),
-        "tool_count": len(request_payload.tools),
-        "has_response_format": bool(request_payload.response_format),
-        "has_stop": bool(request_payload.stop_sequences),
-        "has_temperature": request_payload.temperature is not None,
-        "has_max_tokens": request_payload.max_tokens is not None,
-        "stream": True,
-        "timeout_seconds": request_payload.timeout_seconds,
-        "character_count": estimate_chat_message_characters(messages),
-        "estimated_tokens": estimate_chat_tokens(messages),
-    }
+def _usage_from_lmstudio_metadata(raw_metadata: dict[str, Any] | None) -> ModelUsage:
+    usage = raw_metadata.get("usage") if raw_metadata else None
+    stats = raw_metadata.get("stats") if raw_metadata else None
+    if isinstance(stats, dict):
+        return _usage_from_native_stats(stats)
+    if not isinstance(usage, dict):
+        return ModelUsage()
+    return ModelUsage(
+        input_tokens=_optional_int(usage.get("prompt_tokens")),
+        output_tokens=_optional_int(usage.get("completion_tokens")),
+        total_tokens=_optional_int(usage.get("total_tokens")),
+    )
+
+
+def _optional_int(value: object) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None

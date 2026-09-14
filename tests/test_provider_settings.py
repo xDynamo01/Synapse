@@ -47,7 +47,7 @@ class ProviderSettingsTests(unittest.TestCase):
         self.runtime.provider_settings.http_get = lambda _url, _headers, _timeout: None
 
     def test_lists_seed_configs_and_persists_endpoint_and_model(self) -> None:
-        self.assertEqual(len(self.runtime.provider_settings.list_settings()), 8)
+        self.assertEqual(len(self.runtime.provider_settings.list_settings()), 9)
 
         updated = self.runtime.provider_settings.update_setting(
             "openai_compatible",
@@ -65,6 +65,17 @@ class ProviderSettingsTests(unittest.TestCase):
             if item.provider_id == "openai_compatible"
         )
         self.assertEqual(model_provider.endpoint, "http://127.0.0.1:9000/v1")
+
+    def test_synapse_local_models_accepts_filesystem_endpoint(self) -> None:
+        updated = self.runtime.provider_settings.update_setting(
+            "synapse_local",
+            enabled=True,
+            endpoint="F:/SynapseRuntime/models",
+        )
+
+        self.assertTrue(updated.enabled)
+        self.assertEqual(updated.provider_kind, "local-filesystem")
+        self.assertEqual(updated.endpoint, "F:/SynapseRuntime/models")
 
     def test_lmstudio_uses_single_frontend_facing_provider_identity(self) -> None:
         provider_ids = {item.provider_id for item in self.runtime.provider_settings.list_settings()}

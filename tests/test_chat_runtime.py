@@ -391,7 +391,8 @@ class ChatRuntimeTests(unittest.TestCase):
         tool_result = result.message.metadata["tool_results"][0]
         self.assertFalse(tool_result["success"])
         self.assertIn("lacks permission filesystem.read", tool_result["error"])
-        self.assertIn("read_file:failed", result.response)
+        self.assertEqual(tool_result["status"], "blocked")
+        self.assertIn("read_file:blocked", result.response)
 
     def test_agent_tool_call_path_traversal_is_blocked(self) -> None:
         directory, _, runtime = runtime_in_tempdir()

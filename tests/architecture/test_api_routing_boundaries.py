@@ -114,8 +114,8 @@ def test_registry_contains_every_domain_router_once() -> None:
     for path in router_files():
         module = __import__(f"synapse.api.routers.{path.stem}", fromlist=["router"])
         discovered.append(module.router)
-    # Intentional desktop command authority delta: one canonical router.
-    assert len(DOMAIN_ROUTERS) == len(discovered) == 21
+    # Primary-only MoM and Project Knowledge add canonical routers, separate from Swarm.
+    assert len(DOMAIN_ROUTERS) == len(discovered) == 23
     assert {id(item) for item in DOMAIN_ROUTERS} == {id(item) for item in discovered}
     assert len(router.routes) == sum(len(item.routes) for item in DOMAIN_ROUTERS)
 

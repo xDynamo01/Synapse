@@ -154,7 +154,7 @@ class SearchToolConsumer:
     ) -> dict[str, object]:
         request = self._request(actor_id, actor_type, arguments)
         observation = self._execution.execute(request)
-        projected = self._project(observation)
+        projected = self._project(observation, request)
         projected["request_reference"] = str(request.request_id)
         projected["request_fingerprint"] = str(request.semantic_fingerprint)
         projected["message"] = observation.safe_message
@@ -183,7 +183,10 @@ class SearchToolConsumer:
         )
 
     @staticmethod
-    def _project(observation: SearchConsumerExecution) -> dict[str, object]:
+    def _project(
+        observation: SearchConsumerExecution,
+        request: SearchRequestV1,
+    ) -> dict[str, object]:
         output: dict[str, object] = {
             "status": observation.status.value,
             "results": [],
@@ -216,6 +219,6 @@ class SearchToolConsumer:
                 "retrieved_content": None,
                 "evidence": None,
             }
-            for item in view.deduplicated_ranked_view
+            for item in view.deduplicated_ranked_view[: request.result_limit]
         ]
         return output

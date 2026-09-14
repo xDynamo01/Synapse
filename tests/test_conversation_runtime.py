@@ -214,7 +214,7 @@ class ConversationRuntimeTests(unittest.TestCase):
             [event["type"] for event in events],
             ["turn_started", "generation_started", "chunk_received", "generation_completed"],
         )
-        self.assertEqual(events[2]["streaming_mode"], "single_complete_chunk")
+        self.assertEqual(events[2]["streaming_mode"], "progressive")
 
     def test_create_and_list_conversation(self) -> None:
         directory, runtime = runtime_in_tempdir()

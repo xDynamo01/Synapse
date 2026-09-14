@@ -52,7 +52,7 @@ def test_skill_packages_have_safe_explicit_loading_and_no_autoevolution() -> Non
 
 def test_skills_stays_outside_global_scc() -> None:
     graph = _runtime_context_graph()
-    assert len(graph) == 304
+    assert len(graph) == 306  # Primary MoM: api -> mom -> core.
     assert cyclic_components(graph) == [
         (
             frozenset(
@@ -680,7 +680,7 @@ def test_phase10_external_bindings_are_neutral_and_boundary_clean() -> None:
     earlier_imports = {module for path in earlier_paths for module in _runtime_imports(path)}
     assert not any(module.startswith("synapse.skills.phase10") for module in earlier_imports)
     graph = _runtime_context_graph()
-    assert len(graph) == 304
+    assert len(graph) == 306  # Primary MoM: api -> mom -> core.
     assert all("skills" not in members for members, _ in cyclic_components(graph))
 
 
@@ -762,7 +762,7 @@ def test_phase11_private_eval_bindings_are_reference_only_and_boundary_clean() -
     earlier_imports = {module for path in earlier_paths for module in _runtime_imports(path)}
     assert not any(module.startswith("synapse.skills.phase11") for module in earlier_imports)
     graph = _runtime_context_graph()
-    assert len(graph) == 304
+    assert len(graph) == 306  # Primary MoM: api -> mom -> core.
     assert all("skills" not in members for members, _ in cyclic_components(graph))
 
 
@@ -841,7 +841,7 @@ def test_phase12_handoff_is_structural_pure_and_boundary_clean() -> None:
     earlier_imports = {module for path in earlier_paths for module in _runtime_imports(path)}
     assert not any(module.startswith("synapse.skills.phase12") for module in earlier_imports)
     graph = _runtime_context_graph()
-    assert len(graph) == 304
+    assert len(graph) == 306  # Primary MoM: api -> mom -> core.
     assert all("skills" not in members for members, _ in cyclic_components(graph))
 
 

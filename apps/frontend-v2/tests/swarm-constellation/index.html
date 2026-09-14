@@ -1,0 +1,34 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;">
+  <title>Synapse Swarm Constellation Visual Smoke</title>
+  <style>
+    html, body, #surface { margin: 0; width: 100%; height: 100%; overflow: hidden; }
+    body {
+      background:
+        radial-gradient(circle at 28% 30%, rgba(0, 245, 228, 0.16), transparent 30%),
+        radial-gradient(circle at 74% 28%, rgba(94, 179, 255, 0.13), transparent 28%),
+        radial-gradient(circle at 52% 76%, rgba(187, 103, 255, 0.12), transparent 30%),
+        linear-gradient(135deg, #06181b 0%, #031013 48%, #07141d 100%);
+      color: #d9fbff;
+      font: 13px "Segoe UI", sans-serif;
+    }
+    .qa-label {
+      position: fixed;
+      left: 28px;
+      top: 20px;
+      z-index: 10;
+      color: rgba(217, 251, 255, 0.82);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+  </style>
+</head>
+<body>
+  <div class="qa-label">Swarm visual smoke · fixture isolada</div>
+  <div id="surface" tabindex="0"></div>
+  <script type="module" src="./harness.js"></script>
+</body>
+</html>

@@ -9,7 +9,11 @@ from uuid import uuid4
 
 from synapse.agents.admin import AgentAdminRuntime
 from synapse.agents.runtime import AgentRuntime
-from synapse.context.loader import ContextLoader
+from synapse.chat.rag_policy import RetrievalDecision, decide_project_knowledge_retrieval
+from synapse.chat.routing import ChatModelSelection, PrimaryModelRoutingPort
+from synapse.chat.streaming import stream_response
+from synapse.context.loader import ContextLoader, ContextSection
+from synapse.conversations.errors import ConversationError
 from synapse.conversations.runtime import ConversationRuntime
 from synapse.core.data_dir import DataDir
 from synapse.core.events import EventBus
@@ -26,6 +30,11 @@ from synapse.observability.correlation import (
     new_correlation,
 )
 from synapse.presence.runtime import PresenceRuntime
+from synapse.retrieval_intent import (
+    RetrievalDirective,
+    detect_text_retrieval_intent,
+    normalize_retrieval_directive,
+)
 
 if TYPE_CHECKING:
     from synapse.context_fusion.runtime import ContextFusionRuntime
@@ -81,6 +90,8 @@ class LocalChatResult:
 
 
 class ChatRuntime:
+    stream_operation = staticmethod(stream_response)
+
     def __init__(
         self,
         data_dir: DataDir,
@@ -110,6 +121,7 @@ class ChatRuntime:
         self.memory = memory
         self.context_fusion = context_fusion
         self.models = models
+        self.primary_model_routing: PrimaryModelRoutingPort | None = None
         self._cancelled_frontend_turns: set[str] = set()
 
     def cancel_frontend_turn(self, idempotency_key: str) -> None:
@@ -132,9 +144,13 @@ class ChatRuntime:
         attachments: list[dict[str, Any]] | None = None,
         idempotency_key: str | None = None,
         project_id: str | None = None,
+        retrieval_intent: RetrievalDirective | dict[str, str] | None = None,
     ) -> ChatTurnResult | LocalChatResult:
         if not content.strip():
             raise ValidationError("invalid_message: message content is required")
+        directive = self._resolve_retrieval_directive(content, retrieval_intent)
+        retrieval_decision = self._retrieval_decision(directive, project_id)
+        content_for_model = directive.query if directive.intent.value != "none" else content
         correlation = current_correlation() or new_correlation(
             source="conversation_turn",
             session_id=conversation_id,
@@ -149,11 +165,12 @@ class ChatRuntime:
             if not target_agent_id:
                 return self.local_chat(
                     context,
-                    content,
+                    content_for_model,
                     conversation_id=conversation_id,
                     project_id=project_id,
                     model_provider_id=model_provider_id,
                     model_name=model_name,
+                    retrieval_decision=retrieval_decision,
                 )
             if not self.conversations:
                 raise ValidationError("persistence_failed: conversation runtime is unavailable")
@@ -197,11 +214,12 @@ class ChatRuntime:
                 result = self.send_message(
                     context,
                     target,
-                    content,
+                    content_for_model,
                     project_id=project_id,
                     session_id=conversation_id,
                     model_provider_override=model_provider_id,
                     model_override=model_name,
+                    retrieval_decision=retrieval_decision,
                 )
                 response = self.conversations.send_message(
                     context,
@@ -281,15 +299,11 @@ class ChatRuntime:
         yield {"type": "turn_started", "conversation_id": conversation_id}
         yield {"type": "generation_started", "conversation_id": conversation_id}
         try:
-            result = self.submit_turn(context, **options)
-            resolved_id = getattr(result, "conversation_id", conversation_id)
-            yield {
-                "type": "chunk_received",
-                "conversation_id": resolved_id,
-                "content": result.response,
-                "streaming_mode": "single_complete_chunk",
-            }
-            yield {"type": "generation_completed", "conversation_id": resolved_id}
+            for kind, content in stream_response(lambda: self.submit_turn(context, **options).response):
+                yield {
+                    "type": kind, "conversation_id": conversation_id,
+                    "content": content, "streaming_mode": "progressive",
+                }
         except Exception as exc:
             yield {
                 "type": "generation_failed",
@@ -306,9 +320,15 @@ class ChatRuntime:
         session_id: str | None = None,
         model_provider_override: str | None = None,
         model_override: str | None = None,
+        retrieval_decision: RetrievalDecision | None = None,
     ) -> ChatTurnResult:
         if self.admin:
             self.admin.assert_agent_runnable(agent_id)
+        if retrieval_decision is None:
+            directive = self._resolve_retrieval_directive(user_message, None)
+            retrieval_decision = self._retrieval_decision(directive, project_id)
+            if directive.intent.value != "none":
+                user_message = directive.query
         session = self._load_or_create_session(session_id, agent_id, project_id)
         correlation = current_correlation() or new_correlation(
             source="chat",
@@ -324,6 +344,7 @@ class ChatRuntime:
                 session=session,
                 model_provider_override=model_provider_override,
                 model_override=model_override,
+                retrieval_decision=retrieval_decision,
             )
 
     def _send_message(
@@ -335,6 +356,7 @@ class ChatRuntime:
         session: ChatSession,
         model_provider_override: str | None = None,
         model_override: str | None = None,
+        retrieval_decision: RetrievalDecision | None = None,
     ) -> ChatTurnResult:
         self._set_presence(
             agent_id,
@@ -423,6 +445,7 @@ class ChatRuntime:
             user_message,
             session,
             project_id,
+            retrieval_decision=retrieval_decision,
         )
         self.event_bus.emit(
             "chat.context_loaded",
@@ -433,6 +456,9 @@ class ChatRuntime:
                 "sections": len(loaded_context.sections),
             },
         )
+        routed = self._primary_chat_selection(context, agent_id, user_message, session.id)
+        if routed is not None:
+            model_provider_override, model_override = routed.provider, routed.model
         agent_result = self.agent_runtime.run(
             context=context,
             agent_id=agent_id,
@@ -443,6 +469,10 @@ class ChatRuntime:
             model_provider_override=model_provider_override,
             model_override=model_override,
         )
+        if routed is not None:
+            if agent_result.model.get("provider") != routed.provider or agent_result.model.get("model") != routed.model:
+                raise ValidationError("A resposta não corresponde ao modelo escolhido pelo MoM.")
+            agent_result.model["mom"] = {"operation": routed.operation, "revision": routed.revision}
         assistant_message = ChatMessage(
             role="assistant",
             content=agent_result.response,
@@ -558,19 +588,27 @@ class ChatRuntime:
         project_id: str | None = None,
         model_provider_id: str | None = None,
         model_name: str | None = None,
+        retrieval_decision: RetrievalDecision | None = None,
     ) -> LocalChatResult:
         policy = self.load_local_chat_policy()
         if not policy.get("enabled", False):
             raise ValidationError(
                 "Habilite local_chat em config/local_chat_policy.yaml (local_chat.enabled=true)."
             )
-        selection = self._resolve_local_chat_model(model_provider_id, model_name, policy)
+        if retrieval_decision is None:
+            directive = self._resolve_retrieval_directive(message, None)
+            retrieval_decision = self._retrieval_decision(directive, project_id)
+            if directive.intent.value != "none":
+                message = directive.query
+        routed = self._primary_chat_selection(context, agent_id, message, conversation_id)
+        selection = ({"provider_id": routed.provider, "model_name": routed.model} if routed is not None
+                     else self._resolve_local_chat_model(model_provider_id, model_name, policy))
         if not selection["provider_id"]:
             raise ValidationError("Selecione um provider válido para local chat.")
         if not selection["model_name"]:
             raise ValidationError("Selecione um modelo disponível.")
         direct_route = not bool((agent_id or "").strip())
-        target_agent_id = (agent_id or "local_chat").strip().lower()
+        target_agent_id = (routed.agent_id if routed else (agent_id or self._default_agent_id())).strip().lower()
 
         self.event_bus.emit(
             "local_chat.selection_resolved",
@@ -582,7 +620,7 @@ class ChatRuntime:
             },
         )
 
-        if self.admin and not direct_route:
+        if self.admin:
             self.admin.assert_agent_runnable(target_agent_id)
 
         conversation_id = self._ensure_local_conversation(
@@ -668,6 +706,22 @@ class ChatRuntime:
                         "message_length": len(message),
                     },
                 )
+                self.event_bus.emit(
+                    "local_chat.thinking",
+                    "chat",
+                    {
+                        "provider_id": selection["provider_id"],
+                        "model_name": selection["model_name"],
+                        "agent_id": target_agent_id,
+                        "conversation_id": conversation_id,
+                        "session_id": session.id,
+                        "project_id": project_id,
+                        "status": "processing",
+                        "phase": "prompt_processing",
+                        "current_operation": "Prompt processing",
+                        "current_task": "Preparing model context",
+                    },
+                )
                 user_chat_message = ChatMessage(
                     role="user",
                     content=message,
@@ -682,32 +736,55 @@ class ChatRuntime:
                         .get("providers", {})
                         .get(selection["provider_id"], {})
                     )
-                    model_result = self.models.generate_request(
-                        ModelRequest(
-                            agent_id="local_chat",
+                    self.event_bus.emit(
+                        "local_chat.generating",
+                        "chat",
+                        {
+                            "provider_id": selection["provider_id"],
+                            "model_name": selection["model_name"],
+                            "agent_id": target_agent_id,
+                            "conversation_id": conversation_id,
+                            "session_id": session.id,
+                            "project_id": project_id,
+                            "status": "processing",
+                            "phase": "generating",
+                            "current_operation": "Generating response",
+                            "current_task": "Model is producing output",
+                        },
+                    )
+                    loaded_context = self._load_context(
+                        context, target_agent_id, message, session, project_id,
+                        max_history_items=int(policy.get("max_context_messages", 10)),
+                        retrieval_decision=retrieval_decision,
+                    )
+                    agent_result = self.agent_runtime.run(
+                        context=context, agent_id=target_agent_id,
+                        loaded_context=loaded_context, user_message=message,
+                        session_id=session.id, project_id=project_id,
+                        model_request=ModelRequest(
+                            agent_id=target_agent_id,
                             provider=selection["provider_id"],
                             model=selection["model_name"],
                             base_url=provider_settings.get("base_url")
                             or provider_settings.get("endpoint"),
                             user_message=message,
-                            context={"history": self._history_for_context(session)},
-                            timeout_seconds=float(provider_settings.get("timeout_seconds", 60)),
+                            context=loaded_context.to_dict(),
+                            max_tokens=256 if selection["provider_id"] == "synapse_local" else None,
+                            timeout_seconds=(
+                                max(float(provider_settings.get("timeout_seconds", 60)), 240.0)
+                                if selection["provider_id"] == "synapse_local"
+                                else float(provider_settings.get("timeout_seconds", 60))
+                            ),
                             api_key=provider_settings.get("api_key"),
                             headers=dict(provider_settings.get("headers", {})),
+                            metadata={
+                                "agent_id": target_agent_id,
+                                "conversation_id": conversation_id,
+                                "session_id": session.id,
+                                "project_id": project_id,
+                            },
                         )
                     )
-                    agent_result = type(
-                        "DirectLocalChatResult",
-                        (),
-                        {
-                            "response": model_result.content,
-                            "model": {
-                                "provider": model_result.provider,
-                                "model": model_result.model,
-                                "metadata": model_result.metadata,
-                            },
-                        },
-                    )()
                 else:
                     loaded_context = self._load_context(
                         context,
@@ -716,6 +793,7 @@ class ChatRuntime:
                         session,
                         project_id,
                         max_history_items=int(policy.get("max_context_messages", 10)),
+                        retrieval_decision=retrieval_decision,
                     )
                     agent_result = self.agent_runtime.run(
                         context=context,
@@ -747,6 +825,10 @@ class ChatRuntime:
                     "endpoint": provider_config.base_url if provider_config else None,
                 },
             )
+            if routed is not None:
+                if agent_result.model.get("provider") != routed.provider or agent_result.model.get("model") != routed.model:
+                    raise ValidationError("A resposta não corresponde ao modelo escolhido pelo MoM.")
+                agent_result.model["mom"] = {"operation": routed.operation, "revision": routed.revision}
             assistant_message = ChatMessage(
                 role="assistant",
                 content=agent_result.response,
@@ -754,6 +836,7 @@ class ChatRuntime:
                     "local_chat": True,
                     "conversation_id": conversation_id,
                     "model": agent_result.model,
+                    "tool_results": [asdict(item) for item in agent_result.tool_results],
                 },
                 **current_correlation_fields(),
             )
@@ -776,7 +859,13 @@ class ChatRuntime:
                     "conversation_id": conversation_id,
                     "agent_id": target_agent_id,
                     "provider_id": selection["provider_id"],
+                    "model_name": selection["model_name"],
                     "model": selection["model_name"],
+                    "status": "completed",
+                    "phase": "completed",
+                    "current_operation": "Response generated",
+                    "current_task": "Assistant response complete",
+                    **_safe_model_activity_metrics(agent_result.model),
                 },
             )
             return LocalChatResult(
@@ -788,6 +877,21 @@ class ChatRuntime:
                 model=agent_result.model,
                 policy=policy,
             )
+
+    def _primary_chat_selection(self, context: PermissionContext, agent_id: str | None,
+                                message: str, conversation_id: str | None) -> ChatModelSelection | None:
+        if self.primary_model_routing is None or message.lstrip().startswith("/"):
+            return None
+        workspace = "default"
+        if conversation_id and self.conversations:
+            try:
+                record = self.conversations.get_conversation(conversation_id)
+            except ConversationError as exc:
+                if exc.code != "conversation_not_found":
+                    raise
+            else:
+                workspace = str(record.metadata.get("workspace_id") or "default")
+        return self.primary_model_routing.select(context, agent_id, message, workspace)
 
     def _resolve_local_chat_model(
         self,
@@ -897,7 +1001,11 @@ class ChatRuntime:
         project_id: str | None,
         *,
         max_history_items: int = 5,
+        retrieval_decision: RetrievalDecision | None = None,
     ):
+        retrieval_decision = retrieval_decision or self._retrieval_decision(
+            RetrievalDirective(), project_id
+        )
         fused_context = None
         if self.context_fusion:
             conversation_id = None
@@ -914,15 +1022,56 @@ class ChatRuntime:
                     incoming_message=incoming_message,
                     session_id=session.id,
                     permission_context=context,
+                    options={
+                        "include_project_knowledge": retrieval_decision.allowed,
+                        "retrieval_query": retrieval_decision.directive.query,
+                        "retrieval_intent": retrieval_decision.to_dict(),
+                    },
                 )
             )
-        return self.context_loader.load(
+        loaded = self.context_loader.load(
             context=context,
             agent_id=agent_id,
             project_id=project_id,
             history=self._history_for_context(session)[-max_history_items:],
             conversation_context=fused_context,
         )
+        loaded.agent_identity["application_features"] = [
+            "Identidade e personalidade configuráveis do agente",
+            *(["Histórico de conversas"] if self.conversations else []),
+            *(["Memória persistente e preferências explícitas do usuário"] if self.memory else []),
+            *(["Seleção de modelos e provedores"] if self.model_hub else []),
+            *(["Indicadores de atividade do agente"] if self.presence else []),
+        ]
+        if self.memory:
+            style = self.memory.response_style(context, incoming_message)
+            if style:
+                section = ContextSection(
+                    kind="memory", name="response_style", source="explicit_response_style",
+                    content=style, order=-1,
+                )
+                loaded.memory.insert(0, section)
+                loaded.sections.insert(0, section)
+        return loaded
+
+    def _resolve_retrieval_directive(
+        self,
+        content: str,
+        retrieval_intent: RetrievalDirective | dict[str, str] | None,
+    ) -> RetrievalDirective:
+        provided = normalize_retrieval_directive(retrieval_intent)
+        if provided.intent.value != "none":
+            return provided
+        return detect_text_retrieval_intent(content)
+
+    def _retrieval_decision(
+        self, directive: RetrievalDirective, project_id: str | None
+    ) -> RetrievalDecision:
+        decision = decide_project_knowledge_retrieval(directive, project_id)
+        self.event_bus.emit("chat.retrieval_intent_resolved", "chat", decision.to_dict())
+        if directive.intent.value != "none" and not decision.allowed:
+            raise ValidationError(f"retrieval_blocked: {decision.reason}")
+        return decision
 
     def _default_agent_id(self) -> str:
         raw = load_structured_file(self.data_dir.resolve("config/system.yaml"))
@@ -1088,3 +1237,23 @@ class ChatRuntime:
         messages.extend(history)
         messages.append({"role": "user", "content": message})
         return messages
+
+
+def _safe_model_activity_metrics(model: object) -> dict[str, int | float | str | None]:
+    if not isinstance(model, dict):
+        return {}
+    metadata = model.get("metadata")
+    if not isinstance(metadata, dict):
+        return {}
+    result: dict[str, int | float | str | None] = {}
+    for key in ("latency_ms", "input_count", "output_count", "total_count", "first_output_ms"):
+        value = metadata.get(key)
+        if isinstance(value, int) and not isinstance(value, bool):
+            result[key] = value
+    output_rate = metadata.get("output_rate")
+    if isinstance(output_rate, (int, float)) and not isinstance(output_rate, bool):
+        result["output_rate"] = round(float(output_rate), 2)
+    finish_reason = metadata.get("finish_reason")
+    if isinstance(finish_reason, str):
+        result["finish_reason"] = finish_reason[:64]
+    return result

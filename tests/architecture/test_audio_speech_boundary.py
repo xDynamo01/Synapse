@@ -182,7 +182,7 @@ def test_avatar_embodiment_and_wardrobe_are_physically_absent() -> None:
 
 def test_audio_speech_scc_is_removed_without_changing_other_sccs() -> None:
     graph = _runtime_context_graph()
-    assert len(graph) == 304
+    assert len(graph) == 306  # Primary MoM: api -> mom -> core.
     assert ("audio", "speech_adapters") not in graph
     assert cyclic_components(graph) == [
         (

@@ -20,35 +20,10 @@ def health(request: Request, response: Response) -> dict[str, Any]:
 @router.get("/sidecar/startup-ready")
 def sidecar_startup_ready(request: Request, response: Response) -> dict[str, Any]:
     response.headers["X-Synapse-Service"] = "synapse-backend"
-    startup_report = getattr(request.app.state, "startup_report", None)
-    if startup_report is None:
+    readiness = runtime_from(request).sidecar_startup_readiness()
+    if not readiness["ready"]:
         response.status_code = 503
-        return {
-            "schema": "synapse-sidecar-startup-ready-v1",
-            "ready": False,
-            "startup_status": "missing-startup-report",
-            "resources": [],
-        }
-    ready = startup_report.status in {"ready", "degraded"}
-    if not ready:
-        response.status_code = 503
-    application = getattr(request.app.state, "application", None)
-    required_by_resource = {
-        resource.name: resource.required
-        for resource in getattr(getattr(application, "lifecycle", None), "resources", ())
-    }
-    return {
-        "schema": "synapse-sidecar-startup-ready-v1",
-        "ready": ready,
-        "startup_status": startup_report.status,
-        "resources": [
-            {
-                **asdict(item),
-                "required": required_by_resource.get(item.resource, True),
-            }
-            for item in startup_report.results
-        ],
-    }
+    return readiness
 
 
 @router.get("/system/insight")

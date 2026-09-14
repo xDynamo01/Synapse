@@ -272,6 +272,12 @@ def test_frozen_authority_privacy_and_local_provider_guards() -> None:
         for root in (SOURCE_ROOT / "voice", SOURCE_ROOT / "voice_composition")
         for path in root.rglob("*.py")
     )
+    voice_source = "\n".join(
+        path.read_text(encoding="utf-8") for path in (SOURCE_ROOT / "voice").rglob("*.py")
+    )
+    assert "synapse.knowledge" not in voice_source
+    assert "synapse.chat.rag_policy" not in voice_source
+    assert "context_fusion" not in voice_source
 
 
 def test_frozen_presentation_absence_and_composition_isolation() -> None:
@@ -314,9 +320,9 @@ def test_frozen_tts_and_visual_external_blocker_classification(tmp_path: Path) -
 def test_frozen_graph_and_tolerated_scc_baseline() -> None:
     runtime = _runtime_context_graph()
     source = context_graph()
-    assert len(runtime) == 304
+    assert len(runtime) == 313  # Project Knowledge adds document/index lifecycle edges.
     assert [(len(members), edges) for members, edges in cyclic_components(runtime)] == [(11, 31)]
-    assert len(source) == 339
+    assert len(source) == 352  # Source graph includes project knowledge ingestion facade.
     assert sorted((len(members), edges) for members, edges in cyclic_components(source)) == [
         (3, 4),
         (24, 80),

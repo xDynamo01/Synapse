@@ -52,6 +52,19 @@ const frontendCommands: CommandDiscoveryItem[] = [
     argument_schema: "project_id",
     opens_surface: null,
     requires_backend_authority: true
+  },
+  {
+    tool_id: "project.files",
+    display_name: "Project Files",
+    description: "Open Project Files for the active project without running retrieval.",
+    category: "project",
+    available: true,
+    requires_approval: false,
+    risk_level: "low",
+    execution_kind: "ui",
+    argument_schema: "none",
+    opens_surface: "project_files",
+    requires_backend_authority: false
   }
 ];
 

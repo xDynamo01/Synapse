@@ -113,23 +113,22 @@ class ModelHubTests(unittest.TestCase):
         self.assertIn("streaming", capabilities.json()["capabilities"])
         self.assertEqual(command.status, "ok")
 
-    def test_detects_default_lmstudio_library_and_supported_files(self) -> None:
+    def test_detects_synapse_local_runtime_models_and_supported_files(self) -> None:
         directory, _, runtime = runtime_in_tempdir()
         self.addCleanup(directory.cleanup)
-        user_profile = Path(directory.name) / "user"
-        library = user_profile / ".lmstudio" / "models" / "publisher" / "model"
+        library = Path(directory.name) / "runtime-models" / "publisher" / "model"
         library.mkdir(parents=True)
         gguf = library / "example-Q5_K_M.gguf"
         gguf.write_bytes(b"gguf-model")
         (library / "weights.safetensors").write_bytes(b"weights")
 
-        with patch.dict("os.environ", {"USERPROFILE": str(user_profile)}):
+        with patch.dict("os.environ", {"SYNAPSE_MODELS_DIR": str(library.parent.parent)}):
             runtime.model_hub.refresh()
 
         detected = [
             model
             for model in runtime.model_hub.list_catalog()
-            if model.origin == "LM Studio Library"
+            if model.origin == "Synapse Runtime Models"
         ]
         self.assertEqual({model.type for model in detected}, {"gguf", "safetensors"})
         gguf_model = next(model for model in detected if model.type == "gguf")
@@ -228,6 +227,7 @@ class ModelHubTests(unittest.TestCase):
                 "groq",
                 "openrouter",
                 "openai_compatible",
+                "synapse_local",
             },
         )
         self.assertNotIn("api_key", serialized)
@@ -263,6 +263,38 @@ class ModelHubTests(unittest.TestCase):
         self.assertEqual(local_chat_policy["local_chat"]["provider_id"], "lmstudio_local")
         self.assertTrue(lmstudio_provider["lmstudio"]["enabled"])
         self.assertEqual(lmstudio_provider["lmstudio"]["default_model"], "local-model")
+
+    def test_synapse_local_default_survives_save_and_refresh(self) -> None:
+        directory, settings, runtime = runtime_in_tempdir()
+        self.addCleanup(directory.cleanup)
+        library = Path(directory.name) / "runtime-models" / "publisher" / "model"
+        library.mkdir(parents=True)
+        (library / "example-Q5_K_M.gguf").write_bytes(b"gguf-model")
+
+        runtime.provider_settings.update_setting(
+            "synapse_local",
+            enabled=True,
+            endpoint=str(library.parent.parent),
+            default_model="example-Q5_K_M.gguf",
+        )
+        runtime.model_hub.update_defaults(
+            default_chat_model="example-Q5_K_M.gguf",
+            default_provider="synapse_local",
+            preferred_runtime="synapse_local",
+        )
+        runtime.model_hub.refresh()
+
+        providers = [
+            provider
+            for provider in runtime.model_hub.list_providers()
+            if provider.provider_id == "synapse_local"
+        ]
+        local_chat_policy = load_structured_file(settings.data_dir / "config" / "local_chat_policy.yaml")
+
+        self.assertEqual(len(providers), 1)
+        self.assertEqual(providers[0].status, "available")
+        self.assertEqual(providers[0].model_count, 1)
+        self.assertEqual(local_chat_policy["local_chat"]["provider_id"], "synapse_local")
 
     def test_gguf_folders_are_managed_without_moving_files(self) -> None:
         directory, _, runtime = runtime_in_tempdir()

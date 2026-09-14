@@ -19,14 +19,17 @@ from synapse.api.routers import (
     perception_router,
     platform_router,
     project_governance_router,
+    project_knowledge_router,
     skills_router,
     system_router,
     tools_router,
     voice_router,
     world_attention_loop_router,
 )
+from synapse.api.routers.mom import router as mom_router
 
 DOMAIN_ROUTERS = (
+    mom_router,
     system_router,
     skills_router,
     project_governance_router,
@@ -41,6 +44,7 @@ DOMAIN_ROUTERS = (
     conversations_router,
     memory_router,
     models_router,
+    project_knowledge_router,
     tools_router,
     missions_router,
     voice_router,

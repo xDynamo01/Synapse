@@ -114,12 +114,14 @@ class MemoryContextAdapter:
     def retrieve(
         self,
         permission_context: PermissionContext,
+        query: str,
         scopes: list[str],
         owner_ids: list[str],
         limit: int,
+        filters: dict[str, Any] | None = None,
     ) -> list[MemoryContextRead]:
         result = self._memory.retrieve_memory(
-            permission_context, "", scopes, owner_ids=owner_ids, limit=limit
+            permission_context, query, scopes, owner_ids=owner_ids, limit=limit, filters=filters
         )
         return [
             MemoryContextRead(
@@ -130,6 +132,8 @@ class MemoryContextAdapter:
                 confidence=item.confidence,
                 revision=item.revision,
                 source=item.source,
+                tags=item.tags,
+                metadata=item.metadata,
             )
             for item in result.records
         ]

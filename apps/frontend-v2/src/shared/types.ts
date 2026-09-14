@@ -14,9 +14,14 @@ export type ConversationModeState =
   | "inactive"
   | "idle"
   | "listening"
+  | "capturing"
+  | "finalizing"
   | "transcribing"
+  | "generating"
+  | "synthesizing"
   | "processing"
   | "speaking"
+  | "cooldown"
   | "interrupted"
   | "failed";
 
@@ -50,7 +55,7 @@ export interface CommandDiscoveryItem {
   reason_unavailable?: string | null;
   execution_kind?: "ui" | "project_scope" | "operational" | "unsupported";
   argument_schema?: "none" | "project_id";
-  opens_surface?: "activity" | "insight" | "settings" | null;
+  opens_surface?: "activity" | "insight" | "settings" | "project_files" | null;
   requires_backend_authority?: boolean;
 }
 
@@ -81,6 +86,106 @@ export interface ProjectListResult {
   total: number;
 }
 
+export type ProjectKnowledgeIngestionStatus =
+  | "queued"
+  | "reading"
+  | "chunking"
+  | "indexing"
+  | "ready"
+  | "failed"
+  | "stale"
+  | "removed";
+
+export type ProjectKnowledgeSemanticStatus =
+  | "unconfigured"
+  | "available"
+  | "loading"
+  | "ready"
+  | "unavailable"
+  | "incompatible"
+  | "failed"
+  | "degraded";
+
+export interface ProjectKnowledgeDocument {
+  document_id: string;
+  project_id: string;
+  workspace_id: string;
+  display_name: string;
+  created_at: string;
+  current_version_id?: string | null;
+  status: ProjectKnowledgeIngestionStatus;
+}
+
+export interface ProjectKnowledgeDocumentVersion {
+  version_id: string;
+  document_id: string;
+  project_id: string;
+  workspace_id: string;
+  attachment_id: string;
+  conversation_id?: string | null;
+  session_id?: string | null;
+  source_checksum: string;
+  parser_version: string;
+  chunker_version: string;
+  indexer_version: string;
+  status: ProjectKnowledgeIngestionStatus;
+  queued_at: string;
+  started_at?: string | null;
+  completed_at?: string | null;
+  chunk_count: number;
+  failure_code?: string | null;
+  failure_message?: string | null;
+  superseded_by?: string | null;
+}
+
+export interface ProjectKnowledgeEmbeddingCapability {
+  status: ProjectKnowledgeSemanticStatus;
+  provider_id: string;
+  model_id: string;
+  model_version: string;
+  dimension: number;
+  semantic_index_version: string;
+  normalization_version?: string;
+  learned_semantic?: boolean;
+  configured?: boolean;
+  loaded?: boolean;
+  device?: string;
+  reason?: string | null;
+}
+
+export interface ProjectKnowledgeDocumentRecord {
+  document: ProjectKnowledgeDocument;
+  version: ProjectKnowledgeDocumentVersion | null;
+  facts: Record<string, unknown>;
+}
+
+export interface ProjectKnowledgeDocumentsResult {
+  schema: "project-knowledge-documents-v1";
+  workspace_id: string;
+  project_id: string;
+  documents: ProjectKnowledgeDocumentRecord[];
+  capabilities: {
+    lexical: { available: boolean; status: string };
+    canonical: ProjectKnowledgeEmbeddingCapability;
+    learned_semantic: ProjectKnowledgeEmbeddingCapability;
+    hybrid: { available: boolean; fallback_available: boolean };
+  };
+  retrieval_policy: {
+    explicit_retrieval_required: boolean;
+    listing_queries_knowledge: boolean;
+    listing_generates_query_embedding: boolean;
+  };
+}
+
+export interface ProjectKnowledgeDocumentMutationResult {
+  schema:
+    | "project-knowledge-document-remove-result-v1"
+    | "project-knowledge-document-reindex-result-v1";
+  workspace_id: string;
+  document?: ProjectKnowledgeDocument;
+  version?: ProjectKnowledgeDocumentVersion;
+}
+
 export interface ProviderModelOption {
   provider_id: string;
   provider_status: string;
@@ -91,6 +196,32 @@ export interface ProviderModelOption {
   origin: string;
   availability_state: string;
   is_default: boolean;
+}
+
+export interface LMStudioTelemetryEntry {
+  occurred_at?: string;
+  provider_id?: string;
+  model_name?: string;
+  conversation_id?: string;
+  phase?: string;
+  status?: string;
+  current_operation?: string;
+  current_task?: string;
+  input_count?: number;
+  output_count?: number;
+  total_count?: number;
+  latency_ms?: number;
+  first_output_ms?: number;
+  output_rate?: number;
+  raw_line?: string;
+}
+
+export interface LMStudioStatus {
+  config: Record<string, unknown>;
+  health: Record<string, unknown>;
+  telemetry?: {
+    recent?: LMStudioTelemetryEntry[];
+  };
 }
 
 export interface FrontendIssue {
@@ -393,6 +524,7 @@ export interface VoiceConversationTurnRequest {
   project_id?: string | null;
   session_id?: string | null;
   conversation_id: string;
+  language?: string | null;
   voice_session_id?: string | null;
   idempotency_key?: string | null;
 }
@@ -405,6 +537,7 @@ export interface VoiceConversationTurnResult {
   voice_session_id: string;
   conversation_id: string;
   recording_id: string;
+  status: string;
   transcript: string;
   response: string;
   user_message_id: string | null;
@@ -741,7 +874,31 @@ export interface VoicePackManifest {
   metadata: Record<string, unknown>;
 }
 
+export type MoMOperation = "conversation" | "coding" | "reasoning" | "review" | "summary";
+
+export interface MoMRoute {
+  operation: MoMOperation;
+  provider: string;
+  model: string;
+}
+
+export interface MoMConfiguration {
+  workspace_id: string;
+  primary_agent_id: string;
+  enabled: boolean;
+  revision: number;
+  routes: MoMRoute[];
+}
+
+export interface MoMConfigurationUpdate {
+  workspace_id: string;
+  enabled: boolean;
+  expected_revision: number;
+  routes: MoMRoute[];
+}
+
 export interface SettingsSnapshot {
+  personalization?: { agent_id: string; display_name: string; system_prompt: string } | null;
   models: {
     defaults: ModelHubDefaults;
     catalog: ModelCatalogEntry[];

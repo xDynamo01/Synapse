@@ -3,9 +3,9 @@
 Status: **NOT IMPLEMENTED**.
 
 The old Electron ADE implementation is **REMOVED / RETIRED** under
-[ADR 0119](adr/0119-retire-electron-ade.md). The repository currently has no active
-frontend source tree, desktop package target, installer, launcher or frontend release
-artifact.
+[ADR 0119](adr/0119-retire-electron-ade.md). Frontend V2 is the active local
+desktop frontend. It has no active installer, root launcher or frontend release
+artifact target.
 
 Backend-owned capabilities remain reusable:
 

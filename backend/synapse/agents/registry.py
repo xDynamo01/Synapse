@@ -39,3 +39,8 @@ class AgentRegistry:
         self.data_dir.ensure_file(f"{base}/MEMORY.md", f"# {agent.name} Memory\n\n")
         self.data_dir.ensure_file(f"{base}/SKILLS.md", "# Skills\n\n")
         self.data_dir.ensure_file(f"{base}/INBOX.md", "# Inbox\n")
+
+    def personality(self, agent_id: str) -> str:
+        agent = self.get(agent_id)
+        raw = load_agent_config(self.data_dir.resolve(f"agents/{agent.id}/CONFIG.yaml"), agent.id)
+        return str(raw.get("system_prompt") or "")

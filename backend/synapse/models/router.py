@@ -99,6 +99,9 @@ class ModelRouter:
             model=selection.model_id,
             base_url=provider_config.get("base_url") or provider_config.get("endpoint"),
         )
+        timeout_seconds = float(provider_config.get("timeout_seconds", 60))
+        if route.provider == "synapse_local":
+            timeout_seconds = max(timeout_seconds, 180.0)
 
         return self.generate_request(
             ModelRequest(
@@ -109,7 +112,7 @@ class ModelRouter:
                 user_message=user_message,
                 context=context,
                 tools=tools,
-                timeout_seconds=float(provider_config.get("timeout_seconds", 60)),
+                timeout_seconds=timeout_seconds,
                 api_key=provider_config.get("api_key"),
                 headers=dict(provider_config.get("headers", {})),
                 metadata={"selection": selection.__dict__},

@@ -141,3 +141,32 @@ def test_conversation_scoped_event_is_projected_without_project_id(tmp_path) -> 
     snapshot = projection.snapshot("conversation:conv-1", NOW)
     assert [item.entity_id for item in snapshot.entities] == ["agent:primary"]
     assert snapshot.entities[0].status is OperationalStatus.PROCESSING
+
+
+def test_chat_runtime_event_prefers_conversation_scope_over_project_id(tmp_path) -> None:
+    bus = EventBus(tmp_path)
+    bus.emit(
+        "lmstudio.native.generating",
+        "lmstudio_local",
+        {
+            "project_id": "workspace-project",
+            "conversation_id": "conv-1",
+            "agent_id": "artemis",
+            "provider_id": "lmstudio",
+            "model_name": "deepseek/deepseek-r1-0528-qwen3-8b",
+            "status": "processing",
+            "phase": "generating",
+            "current_operation": "Generating response",
+            "current_task": "Model is producing output",
+        },
+    )
+    projection = OperationalProjectionRuntime(bus)
+
+    conversation_snapshot = projection.snapshot("conversation:conv-1", NOW)
+    project_snapshot = projection.snapshot("workspace-project", NOW)
+
+    assert [item.entity_id for item in conversation_snapshot.entities] == [
+        "runtime:lmstudio:deepseek/deepseek-r1-0528-qwen3-8b"
+    ]
+    assert conversation_snapshot.entities[0].metadata["phase"] == "generating"
+    assert project_snapshot.entities == ()

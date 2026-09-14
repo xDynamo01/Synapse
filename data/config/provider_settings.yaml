@@ -40,4 +40,9 @@ providers:
     enabled: false
     endpoint: https://openrouter.ai/api/v1
     status: unconfigured
+  synapse_local:
+    default_model: null
+    enabled: true
+    endpoint: F:/SynapseRuntime/models
+    status: configured
 schema_version: 1

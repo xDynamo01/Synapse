@@ -5,13 +5,22 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "backend"))
 
 from synapse.core.app import create_runtime
 from synapse.core.config import Settings
-from synapse.core.exceptions import SynapseError
+from synapse.core.exceptions import PermissionDenied, SynapseError
+from synapse.model_providers.models import LMStudioChatResult
+from synapse.models.adapters import build_chat_messages
+from synapse.models.types import ModelResponse
+from synapse.retrieval_intent import (
+    RetrievalIntent,
+    detect_text_retrieval_intent,
+    detect_voice_retrieval_intent,
+)
 
 DEFAULT_AGENT_PERMISSIONS = [
     "filesystem.read",
@@ -59,6 +68,7 @@ def runtime_in_tempdir():
             "subjects": {
                 "local_owner": ["*"],
                 "user:local_owner": ["*"],
+                "user:another_user": ["filesystem.read"],
                 "agent:artemis": DEFAULT_AGENT_PERMISSIONS,
                 "agent:researcher": DEFAULT_AGENT_PERMISSIONS,
             }
@@ -121,13 +131,98 @@ def mock_lmstudio(runtime, content: str = "local model response") -> None:
     runtime.lmstudio._http_get_json = lambda url, timeout: {  # type: ignore[method-assign]
         "data": [{"id": "local-model"}]
     }
-    runtime.lmstudio._http_post_json = lambda url, payload, timeout: {  # type: ignore[method-assign]
-        "model": payload["model"],
-        "choices": [{"message": {"content": content}, "finish_reason": "stop"}],
-    }
+    runtime.lmstudio._native_chat_completion = lambda config, chat_request, model, timeout: LMStudioChatResult(  # type: ignore[method-assign]
+        model=model,
+        content=content,
+        finish_reason="stop",
+        latency_ms=42,
+        raw_metadata={},
+    )
+
+
+class FakeSynapseLocalAdapter:
+    provider = "synapse_local"
+
+    def generate(self, request_payload):
+        return ModelResponse(
+            content="synapse local response",
+            provider="synapse_local",
+            model=request_payload.model,
+            metadata={"fake": True},
+        )
+
+    def list_models(self, request_payload):
+        del request_payload
+        return ["local-gguf"]
+
+    def stream(self, request_payload):
+        del request_payload
+        return []
+
+    def cancel(self, generation_id):
+        del generation_id
+
+    def capabilities(self):
+        return {"text_generation"}
 
 
 class LocalChatRuntimeTests(unittest.TestCase):
+    def test_synapse_identity_and_style_survive_restart_and_model_route(self) -> None:
+        directory, settings, runtime = runtime_in_tempdir()
+        self.addCleanup(directory.cleanup)
+        enable_lmstudio(settings)
+        enable_local_chat(settings)
+        config = agent_config("artemis")
+        config["system_prompt"] = "Seja objetiva e não repita apresentações."
+        write_json(settings.data_dir / "agents/artemis/CONFIG.yaml", config)
+        runtime = create_runtime(settings)
+        mock_lmstudio(runtime)
+        with patch.object(runtime.models, "generate_request", wraps=runtime.models.generate_request) as generate:
+            runtime.chat.local_chat(runtime.context(), "Não use mais emojis")
+            request = generate.call_args.args[0]
+        self.assertEqual(request.agent_id, "artemis")
+        self.assertIn("Seja objetiva", request.context["agent_identity"]["personality"])
+        self.assertIn("Não use emojis", build_chat_messages(request)[0]["content"])
+
+        restarted = create_runtime(settings)
+        mock_lmstudio(restarted)
+        with patch.object(restarted.models, "generate_request", wraps=restarted.models.generate_request) as generate:
+            restarted.chat.local_chat(restarted.context(), "Quais são suas funcionalidades?")
+            request = generate.call_args.args[0]
+        prompt = build_chat_messages(request)[0]["content"]
+        self.assertIn("Não use emojis", prompt)
+        self.assertIn("Your Synapse agent name is Artemis", prompt)
+        self.assertIn("list_directory", prompt)
+        self.assertTrue(request.tools)
+        self.assertIn("not your product identity", prompt)
+        self.assertIn("Histórico de conversas", prompt)
+        with patch.object(restarted.models, "generate_request", wraps=restarted.models.generate_request) as generate:
+            restarted.chat.local_chat(restarted.context(), "oi", agent_id="artemis")
+            self.assertIn("Não use emojis", build_chat_messages(generate.call_args.args[0])[0]["content"])
+
+        store = restarted.memory
+        self.assertIsNotNone(store)
+        self.assertIn("Não use emojis", store.response_style(restarted.context(), "Não use emojis"))
+        self.assertIn("permitidos", store.response_style(restarted.context(), "Pode usar emojis novamente"))
+        preferences = [item for item in store.list(restarted.context(), scope="user")
+                       if item.source == "explicit_response_style"]
+        self.assertEqual(len(preferences), 1)
+        self.assertEqual(store.response_style(restarted.context("another_user"), "oi"), "")
+        with self.assertRaises(PermissionDenied):
+            store.response_style(restarted.context("another_user"), "Não use emojis")
+        for command in ("Por favor não mande mensagens com emotes",
+                        "Prefiro respostas sem emojis", "Não conversar mais com emotes"):
+            self.assertIn("Não use emojis", store.response_style(restarted.context(), command))
+
+    def test_quoted_and_generated_text_cannot_create_response_preferences(self) -> None:
+        directory, _, runtime = runtime_in_tempdir()
+        self.addCleanup(directory.cleanup)
+        for text in ('Traduza: "Não use emojis"', '"Não use emojis"',
+                     'Documento: não use emojis', 'Não use emojis?'):
+            self.assertEqual(runtime.memory.response_style(runtime.context(), text), "")
+        self.assertEqual(runtime.memory.response_style(
+            runtime.context("artemis", actor_type="agent"), "Não use emojis"), "")
+
     def test_local_chat_policy_default_disabled(self) -> None:
         directory, _, runtime = runtime_in_tempdir()
         self.addCleanup(directory.cleanup)
@@ -167,6 +262,163 @@ class LocalChatRuntimeTests(unittest.TestCase):
         session = runtime.chat.get_session(result.session_id)
         self.assertEqual(len(session.messages), 2)
 
+    def test_project_knowledge_is_not_retrieved_for_ordinary_chat(self) -> None:
+        directory, settings, runtime = runtime_in_tempdir()
+        self.addCleanup(directory.cleanup)
+        enable_lmstudio(settings)
+        enable_local_chat(settings)
+        runtime = create_runtime(settings)
+        mock_lmstudio(runtime)
+        runtime.memory.create(
+            runtime.context(),
+            scope="knowledge",
+            owner_id="local_owner",
+            source="project_document:doc:v1:chunk1",
+            content="Projeto secreto: usar motor X.",
+            tags=["project_knowledge", "project:synapse"],
+            metadata={
+                "document_id": "doc",
+                "version_id": "v1",
+                "chunk_id": "chunk1",
+                "trusted_instruction": False,
+            },
+        )
+
+        with patch.object(runtime.models, "generate_request", wraps=runtime.models.generate_request) as generate:
+            runtime.chat.local_chat(runtime.context(), "oi", project_id="synapse")
+
+        request = generate.call_args.args[0]
+        fused = request.context["conversation_context"]
+        scopes = {
+            item["scope"]
+            for item in fused["items"]
+            if item["source_type"] == "memory"
+        }
+        self.assertNotIn("knowledge", scopes)
+
+    def test_project_knowledge_is_retrieved_only_for_project_or_file_research_intent(self) -> None:
+        directory, settings, runtime = runtime_in_tempdir()
+        self.addCleanup(directory.cleanup)
+        enable_lmstudio(settings)
+        enable_local_chat(settings)
+        runtime = create_runtime(settings)
+        mock_lmstudio(runtime)
+        runtime.memory.create(
+            runtime.context(),
+            scope="knowledge",
+            owner_id="local_owner",
+            source="project_document:doc:v1:chunk1",
+            content="Projeto secreto: usar motor X.",
+            tags=["project_knowledge", "project:synapse"],
+            metadata={
+                "document_id": "doc",
+                "version_id": "v1",
+                "chunk_id": "chunk1",
+                "trusted_instruction": False,
+            },
+        )
+
+        with patch.object(runtime.models, "generate_request", wraps=runtime.models.generate_request) as generate:
+            runtime.chat.local_chat(
+                runtime.context(),
+                "pesquise nos arquivos armazenados qual motor usar",
+                project_id="synapse",
+            )
+
+        request = generate.call_args.args[0]
+        fused = request.context["conversation_context"]
+        knowledge = [
+            item
+            for item in fused["items"]
+            if item["source_type"] == "memory" and item["scope"] == "knowledge"
+        ]
+        self.assertEqual(len(knowledge), 1)
+        self.assertEqual(knowledge[0]["content"], "Projeto secreto: usar motor X.")
+        self.assertTrue(knowledge[0]["metadata"]["rag_retrieval"])
+        self.assertFalse(knowledge[0]["metadata"]["trusted_instruction"])
+
+    def test_project_id_alone_and_generic_project_phrasing_do_not_enable_rag(self) -> None:
+        directory, settings, runtime = runtime_in_tempdir()
+        self.addCleanup(directory.cleanup)
+        enable_lmstudio(settings)
+        enable_local_chat(settings)
+        runtime = create_runtime(settings)
+        mock_lmstudio(runtime)
+        runtime.memory.create(
+            runtime.context(),
+            scope="knowledge",
+            owner_id="local_owner",
+            source="uploaded_file",
+            content="Projeto secreto: usar motor X.",
+        )
+
+        for message in (
+            "qual a capital do Japão?",
+            "me explique RAG",
+            "como funciona esse projeto?",
+            "o que você acha desse projeto?",
+        ):
+            with patch.object(runtime.models, "generate_request", wraps=runtime.models.generate_request) as generate:
+                runtime.chat.local_chat(runtime.context(), message, project_id="synapse")
+            fused = generate.call_args.args[0].context["conversation_context"]
+            self.assertNotIn(
+                "knowledge",
+                {
+                    item["scope"]
+                    for item in fused["items"]
+                    if item["source_type"] == "memory"
+                },
+            )
+
+    def test_project_slash_command_normalizes_query_and_requires_project_scope(self) -> None:
+        directory, settings, runtime = runtime_in_tempdir()
+        self.addCleanup(directory.cleanup)
+        enable_lmstudio(settings)
+        enable_local_chat(settings)
+        runtime = create_runtime(settings)
+        mock_lmstudio(runtime)
+        runtime.memory.create(
+            runtime.context(),
+            scope="knowledge",
+            owner_id="local_owner",
+            source="uploaded_file",
+            content="fencing fica no contrato de execução",
+        )
+
+        with self.assertRaisesRegex(Exception, "missing_project_scope"):
+            runtime.chat.local_chat(runtime.context(), "/project onde definimos fencing?")
+        with self.assertRaisesRegex(Exception, "empty_retrieval_query"):
+            runtime.chat.local_chat(runtime.context(), "/project", project_id="synapse")
+
+        with patch.object(runtime.models, "generate_request", wraps=runtime.models.generate_request) as generate:
+            runtime.chat.local_chat(
+                runtime.context(),
+                "/project onde definimos fencing?",
+                project_id="synapse",
+            )
+
+        request = generate.call_args.args[0]
+        self.assertEqual(request.user_message, "onde definimos fencing?")
+        intent = request.context["conversation_context"]["snapshot"]["metadata"]["retrieval_intent"]
+        self.assertEqual(intent["intent"], "project_knowledge")
+        self.assertEqual(intent["source"], "slash")
+        self.assertEqual(intent["query"], "onde definimos fencing?")
+
+    def test_voice_and_slash_retrieval_intents_are_equivalent_but_conservative(self) -> None:
+        slash = detect_text_retrieval_intent("/project onde definimos rollback?")
+        voice = detect_voice_retrieval_intent(
+            "pesquise nos arquivos desse projeto onde definimos rollback"
+        )
+
+        self.assertEqual(slash.intent, RetrievalIntent.PROJECT_KNOWLEDGE)
+        self.assertEqual(voice.intent, RetrievalIntent.PROJECT_KNOWLEDGE)
+        self.assertEqual(slash.query, "onde definimos rollback?")
+        self.assertEqual(voice.query, "onde definimos rollback")
+        self.assertEqual(detect_voice_retrieval_intent("me explique fencing").intent,
+                         RetrievalIntent.NONE)
+        self.assertEqual(detect_voice_retrieval_intent("o que você acha desse projeto?").intent,
+                         RetrievalIntent.NONE)
+
     def test_local_chat_respects_model_hub_selection(self) -> None:
         directory, settings, runtime = runtime_in_tempdir()
         self.addCleanup(directory.cleanup)
@@ -189,6 +441,42 @@ class LocalChatRuntimeTests(unittest.TestCase):
 
         self.assertEqual(result.model["provider"], "lmstudio")
         self.assertEqual(result.model["model"], "local-model")
+
+    def test_local_chat_can_route_to_synapse_local_adapter(self) -> None:
+        directory, settings, runtime = runtime_in_tempdir()
+        self.addCleanup(directory.cleanup)
+        write_json(
+            settings.data_dir / "config" / "local_chat_policy.yaml",
+            {
+                "local_chat": {
+                    "enabled": True,
+                    "provider_id": "synapse_local",
+                    "require_explicit_provider": True,
+                    "persist_conversations": True,
+                    "max_context_messages": 5,
+                    "include_conversation_summary": True,
+                    "include_multimodal_context": False,
+                }
+            },
+        )
+        runtime = create_runtime(settings)
+        runtime.models.adapters["synapse_local"] = FakeSynapseLocalAdapter()
+        runtime.provider_settings.update_setting(
+            "synapse_local",
+            enabled=True,
+            endpoint=str(settings.data_dir / "models"),
+        )
+
+        result = runtime.chat.local_chat(
+            runtime.context(),
+            "hello",
+            model_provider_id="synapse_local",
+            model_name="local-gguf",
+        )
+
+        self.assertEqual(result.response, "synapse local response")
+        self.assertEqual(result.model["provider"], "synapse_local")
+        self.assertEqual(result.model["model"], "local-gguf")
 
     def test_model_hub_defaults_enable_local_chat_flow(self) -> None:
         directory, settings, runtime = runtime_in_tempdir()

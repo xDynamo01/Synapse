@@ -28,6 +28,11 @@ if ($LASTEXITCODE -ne 0) { throw "PyInstaller is unavailable" }
     --hidden-import tokenizers `
     --hidden-import av `
     --hidden-import huggingface_hub `
+    --exclude-module sentence_transformers `
+    --exclude-module transformers `
+    --exclude-module torch `
+    --exclude-module sklearn `
+    --exclude-module scipy `
     --exclude-module pytest `
     --exclude-module py `
     --distpath (Join-Path $repositoryRoot "backend\dist") `

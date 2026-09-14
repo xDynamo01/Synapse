@@ -198,7 +198,9 @@ Purpose: expose only voices actually installed in backend-owned Voice Pack manif
 - Settings persists `default_tts_voice` as a logical voice id, not a filename;
 - Piper model resolution can map that logical id to a verified asset.
 
-This boundary does not make the release pack READY. The current clean installer still lacks the six redistributable Piper voices and Piper executable/runtime required by the release definition of done.
+This boundary does not define an installer or release pack. Local voice asset
+availability remains a backend-owned runtime fact exposed through the Voice
+contracts above.
 
 ## Flow audit
 

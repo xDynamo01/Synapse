@@ -18,30 +18,19 @@ from synapse.project_governance.errors import ProjectNotFound
 router = APIRouter(tags=["operational-activity"])
 
 
-def _scope_allowed(scope_id: str, request: Request) -> bool:
-    if scope_id.startswith("conversation:") and len(scope_id) > len("conversation:"):
-        return True
-    runtime = runtime_from(request)
-    try:
-        runtime.project_governance.projects.get(scope_id)
-    except ProjectNotFound:
-        return False
-    return True
-
-
 @router.get("/activity/scopes/{scope_id}")
 def scoped_activity(scope_id: str, request: Request) -> dict[str, object]:
-    if not _scope_allowed(scope_id, request):
-        raise HTTPException(status_code=404, detail="activity_scope_not_found")
     runtime = runtime_from(request)
+    if not runtime.operational_projection.scope_allowed(scope_id, runtime.project_governance.projects):
+        raise HTTPException(status_code=404, detail="activity_scope_not_found")
     return snapshot_dict(runtime.operational_projection.snapshot(scope_id, datetime.now(UTC).isoformat()))
 
 
 @router.get("/activity/scopes/{scope_id}/events")
 def scoped_activity_events(scope_id: str, request: Request, cursor: str | None = Query(default=None)) -> dict[str, object]:
-    if not _scope_allowed(scope_id, request):
-        raise HTTPException(status_code=404, detail="activity_scope_not_found")
     runtime = runtime_from(request)
+    if not runtime.operational_projection.scope_allowed(scope_id, runtime.project_governance.projects):
+        raise HTTPException(status_code=404, detail="activity_scope_not_found")
     try:
         resumed = runtime.operational_projection.resume(scope_id, cursor, datetime.now(UTC).isoformat())
     except OperationalResyncRequired as exc:
@@ -53,9 +42,9 @@ def scoped_activity_events(scope_id: str, request: Request, cursor: str | None =
 
 @router.get("/activity/scopes/{scope_id}/stream")
 def scoped_activity_stream(scope_id: str, request: Request, cursor: str | None = Query(default=None)) -> StreamingResponse:
-    if not _scope_allowed(scope_id, request):
-        raise HTTPException(status_code=404, detail="activity_scope_not_found")
     runtime = runtime_from(request)
+    if not runtime.operational_projection.scope_allowed(scope_id, runtime.project_governance.projects):
+        raise HTTPException(status_code=404, detail="activity_scope_not_found")
     return StreamingResponse(activity_event_stream(request, runtime.operational_projection, scope_id, cursor), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 

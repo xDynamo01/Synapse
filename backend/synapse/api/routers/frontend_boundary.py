@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import logging
 import re
 from dataclasses import asdict
 from typing import Any
@@ -14,8 +15,10 @@ from pydantic import BaseModel, Field
 from synapse.agents.provisioning import AgentCreateRequest
 from synapse.api.common import api_error, context_from, runtime_from
 from synapse.core.exceptions import ValidationError
+from synapse.retrieval_intent import detect_voice_retrieval_intent
 
 router = APIRouter(prefix="/frontend", tags=["frontend-v2-boundary"])
+logger = logging.getLogger(__name__)
 
 
 class FrontendBootstrapQuery(BaseModel):
@@ -95,6 +98,7 @@ class FrontendVoiceConversationTurnPayload(BaseModel):
     project_id: str | None = None
     session_id: str | None = None
     conversation_id: str
+    language: str | None = None
     voice_session_id: str | None = None
     idempotency_key: str | None = None
 
@@ -109,7 +113,7 @@ class FrontendAttachmentStagePayload(BaseModel):
     session_id: str | None = None
 
 
-SAFE_ATTACHMENT_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_. ()-]{0,179}$")
+SAFE_ATTACHMENT_NAME = re.compile(r"^[^\s/\\<>:\"|?*\x00-\x1f][^/\\<>:\"|?*\x00-\x1f]{0,179}$")
 SUPPORTED_ATTACHMENT_MIME_TYPES = {
     "application/pdf",
     "image/png",
@@ -199,23 +203,28 @@ def create_frontend_first_agent(
             provider_id,
             model_id,
         )
-        result = runtime.provisioning.create_agent(
-            AgentCreateRequest(
-                agent_id=payload.agent_id,
-                display_name=payload.display_name,
-                role=payload.role,
-                autonomy_level="manual",
-                default_provider=provider_id,
-                default_model=model_id,
-                system_prompt=payload.system_prompt,
-                metadata={**payload.metadata, "created_by": "frontend_v2_first_run"},
-                agent_kind="persistent",
-            ),
-            context=context,
-        )
+        try:
+            existing_agent = runtime.agents.get(payload.agent_id)
+            result_agent_id = existing_agent.id
+        except Exception:
+            result = runtime.provisioning.create_agent(
+                AgentCreateRequest(
+                    agent_id=payload.agent_id,
+                    display_name=payload.display_name,
+                    role=payload.role,
+                    autonomy_level="manual",
+                    default_provider=provider_id,
+                    default_model=model_id,
+                    system_prompt=payload.system_prompt,
+                    metadata={**payload.metadata, "created_by": "frontend_v2_first_run"},
+                    agent_kind="persistent",
+                ),
+                context=context,
+            )
+            result_agent_id = result.agent_id
         profile = runtime.primary_agent.set_primary(
             context,
-            result.agent_id,
+            result_agent_id,
             payload.workspace_id,
             replace_existing=primary_state.profile is not None,
         )
@@ -224,7 +233,7 @@ def create_frontend_first_agent(
             "schema": "frontend-v2-first-agent-result-v1",
             "status": "ready",
             "workspace_id": payload.workspace_id,
-            "agent": asdict(runtime.agents.get(result.agent_id)),
+            "agent": asdict(runtime.agents.get(result_agent_id)),
             "primary_profile": asdict(profile),
             "bootstrap": asdict(bootstrap),
             "degraded": ([{"code": "model_configuration_required", "message": "Configure a chat model in Settings → Models before sending a message."}] if not provider_id or not model_id else []),
@@ -499,14 +508,19 @@ def submit_frontend_text_turn(
             payload.session_id,
         )
         profile = runtime.primary_agent.get_primary(payload.workspace_id)
+        provider_id, model_id = frontend_effective_model_selection(
+            runtime,
+            payload.model_provider_id,
+            payload.model_name,
+        )
         result = runtime.chat.submit_turn(
             context,
             conversation_id=conversation_id,
             content=payload.content,
             sender_id="local_chat",
             target_agent_id=payload.target_agent_id or profile.agent_id,
-            model_provider_id=payload.model_provider_id,
-            model_name=payload.model_name,
+            model_provider_id=provider_id,
+            model_name=model_id,
             attachments=validated_frontend_attachment_refs(
                 runtime,
                 conversation_id,
@@ -556,6 +570,11 @@ def stream_frontend_text_turn(
                 payload.session_id,
             )
             profile = runtime.primary_agent.get_primary(payload.workspace_id)
+            provider_id, model_id = frontend_effective_model_selection(
+                runtime,
+                payload.model_provider_id,
+                payload.model_name,
+            )
             if runtime.chat.is_frontend_turn_cancelled(payload.idempotency_key):
                 yield frontend_stream_event(
                     payload,
@@ -572,8 +591,8 @@ def stream_frontend_text_turn(
                 content=payload.content,
                 sender_id="local_chat",
                 target_agent_id=payload.target_agent_id or profile.agent_id,
-                model_provider_id=payload.model_provider_id,
-                model_name=payload.model_name,
+                model_provider_id=provider_id,
+                model_name=model_id,
                 attachments=validated_frontend_attachment_refs(
                     runtime,
                     conversation_id,
@@ -690,6 +709,13 @@ def stage_frontend_conversation_attachment(
             owner_id=context.actor_id,
             content=content,
         )
+        knowledge_status = runtime.project_knowledge.schedule_attachment_ingestion_async(
+            attachment=attachment,
+            context=context,
+            workspace_id=payload.workspace_id,
+            project_id=payload.project_id,
+            session_id=payload.session_id,
+        )
         return {
             "schema": "frontend-v2-attachment-stage-result-v1",
             "workspace_id": payload.workspace_id,
@@ -697,6 +723,7 @@ def stage_frontend_conversation_attachment(
             "session_id": payload.session_id,
             "conversation_id": conversation_id,
             "attachment": asdict(attachment),
+            "knowledge_ingestion": {"status": knowledge_status},
             "degraded": [],
             "errors": [],
         }
@@ -740,6 +767,7 @@ def transcribe_frontend_voice_recording(
         transcript = result.text.strip()
         if not transcript:
             raise ValidationError("empty_transcription: STT did not produce text")
+        retrieval_intent = detect_voice_retrieval_intent(transcript)
         transcribed = runtime.voice.get_recording(completed.recording_id)
         return {
             "schema": "frontend-v2-voice-transcription-v1",
@@ -753,11 +781,32 @@ def transcribe_frontend_voice_recording(
             "language": result.language,
             "duration_ms": result.duration_ms,
             "status": result.status,
+            "retrieval_intent": retrieval_intent.to_dict(),
             "degraded": [],
             "errors": [],
         }
     except Exception as exc:
         raise api_error(exc) from exc
+
+
+@router.post("/voice/conversation-turn/stream", response_model=None)
+def stream_frontend_voice_conversation_turn(
+    payload: FrontendVoiceConversationTurnPayload,
+    request: Request,
+) -> dict[str, Any] | StreamingResponse:
+    runtime = runtime_from(request)
+
+    def events():
+        try:
+            for kind, content in runtime.chat.stream_operation(
+                lambda: json.dumps(run_frontend_voice_conversation_turn(payload, request)),
+                fallback_text=False,
+            ):
+                yield json.dumps({"type": kind, "content": content}) + "\n"
+        except Exception as exc:
+            yield json.dumps({"type": "generation_failed", "error": frontend_safe_error(exc)}) + "\n"
+
+    return StreamingResponse(events(), media_type="application/x-ndjson")
 
 
 @router.post("/voice/conversation-turn")
@@ -778,20 +827,28 @@ def run_frontend_voice_conversation_turn(
         settings = runtime.voice.get_settings()
         if not settings.enabled:
             raise ValidationError("voice_disabled: voice conversation mode is disabled")
-        voice_session = (
-            runtime.voice.get_session(payload.voice_session_id)
-            if payload.voice_session_id
-            else runtime.voice.create_session(
+        voice_session = None
+        if payload.voice_session_id:
+            candidate = runtime.voice.get_session(payload.voice_session_id)
+            if (
+                candidate.status in {"idle", "listening"}
+                and candidate.conversation_id == payload.conversation_id
+                and candidate.agent_id == profile.agent_id
+            ):
+                voice_session = candidate
+        if voice_session is None:
+            voice_session = runtime.voice.create_session(
                 agent_id=profile.agent_id,
                 conversation_id=payload.conversation_id,
                 metadata={"source": "frontend_v2_conversation_mode"},
             )
-        )
         recording = runtime.voice.start_recording(
             session_id=voice_session.session_id,
             conversation_id=payload.conversation_id,
             agent_id=profile.agent_id,
             audio_format=payload.audio_format,
+            language=payload.language or settings.language,
+            metadata={"vad_filter": False, "source": "frontend_v2_conversation_mode", "frontend_vad": True},
         )
         if runtime.voice.get_session(voice_session.session_id).status == "idle":
             runtime.voice.transition_session(voice_session.session_id, "listening")
@@ -803,14 +860,46 @@ def run_frontend_voice_conversation_turn(
             idempotency_key=f"frontend-v2:{recording.recording_id}:0",
         )
         completed = runtime.voice.complete_recording(recording.recording_id)
+        provider_id, model_id = frontend_effective_model_selection(runtime, None, None)
         result = runtime.voice.run_conversation_turn(
             voice_session.session_id,
             completed.recording_id,
             idempotency_key=payload.idempotency_key or f"frontend-v2:{completed.recording_id}",
+            model_provider_id=provider_id,
+            model_name=model_id,
         )
         synthesis = runtime.voice.get_synthesis(result.synthesis_id)
-        audio_base64, audio_format = frontend_synthesis_audio(runtime, synthesis.audio_reference)
+        audio_base64 = None
+        audio_format = None
+        degraded = []
+        if result.status not in {"ignored_echo", "needs_repetition"}:
+            try:
+                audio_base64, audio_format = frontend_synthesis_audio(runtime, synthesis.audio_reference)
+            except Exception as exc:
+                degraded.append(
+                    {
+                        "code": "tts_audio_unavailable",
+                        "message": frontend_safe_error(exc)["message"],
+                        "severity": "warning",
+                    }
+                )
         page = frontend_recent_history_page(runtime, result.conversation_id, 50)
+        if result.status not in {"ignored_echo", "needs_repetition"} and synthesis.status != "completed":
+            degraded.append(
+                {
+                    "code": "tts_unavailable",
+                    "message": synthesis.error or "TTS audio is unavailable.",
+                    "severity": "warning",
+                }
+            )
+        logger.info(
+            "voice_tts_diag:frontend_response synthesis_id=%s synthesis_status=%s audio_base64_state=%s audio_base64_chars=%s degraded_codes=%s",
+            result.synthesis_id,
+            synthesis.status,
+            "populated" if audio_base64 else "empty",
+            len(audio_base64 or ""),
+            [item.get("code") for item in degraded],
+        )
         return {
             "schema": "frontend-v2-voice-conversation-turn-v1",
             "workspace_id": payload.workspace_id,
@@ -819,6 +908,7 @@ def run_frontend_voice_conversation_turn(
             "voice_session_id": voice_session.session_id,
             "conversation_id": result.conversation_id,
             "recording_id": result.recording_id,
+            "status": result.status,
             "transcript": result.transcript,
             "response": result.response,
             "user_message_id": result.user_message_id,
@@ -835,7 +925,7 @@ def run_frontend_voice_conversation_turn(
             "messages": page["messages"],
             "pagination": page["pagination"],
             "summary": frontend_summary(runtime, result.conversation_id),
-            "degraded": [],
+            "degraded": degraded,
             "errors": [],
         }
     except Exception as exc:
@@ -1008,17 +1098,37 @@ def frontend_synthesis_audio(runtime: Any, audio_reference: str | None) -> tuple
     return audio_base64, "audio/wav"
 
 
+def frontend_effective_model_selection(
+    runtime: Any,
+    provider_id: str | None,
+    model_id: str | None,
+) -> tuple[str | None, str | None]:
+    if provider_id and model_id:
+        return provider_id, model_id
+    defaults = runtime.model_hub.get_defaults()
+    return (
+        provider_id or defaults.default_provider,
+        model_id or defaults.default_chat_model,
+    )
+
+
 def frontend_model_options(runtime: Any) -> list[dict[str, Any]]:
     providers = {provider.provider_id: provider for provider in runtime.model_hub.list_providers()}
+    defaults = runtime.model_hub.get_defaults()
     options: list[dict[str, Any]] = []
     for model in runtime.model_hub.list_catalog():
         provider = providers.get(model.provider)
         provider_status = provider.status if provider else "unknown"
         provider_active = bool(provider.active) if provider else False
+        is_synapse_local_model = (
+            model.provider == "synapse_local"
+            and model.type in {"gguf", "ggml", "bin"}
+            and model.status in {"available", "configured"}
+        )
         usable = (
             model.status in {"available", "configured"}
             and model.type in {"chat", "gguf"}
-            and (model.chat_usable or model.status == "configured")
+            and (model.chat_usable or is_synapse_local_model or (provider_active and model.status == "configured"))
         )
         if not usable:
             continue
@@ -1032,10 +1142,16 @@ def frontend_model_options(runtime: Any) -> list[dict[str, Any]]:
                 "runtime": model.runtime,
                 "origin": model.origin,
                 "availability_state": model.availability_state,
-                "is_default": model.is_default,
+                "is_default": (
+                    model.is_default
+                    or (
+                        model.provider == defaults.default_provider
+                        and model.name == defaults.default_chat_model
+                    )
+                ),
             }
         )
-    return options
+    return sorted(options, key=lambda option: (not bool(option.get("is_default")), option["provider_id"], option["model_id"]))
 
 
 def frontend_default_model_selection(runtime: Any) -> dict[str, str | None]:

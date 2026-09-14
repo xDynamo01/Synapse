@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import builtins
 import hashlib
+import re
+import unicodedata
 from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
@@ -23,6 +25,48 @@ WORKING_SCOPES = {"session", "conversation"}
 
 
 class MemoryStore:
+    def response_style(self, context: PermissionContext, message: str) -> str:
+        """Persist only explicit, whole-message emoji preferences from a human user.
+
+        Never promote quoted documents, model output or arbitrary prose to instructions.
+        The single user-owned record is updated, rather than accumulated per turn.
+        """
+        if context.actor_type != "user":
+            return ""
+        records = [
+            item for item in self.list(context, scope="user", owner_id=context.actor_id)
+            if item.source == "explicit_response_style" and "response_style.emoji" in item.tags
+        ]
+        normalized = "".join(
+            char for char in unicodedata.normalize("NFKD", message.lower())
+            if not unicodedata.combining(char)
+        ).strip(" .!")
+        preference = None
+        if re.fullmatch(
+            r"(?:por favor[, ]+)?(?:nao (?:use|usar|utilize|mande|envie)(?: mais)?"
+            r"(?: mensagens com)?|nao (?:converse|conversar|responda)(?: mais)? com|"
+            r"nao quero|prefiro respostas sem|pare de (?:usar|mandar|enviar)|sem) "
+            r"(?:emojis|emotes|emoticons)"
+            r"(?: (?:nas|em suas) respostas)?(?:[, ]+por favor)?", normalized
+        ):
+            preference = "Não use emojis, emotes ou emoticons nas respostas."
+        elif re.fullmatch(
+            r"(?:por favor[, ]+)?(?:pode|volte a) usar (?:emojis|emotes|emoticons)"
+            r"(?: novamente)?", normalized
+        ):
+            preference = "Emojis são permitidos nas respostas, sem obrigação de usá-los."
+        if preference is not None:
+            if records:
+                if records[0].content != preference:
+                    self.update(context, records[0].id,
+                                expected_revision=records[0].revision, content=preference)
+            else:
+                self.create(context, scope="user", owner_id=context.actor_id,
+                            source="explicit_response_style", content=preference,
+                            tags=["response_style.emoji"], metadata={"sensitive": True})
+            return preference
+        return records[0].content if records else ""
+
     def __init__(
         self,
         data_dir: DataDir,

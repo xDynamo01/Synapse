@@ -110,7 +110,12 @@ class PrimaryAgentRuntime:
         if existing and existing.agent_id != agent_id and not replace_existing:
             raise PrimaryAgentConflict("Workspace already has a primary agent")
         if existing and existing.agent_id == agent_id:
-            return existing
+            try:
+                conversation = self.conversations.get_conversation(existing.conversation_id)
+                if conversation.status != "archived":
+                    return existing
+            except Exception:
+                pass
         conversation = self.conversations.create_conversation(
             context,
             [agent_id],

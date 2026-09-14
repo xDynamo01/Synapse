@@ -59,6 +59,10 @@ artifacts/temporary/
 artifacts/linkedin/
 artifacts/reports/generated/
 artifacts/*-e2e*/
+artifacts/restore-points/
+tmp-attachment-check-data/
+tmp-debug-data/
+apps/artifacts/
 
 # Runtime-local DATA_DIR state. Keep bootstrap templates, ignore generated/local state.
 data/logs/**
@@ -75,7 +79,12 @@ data/devices/revoked/*.yaml
 data/projects/**
 data/skills/**
 data/providers/credentials.yaml
+data/intelligence_boundary/**
+data/search/**
+data/tools/**
 data/voice/voice-journal-v1.sqlite3
 data/voice/models/
+data/voice/runtimes/
+data/models/
 backend/synapse/resources/voice/models/faster-whisper/
 backend/synapse/resources/voice/voice-packs/**/*.onnx

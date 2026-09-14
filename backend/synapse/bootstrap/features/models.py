@@ -10,6 +10,7 @@ from synapse.core.data_dir import DataDir
 from synapse.core.events import EventBus
 from synapse.model_hub.runtime import ModelHubRuntime
 from synapse.model_providers.lmstudio import LMStudioModelAdapter, LMStudioProviderRuntime
+from synapse.model_providers.synapse_local import SynapseLocalModelAdapter
 from synapse.models.router import ModelRouter
 from synapse.provider_plugins.registry import ProviderPluginRegistry
 from synapse.provider_plugins.runtime import ProviderPluginRuntime
@@ -55,6 +56,7 @@ class ModelFeatureBuilder:
         lmstudio = LMStudioProviderRuntime(data_dir, events)
         models.adapters["lmstudio"] = LMStudioModelAdapter(lmstudio)
         models.adapters["lmstudio_local"] = LMStudioModelAdapter(lmstudio)
+        models.adapters["synapse_local"] = SynapseLocalModelAdapter(data_dir, events)
         model_hub = ModelHubRuntime(data_dir, events, lmstudio, providers, provider_plugins, models)
         system_insight = SystemInsightRuntime(data_dir, events, model_hub)
         models.model_capabilities = system_insight.model_capabilities

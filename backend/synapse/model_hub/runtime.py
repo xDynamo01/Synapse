@@ -28,6 +28,7 @@ from synapse.provider_plugins.runtime import ProviderPluginRuntime
 from synapse.providers.runtime import ProviderRuntime
 
 PROVIDER_NAMES = {
+    "synapse_local": "Synapse Local Models",
     "lmstudio": "LM Studio",
     "ollama": "Ollama",
     "openai": "OpenAI",
@@ -84,7 +85,7 @@ class ModelHubRuntime:
     def live_discovered_models(self) -> list[ModelCatalogEntry]:
         errors: list[str] = []
         models = [
-            *self._lmstudio_library_models(errors),
+            *self._synapse_local_models(errors),
             *self._folder_models(errors),
         ]
         return self._deduplicate_models(models)
@@ -209,7 +210,7 @@ class ModelHubRuntime:
         models = [
             *provider_models,
             *self._configured_models(),
-            *self._lmstudio_library_models(errors),
+            *self._synapse_local_models(errors),
             *self._folder_models(errors),
         ]
         models = self._deduplicate_models(models)
@@ -392,6 +393,29 @@ class ModelHubRuntime:
                     metadata=metadata,
                 )
             )
+        synapse_models = self._synapse_local_models(errors)
+        if synapse_models:
+            provider_models.extend(synapse_models)
+            roots = [str(path) for path in self._synapse_runtime_model_roots()]
+            synapse_index = next(
+                (index for index, item in enumerate(results) if item.provider_id == "synapse_local"),
+                None,
+            )
+            metadata = {
+                "model_roots": roots,
+                "execution": "installed-files-only",
+                "runtime_required": "synapse-managed-llama-server",
+            }
+            if synapse_index is not None:
+                current = results[synapse_index]
+                results[synapse_index] = replace(
+                    current,
+                    status="available",
+                    endpoint=current.endpoint or (roots[0] if roots else None),
+                    active=True,
+                    model_count=len(synapse_models),
+                    metadata={**current.metadata, **metadata},
+                )
         server_models, server_error = self._lmstudio_server_models()
         provider_models.extend(server_models)
         lmstudio_index = next(
@@ -434,12 +458,56 @@ class ModelHubRuntime:
                     origin="system.yaml",
                     type="chat",
                     availability_state="unavailable",
-                    chat_usable=False,
+                    chat_usable=True,
                     status="configured",
                     metadata={"endpoint": config.get("base_url")},
                 )
             )
         return models
+
+    def _synapse_local_models(self, errors: list[str]) -> list[ModelCatalogEntry]:
+        models: list[ModelCatalogEntry] = []
+        for root in self._synapse_runtime_model_roots():
+            if not root.is_dir():
+                continue
+            models.extend(
+                self._scan_model_folder(
+                    root,
+                    provider="synapse_local",
+                    origin="Synapse Runtime Models",
+                    id_prefix="synapse-local",
+                    errors=errors,
+                    metadata={
+                        "library_path": str(root),
+                        "execution": "installed-files-only",
+                        "runtime_required": "synapse-managed-llama-server",
+                    },
+                )
+            )
+        return models
+
+    def _synapse_runtime_model_roots(self) -> list[Path]:
+        roots: list[Path] = []
+        configured = os.environ.get("SYNAPSE_MODELS_DIR")
+        if configured:
+            roots.append(Path(configured).expanduser())
+        settings_path = self.data_dir.resolve("config/provider_settings.yaml")
+        settings = load_structured_file(settings_path) if settings_path.exists() else {}
+        providers = settings.get("providers", {}) if isinstance(settings, dict) else {}
+        synapse_local = providers.get("synapse_local") if isinstance(providers, dict) else None
+        if isinstance(synapse_local, dict) and synapse_local.get("enabled", False):
+            endpoint = str(synapse_local.get("endpoint") or "").strip()
+            if endpoint:
+                roots.append(Path(endpoint).expanduser())
+
+        unique: list[Path] = []
+        seen: set[str] = set()
+        for root in roots:
+            key = str(root).lower()
+            if key not in seen:
+                unique.append(root)
+                seen.add(key)
+        return unique
 
     def _folder_models(self, errors: list[str]) -> list[ModelCatalogEntry]:
         models: list[ModelCatalogEntry] = []
@@ -515,7 +583,7 @@ class ModelHubRuntime:
                     availability_state="installed"
                     if provider != "lmstudio"
                     else "library-only/not-installed",
-                    chat_usable=False,
+                    chat_usable=provider == "synapse_local" and model_type in {"gguf", "ggml", "bin"},
                     quantization=_quantization(path.name),
                     size_bytes=size,
                     estimated_ram_gb=round(size * 1.2 / (1024**3), 2),
@@ -675,7 +743,13 @@ class ModelHubRuntime:
     def _sync_local_chat_contract(self, defaults: ModelHubDefaults) -> None:
         runtime = (defaults.preferred_runtime or defaults.default_provider or "").strip().lower()
         provider = (defaults.default_provider or "").strip().lower()
-        is_lmstudio = runtime == "lmstudio" or provider == "lmstudio"
+        is_lmstudio = runtime in {"lmstudio", "lmstudio_local"} or provider in {
+            "lmstudio",
+            "lmstudio_local",
+        }
+        policy_provider = provider or runtime or None
+        if policy_provider == "lmstudio":
+            policy_provider = "lmstudio_local"
 
         local_chat_path = self.data_dir.resolve("config/local_chat_policy.yaml")
         local_chat_raw = load_structured_file(local_chat_path) if local_chat_path.exists() else {}
@@ -685,8 +759,8 @@ class ModelHubRuntime:
         local_chat_policy.setdefault("max_context_messages", 10)
         local_chat_policy.setdefault("include_conversation_summary", True)
         local_chat_policy.setdefault("include_multimodal_context", False)
-        local_chat_policy["enabled"] = bool(defaults.default_chat_model)
-        local_chat_policy["provider_id"] = "lmstudio_local"
+        local_chat_policy["enabled"] = bool(defaults.default_chat_model and policy_provider)
+        local_chat_policy["provider_id"] = policy_provider
         dump_structured_file(local_chat_path, {"local_chat": local_chat_policy})
 
         self.event_bus.emit(

@@ -45,6 +45,7 @@ describe("presence adapter", () => {
     expect(derivePresenceState({ ...baseFacts, conversationModeState: "processing" }).state).toBe("processing");
     expect(derivePresenceState({ ...baseFacts, conversationModeState: "speaking", audioAmplitude: 0.4 }).state).toBe("speaking");
     expect(derivePresenceState({ ...baseFacts, conversationModeState: "speaking", audioAmplitude: 0.4 }).amplitude).toBe(0.4);
+    expect(derivePresenceState({ ...baseFacts, conversationModeState: "cooldown" }).state).toBe("cooldown");
   });
 
   it("preserves interruption and error states explicitly", () => {

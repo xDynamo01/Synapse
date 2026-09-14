@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 
 from synapse.approvals.resume import ApprovalResumeRuntime
 from synapse.bootstrap.adapters.global_runtimes import bind_health, bind_lifecycle, build_all
+from synapse.bootstrap.adapters.mom import (
+    MoMConfigurations,
+    PrimaryBinding,
+    PrimaryChatRouting,
+    PrimaryInference,
+)
 from synapse.bootstrap.adapters.operational_projection import OperationalProjectionRuntime
+from synapse.bootstrap.adapters.search import configure_search_runtime
 from synapse.bootstrap.bindings import canonical_global_binding_inventory
 from synapse.bootstrap.container import RuntimeContainer
 from synapse.bootstrap.features.agents import AgentFeatureBuilder, AgentFeatureDependencies
@@ -43,6 +51,9 @@ from synapse.commands.registry import CommandRegistry
 from synapse.commands.runtime import CommandRuntime
 from synapse.commands.services import CommandServices
 from synapse.core.config import Settings
+from synapse.mom.runtime import MoMRuntime
+from synapse.project_knowledge.embedding_providers import learned_embedding_provider_from_env
+from synapse.project_knowledge.runtime import ProjectKnowledgeRuntime
 from synapse.voice.perception import VoicePerceptionSink
 
 
@@ -69,6 +80,11 @@ def build_application(settings: Settings | None = None) -> Application:
     """Construct an application without activating lifecycle resources."""
     container = create_runtime(settings)
     return Application(container, container.application_lifecycle, dict(container.bootstrap_metadata))
+
+
+def _project_knowledge_semantic_enabled() -> bool:
+    value = os.environ.get("SYNAPSE_PROJECT_KNOWLEDGE_LEARNED_EMBEDDINGS", "").casefold()
+    return value in {"1", "true", "yes", "on"}
 
 
 def create_runtime(
@@ -175,6 +191,20 @@ def create_runtime(
     intelligence_boundary = intelligence_built.value
     models.models.egress_gate = intelligence_boundary
     integration.tool_runtime.egress_gate = intelligence_boundary
+    search = configure_search_runtime(
+        data_dir=foundation.data_dir,
+        tools=platform.tools,
+        egress_gate=intelligence_boundary,
+    )
+    project_knowledge = ProjectKnowledgeRuntime(
+        foundation.data_dir,
+        foundation.events,
+        platform.memory,
+        semantic_enabled=_project_knowledge_semantic_enabled(),
+        learned_embedding_provider=learned_embedding_provider_from_env(
+            data_dir=foundation.data_dir,
+        ),
+    )
     agents.context_loader.skill_context = skills
     agents.context_loader.project_context = governance
     agents.primary_agent.skill_context = skills
@@ -217,7 +247,13 @@ def create_runtime(
         models.models,
     )
     interaction.voice.chat = chat
+    mom = MoMRuntime(
+        PrimaryBinding(agents.primary_agent, agents.admin), MoMConfigurations(foundation.data_dir),
+        PrimaryInference(models.models, agents.context_loader, platform.memory),
+        foundation.permissions, foundation.events,
+    )
     commands.chat = chat
+    chat.primary_model_routing = PrimaryChatRouting(mom)
     integration.health.chat = chat
     world_built = WorldFeatureBuilder().build(
         WorldFeatureDependencies(
@@ -356,6 +392,8 @@ def create_runtime(
         skills_phase2=skills_phase2,
         sandbox=sandbox,
         repository_runtime=repository_runtime,
+        search=search,
+        project_knowledge=project_knowledge,
         world_state=world.world_state,
         attention=world.attention,
         attention_decisions=world.attention_decisions,
@@ -385,6 +423,7 @@ def create_runtime(
         speech_pipeline=interaction.speech_pipeline,
         commands=commands,
         chat=chat,
+        mom=mom,
         application_lifecycle=lifecycle,
         bootstrap_metadata=metadata,
     )

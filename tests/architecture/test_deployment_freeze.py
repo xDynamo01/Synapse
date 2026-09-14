@@ -191,8 +191,8 @@ def test_frozen_dependency_edges_and_scc_baseline_are_exact() -> None:
             not any(name.startswith("deployment") for name in members)
             for members, _ in cyclic_components(graph)
         )
-    assert len(runtime) == 304
-    assert len(source) == 339
+    assert len(runtime) == 306  # Primary MoM: api -> mom -> core.
+    assert len(source) == 341  # Primary MoM adds the same two source edges.
 
 
 def test_global_bootstrap_activation_and_reverse_composition_are_absent() -> None:

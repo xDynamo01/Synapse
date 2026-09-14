@@ -13,13 +13,18 @@ import type {
   FirstAgentResult,
   FrontendBootstrap,
   InsightReport,
+  LMStudioStatus,
   ModelCatalogEntry,
   ModelHubDefaults,
   ModelProviderInfo,
+  MoMConfiguration,
+  MoMConfigurationUpdate,
   NotificationRecord,
   OperationalFact,
   ProviderSetting,
   ProjectListResult,
+  ProjectKnowledgeDocumentsResult,
+  ProjectKnowledgeDocumentMutationResult,
   ProjectManifestSummary,
   ProjectActivitySnapshot,
   SettingsSnapshot,
@@ -64,6 +69,18 @@ function normalizeEnvelope<T extends object>(value: T): T {
 
 export class SynapseFrontendClient {
   constructor(private readonly baseUrl: string) {}
+
+  async momConfiguration(workspaceId: string): Promise<MoMConfiguration> {
+    return this.get<MoMConfiguration>(`/api/primary/mom/configuration?workspace_id=${encodeURIComponent(workspaceId)}`);
+  }
+
+  async saveMoMConfiguration(payload: MoMConfigurationUpdate): Promise<MoMConfiguration> {
+    const response = await fetch(this.url("/api/primary/mom/configuration"), {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload)
+    });
+    if (!response.ok) throw await this.errorFrom(response);
+    return await response.json() as MoMConfiguration;
+  }
 
   async bootstrap(): Promise<FrontendBootstrap> {
     return normalizeEnvelope(await this.get<FrontendBootstrap>("/api/frontend/bootstrap"));
@@ -239,12 +256,71 @@ export class SynapseFrontendClient {
     return this.get<ProjectManifestSummary>(`/api/projects/${encodeURIComponent(projectId)}`);
   }
 
+  async projectKnowledgeDocuments(projectId: string, workspaceId = "default"): Promise<ProjectKnowledgeDocumentsResult> {
+    const search = new URLSearchParams({ project_id: projectId, workspace_id: workspaceId });
+    return this.get<ProjectKnowledgeDocumentsResult>(`/api/project-knowledge/documents?${search}`);
+  }
+
+  async reindexProjectKnowledgeDocument(documentId: string, workspaceId = "default"): Promise<ProjectKnowledgeDocumentMutationResult> {
+    return this.post<ProjectKnowledgeDocumentMutationResult>(
+      `/api/project-knowledge/documents/${encodeURIComponent(documentId)}/reindex`,
+      { workspace_id: workspaceId }
+    );
+  }
+
+  async removeProjectKnowledgeDocument(documentId: string, workspaceId = "default"): Promise<ProjectKnowledgeDocumentMutationResult> {
+    return this.post<ProjectKnowledgeDocumentMutationResult>(
+      `/api/project-knowledge/documents/${encodeURIComponent(documentId)}/remove`,
+      { workspace_id: workspaceId }
+    );
+  }
+
   async transcribeVoice(payload: VoiceTranscriptionRequest): Promise<VoiceTranscriptionResult> {
     return this.post<VoiceTranscriptionResult>("/api/frontend/voice/transcriptions", payload);
   }
 
-  async voiceConversationTurn(payload: VoiceConversationTurnRequest): Promise<VoiceConversationTurnResult> {
-    return this.post<VoiceConversationTurnResult>("/api/frontend/voice/conversation-turn", payload);
+  async voiceConversationTurn(
+    payload: VoiceConversationTurnRequest,
+    onText?: (text: string) => void,
+    signal?: AbortSignal
+  ): Promise<VoiceConversationTurnResult> {
+    if (!onText) {
+      return this.post<VoiceConversationTurnResult>("/api/frontend/voice/conversation-turn", payload);
+    }
+    const response = await fetch(this.url("/api/frontend/voice/conversation-turn/stream"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/x-ndjson" },
+      body: JSON.stringify(payload),
+      signal
+    });
+    if (!response.ok) throw await this.errorFrom(response);
+    if (!response.body) throw new Error("Voice stream unavailable.");
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let result: VoiceConversationTurnResult | null = null;
+    const consume = (line: string) => {
+      if (!line.trim()) return;
+      const event = JSON.parse(line) as { type: string; content?: string; error?: { message?: string } };
+      if (event.type === "chunk_received") onText(event.content ?? "");
+      if (event.type === "generation_completed") result = JSON.parse(event.content ?? "null") as VoiceConversationTurnResult;
+      if (event.type === "generation_failed") throw new Error(event.error?.message ?? "Voice generation failed.");
+    };
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        lines.forEach(consume);
+      }
+      consume(buffer + decoder.decode());
+      if (!result) throw new Error("Voice stream ended before completion.");
+      return result;
+    } finally {
+      reader.releaseLock();
+    }
   }
 
   async activitySnapshot(projectId: string): Promise<ProjectActivitySnapshot> {
@@ -261,7 +337,7 @@ export class SynapseFrontendClient {
     return this.get<InsightReport>("/api/insight/report");
   }
 
-  async settingsSnapshot(): Promise<SettingsSnapshot> {
+  async settingsSnapshot(agentId?: string): Promise<SettingsSnapshot> {
     const [
       defaults,
       catalog,
@@ -270,7 +346,8 @@ export class SynapseFrontendClient {
       voiceSettings,
       voiceProviders,
       voicePacks,
-      ttsVoices
+      ttsVoices,
+      bootstrap
     ] = await Promise.all([
       this.modelDefaults(),
       this.modelCatalog(),
@@ -279,9 +356,14 @@ export class SynapseFrontendClient {
       this.voiceSettings(),
       this.voiceProviders(),
       this.voicePacks(),
-      this.ttsVoices()
+      this.ttsVoices(),
+      agentId ? Promise.resolve(null) : this.bootstrap().catch(() => null)
     ]);
+    const personalizationAgentId = agentId ?? bootstrap?.primary_agent?.agent_id ?? null;
     return {
+      personalization: personalizationAgentId
+        ? await this.get<NonNullable<SettingsSnapshot["personalization"]>>(`/api/agents/${encodeURIComponent(personalizationAgentId)}`)
+        : null,
       models: {
         defaults,
         catalog,
@@ -301,6 +383,24 @@ export class SynapseFrontendClient {
     return this.get<ModelHubDefaults>("/api/models/default");
   }
 
+  async updatePersonality(agentId: string, displayName: string, systemPrompt: string): Promise<void> {
+    const result = await this.patch<{ updated: boolean; status: string }>(`/api/agents/${encodeURIComponent(agentId)}`, {
+      display_name: displayName.trim(), system_prompt: systemPrompt.trim()
+    });
+    if (!result.updated) throw new Error(`Agent changes were not applied: ${result.status}`);
+  }
+
+  async previewVoice(text: string, voiceId: string, providerId: string, language: string, signal?: AbortSignal): Promise<{ audio_base64: string; audio_format: string }> {
+    const response = await fetch(this.url("/api/audio/synthesize"), {
+      method: "POST", headers: { "Content-Type": "application/json" }, signal,
+      body: JSON.stringify({ text, voice_id: voiceId, provider_id: providerId || null, language })
+    });
+    if (!response.ok) throw await this.errorFrom(response);
+    const result = await response.json();
+    if (!result.audio_base64) throw new Error("The selected voice did not produce playable audio.");
+    return result;
+  }
+
   async updateModelDefaults(payload: UpdateModelDefaultsRequest): Promise<ModelHubDefaults> {
     return this.post<ModelHubDefaults>("/api/models/default", payload);
   }
@@ -311,6 +411,15 @@ export class SynapseFrontendClient {
 
   async modelProviders(): Promise<ModelProviderInfo[]> {
     return this.get<ModelProviderInfo[]>("/api/models/providers");
+  }
+
+  async lmstudioStatus(): Promise<LMStudioStatus> {
+    return this.get<LMStudioStatus>("/api/providers/lmstudio/status");
+  }
+
+  async synapseLocalStatus(modelName?: string | null): Promise<LMStudioStatus> {
+    const search = modelName ? `?model=${encodeURIComponent(modelName)}` : "";
+    return this.get<LMStudioStatus>(`/api/providers/synapse-local/status${search}`);
   }
 
   async providerSettings(): Promise<ProviderSetting[]> {

@@ -8,6 +8,7 @@ import tempfile
 import wave
 from dataclasses import replace
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -25,8 +26,20 @@ from synapse.speech_adapters.execution import (
     SpeechExecutionResultLedger,
     SpeechExecutionStdin,
 )
+from synapse.speech_adapters.kokoro_tts import KokoroTextToSpeechAdapter
 from synapse.speech_adapters.models import SpeechAdapterManifest
 from synapse.speech_adapters.piper_tts import PiperTextToSpeechAdapter
+from synapse.speech_adapters.registry import builtin_speech_adapter_registry
+
+
+def _fixture_pack(data_root: Path) -> None:
+    root = data_root / "voice/voice-packs/test-piper"
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "voice.onnx").write_bytes(b"test model not executed")
+    (root / "voice-pack.json").write_text(json.dumps({"provider": "piper", "voices": [{
+        "voice_id": "synapse-cadu", "default": True, "asset_reference": "voice.onnx",
+        "checksum": hashlib.sha256(b"test model not executed").hexdigest(),
+    }]}), encoding="utf-8")
 
 
 def _manifest() -> SpeechAdapterManifest:
@@ -185,7 +198,7 @@ def test_piper_has_no_operational_fallback_when_boundary_is_unavailable() -> Non
         adapter = _adapter(Path(temporary), None)
         assert adapter.health().status == "degraded"
         with pytest.raises(ValidationError, match="execution boundary"):
-            adapter.synthesize(AudioOutputRequest(session_id="s1", text="hello"))
+            adapter.synthesize(AudioOutputRequest(session_id="s1", text="olá"))
 
 
 def test_piper_reports_missing_executable_and_uses_packaged_default_voice_factually() -> None:
@@ -194,6 +207,7 @@ def test_piper_reports_missing_executable_and_uses_packaged_default_voice_factua
         data_root = root / "data"
         settings_path = data_root / "voice" / "settings.yaml"
         settings_path.parent.mkdir(parents=True)
+        _fixture_pack(data_root)
         settings_path.write_text(
             json.dumps({"piper": {"executable": str(root / "missing.exe")}}),
             encoding="utf-8",
@@ -210,8 +224,8 @@ def test_piper_reports_missing_executable_and_uses_packaged_default_voice_factua
             encoding="utf-8",
         )
         assert adapter.health().status == "available"
-        result = adapter.synthesize(AudioOutputRequest(session_id="s1", text="hello"))
-        assert result.voice_id == "synapse-bryce"
+        result = adapter.synthesize(AudioOutputRequest(session_id="s1", text="olá"))
+        assert result.voice_id == "synapse-cadu"
 
 
 def test_piper_fake_executor_success_requires_reported_and_valid_artifact() -> None:
@@ -227,21 +241,70 @@ def test_piper_fake_executor_success_requires_reported_and_valid_artifact() -> N
         assert result.metadata["output_verified"] is True
 
 
-def test_local_speech_execution_port_runs_packaged_piper_without_shell() -> None:
+def test_local_speech_execution_port_runs_installed_kokoro_without_shell() -> None:
     with tempfile.TemporaryDirectory() as temporary:
-        adapter = PiperTextToSpeechAdapter(
-            _manifest(),
-            DataDir(Path(temporary) / "data"),
+        root = Path(temporary) / "data"
+        (root / "voice").mkdir(parents=True)
+        (root / "voice/kokoro-runtime.json").write_text(json.dumps({
+            "root": str(PROJECT_ROOT / "data/voice")}), encoding="utf-8")
+        adapter = KokoroTextToSpeechAdapter(
+            builtin_speech_adapter_registry().get_adapter("kokoro_tts_adapter"),
+            DataDir(root),
             LocalSpeechExecutionPort(),
         )
 
-        result = adapter.synthesize(AudioOutputRequest(session_id="s1", text="hello from synapse"))
+        result = adapter.synthesize(AudioOutputRequest(session_id="s1", text="olá do synapse"))
 
-        assert result.provider_id == "piper"
-        assert result.voice_id == "synapse-bryce"
+        assert result.provider_id == "kokoro"
+        assert result.voice_id == "pf_dora"
         assert result.audio_format == "audio/wav"
         assert result.duration_ms is not None and result.duration_ms > 0
         assert result.metadata["output_verified"] is True
+
+
+def test_piper_falls_back_to_pt_br_pack_default_when_removed_voice_is_configured() -> None:
+    with tempfile.TemporaryDirectory() as temporary:
+        _fixture_pack(Path(temporary) / "data")
+        adapter = PiperTextToSpeechAdapter(
+            _manifest(),
+            DataDir(Path(temporary) / "data"),
+            ControlledExecutor(),
+        )
+
+        result = adapter.synthesize(AudioOutputRequest(session_id="s1", text="olá", voice_id="synapse-bryce"))
+
+        assert result.voice_id == "synapse-cadu"
+
+
+def test_local_speech_execution_port_sends_unicode_text_as_utf8() -> None:
+    request_text = "Olá! 😊 Como posso ajudar?"
+    stdin = SpeechExecutionStdin(
+        "transient://text/unicode",
+        hashlib.sha256(request_text.encode("utf-8")).hexdigest(),
+        request_text,
+    )
+    request = SpeechExecutionRequest.create(
+        tool_reference="tool://piper",
+        argv=("piper", "--model", "model.onnx"),
+        stdin=stdin,
+        working_directory_reference="workspace://voice/synthesis",
+        timeout_seconds=10,
+        environment_references=(),
+        input_artifact_references=("artifact://model/1",),
+        expected_output_artifact_references=("artifact://audio/1",),
+        correlation_reference="voice-session://unicode",
+        policy_reference="policy://speech/piper",
+        capability_reference="capability://voice/tts",
+    )
+
+    with patch("synapse.bootstrap.adapters.speech_execution.subprocess.run") as run:
+        run.return_value.returncode = 0
+        result = LocalSpeechExecutionPort().execute(request)
+
+    assert result.outcome is SpeechExecutionOutcome.EXITED
+    assert run.call_args.kwargs["input"] == request_text
+    assert run.call_args.kwargs["encoding"] == "utf-8"
+    assert run.call_args.kwargs["errors"] == "replace"
 
 
 @pytest.mark.parametrize(

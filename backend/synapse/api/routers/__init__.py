@@ -14,6 +14,7 @@ from synapse.api.routers.operational_projection import router as operational_pro
 from synapse.api.routers.perception import router as perception_router
 from synapse.api.routers.platform import router as platform_router
 from synapse.api.routers.project_governance import router as project_governance_router
+from synapse.api.routers.project_knowledge import router as project_knowledge_router
 from synapse.api.routers.skills import router as skills_router
 from synapse.api.routers.system import router as system_router
 from synapse.api.routers.tools import router as tools_router
@@ -40,6 +41,7 @@ __all__ = [
     "perception_router",
     "automation_router",
     "platform_router",
+    "project_knowledge_router",
     "project_governance_router",
     "intelligence_boundary_router",
 ]

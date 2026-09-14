@@ -78,6 +78,7 @@ class IntelligenceBoundaryFeatureBuilder:
         existing = {item.provider_id for item in runtime.list_trust_profiles()}
         for provider_id, boundary in (
             ("mock", ProcessingBoundary.LOCAL_PROCESS),
+            ("synapse_local", ProcessingBoundary.LOCAL_PROCESS),
             ("ollama", ProcessingBoundary.LOCAL_NETWORK),
             ("lmstudio", ProcessingBoundary.LOCAL_NETWORK),
             ("lmstudio_local", ProcessingBoundary.LOCAL_NETWORK),

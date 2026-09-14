@@ -3,9 +3,14 @@ import type { BackendConnectionState, ConversationModeState, ConversationRuntime
 export type PresenceOperationalState =
   | "idle"
   | "listening"
+  | "capturing"
+  | "finalizing"
   | "transcribing"
+  | "generating"
+  | "synthesizing"
   | "processing"
   | "speaking"
+  | "cooldown"
   | "interrupted"
   | "failed"
   | "disconnected";
@@ -49,7 +54,7 @@ export function derivePresenceState(facts: PresenceApplicationFacts): PresenceSc
   return {
     ...base,
     label: `Synapse ${state}`,
-    amplitude: state === "listening" || state === "speaking" ? amplitude : 0,
+    amplitude: state === "listening" || state === "capturing" || state === "speaking" ? amplitude : 0,
     particleCount: reduced
       ? Math.min(base.particleCount, presencePerformanceBudget.reducedMotionParticles)
       : base.particleCount,
@@ -96,12 +101,22 @@ function baseScene(state: PresenceOperationalState): Omit<PresenceSceneState, "l
   switch (state) {
     case "listening":
       return { state, particleCount: 76, pulseRate: 1.4, coreRadius: 74, haloOpacity: 0.32, accent: "cyan" };
+    case "capturing":
+      return { state, particleCount: 82, pulseRate: 1.55, coreRadius: 74, haloOpacity: 0.34, accent: "cyan" };
+    case "finalizing":
+      return { state, particleCount: 78, pulseRate: 1.3, coreRadius: 70, haloOpacity: 0.28, accent: "cyan" };
     case "transcribing":
       return { state, particleCount: 84, pulseRate: 1.7, coreRadius: 68, haloOpacity: 0.28, accent: "cyan" };
+    case "generating":
+      return { state, particleCount: 94, pulseRate: 2.0, coreRadius: 76, haloOpacity: 0.35, accent: "cyan" };
+    case "synthesizing":
+      return { state, particleCount: 86, pulseRate: 1.6, coreRadius: 76, haloOpacity: 0.33, accent: "cyan" };
     case "processing":
       return { state, particleCount: 96, pulseRate: 2.1, coreRadius: 76, haloOpacity: 0.36, accent: "cyan" };
     case "speaking":
       return { state, particleCount: 88, pulseRate: 1.8, coreRadius: 78, haloOpacity: 0.34, accent: "cyan" };
+    case "cooldown":
+      return { state, particleCount: 72, pulseRate: 0.45, coreRadius: 76, haloOpacity: 0.26, accent: "cyan" };
     case "interrupted":
       return { state, particleCount: 54, pulseRate: 0.6, coreRadius: 64, haloOpacity: 0.18, accent: "amber" };
     case "failed":

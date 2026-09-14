@@ -9,13 +9,88 @@ function read(path: string): string {
 }
 
 describe("minimal secure desktop shell", () => {
+  it("keeps Presence textless and reacts to measured speech without restarting the canvas", () => {
+    const presence = read("src/renderer/Presence.tsx");
+    expect(presence).not.toContain("presence-identity");
+    expect(presence).not.toContain("presenceDisplayStatus");
+    expect(presence).toContain("presence-accessible-state");
+    expect(presence).toContain('current.state === "speaking" ? current.amplitude : 0');
+    expect(presence).toContain("sceneRef.current");
+    expect(presence).toContain("amplitude * 0.65");
+    const playback = read("src/renderer/main.tsx").split("function startPlaybackAmplitudeMeter")[1].split("function pumpAmplitude")[0];
+    expect(playback).toContain("createMediaElementSource(audio)");
+    expect(playback).not.toContain('"speaking", 0.42');
+  });
+  it("reopens the conversation with an accessible message icon", () => {
+    const renderer = read("src/renderer/main.tsx");
+    const button = renderer.split('className="log-reopen"')[1].split("</button>")[0];
+    expect(button).toContain('onClick={onToggle}');
+    expect(button).toContain('aria-label="Reopen Conversation Log"');
+    expect(button).toContain('title="Abrir conversa"');
+    expect(button).toContain("<svg");
+    expect(button).toContain('aria-hidden="true"');
+    expect(button).not.toMatch(/>\s*Log\s*</);
+  });
+  it("keeps constellation framing fixed without a visible title or zoom controls", () => {
+    const view = read("src/renderer/ActivityConstellation.tsx");
+    expect(view).not.toContain("<h2>Constelação</h2>");
+    expect(view).not.toContain("Diminuir zoom");
+    expect(view).not.toContain("Aumentar zoom");
+    expect(view).not.toContain("Enquadrar");
+    expect(view).toContain("Fechar registro");
+    expect(view).toContain("constellation-accessible-nodes");
+  });
+  it("offers microphone mute without stopping conversation and fences late capture", () => {
+    const renderer = read("src/renderer/main.tsx");
+    expect(renderer).toContain('"Ativar microfone" : "Silenciar microfone"');
+    expect(renderer).toContain("aria-pressed={conversationModeRunning ? microphoneMuted : undefined}");
+    expect(renderer).toContain("microphoneEpoch !== microphoneEpochRef.current");
+    expect(renderer).toContain("captureEpoch !== microphoneEpochRef.current");
+    expect(renderer).toContain("if (microphoneMutedRef.current) return;");
+    const mute = renderer.split("function toggleMicrophoneMute(): void {")[1].split("function cleanupConversationModePlayback")[0];
+    expect(mute).toContain("cancelVoiceRecording()");
+    expect(mute).not.toContain("stopConversationMode(");
+    expect(mute).not.toContain("cleanupConversationModePlayback()");
+    expect(mute).toContain("!conversationModeRequestRef.current && !playbackRef.current");
+    const recovery = renderer.split("function recoverConversationModeTurnError(error: unknown): void {")[1].split("function scheduleConversationModeListening")[0];
+    expect(recovery).toContain("conversationModeRequestRef.current = null;");
+  });
+  it("keeps voice feedback out of the composer control grid with bounded scrolling", () => {
+    const renderer = read("src/renderer/main.tsx");
+    const css = read("src/renderer/styles.css");
+    expect(renderer).toContain('className="composer-voice-feedback"');
+    expect(renderer).toContain('className="voice-understanding"');
+    const feedback = css.match(/\.composer-voice-feedback\s*\{([^}]+)\}/)?.[1];
+    expect(feedback).toContain("position: absolute");
+    expect(feedback).toContain("max-height:");
+    expect(feedback).toContain("overflow-y: auto");
+  });
+  it("shares the atmospheric background across both visual modes without changing the settings surface", () => {
+    const css = read("src/renderer/styles.css");
+    expect(css).toContain('url("../../assets/media/synapse-nebula-background.png")');
+    expect(css).toContain("--scene-filter");
+    expect(css).toContain(".center-surface::before");
+    expect(css).toContain("background-blend-mode: screen, normal, luminosity, normal");
+    expect(css).toContain("filter: var(--scene-filter)");
+    expect(css).toContain(".settings-panel.settings-conservative {");
+    expect(css).toContain("background: #22252b;");
+  });
+  it("places the brain toggle inside the composer control row", () => {
+    const renderer = read("src/renderer/main.tsx");
+    const toggle = read("src/renderer/MoMToggle.tsx");
+    expect(toggle).toContain('className="brain-icon"');
+    expect(toggle).toContain("aria-pressed={configuration?.enabled ?? false}");
+    expect(renderer.indexOf('<MoMToggle client=')).toBeGreaterThan(renderer.indexOf('onChange={(event) => changeText(event.target.value)}'));
+    const modes = read("src/renderer/styles.css").match(/\.composer-modes\s*\{([^}]+)\}/)?.[1];
+    expect(modes).not.toContain("position: absolute");
+  });
   it("uses the canonical spatial structure from Slice 2", () => {
     const renderer = read("src/renderer/main.tsx");
     const css = read("src/renderer/styles.css");
 
     expect(renderer).toContain("side-rail");
     expect(renderer).toContain("history-button");
-    expect(renderer).toContain("HistoryPanel");
+    expect(renderer).toContain("LibraryPanel");
     expect(renderer).toContain("center-surface");
     expect(renderer).toContain("conversation-log");
     expect(renderer).toContain("lazy(() => import(\"./Presence\")");
@@ -37,6 +112,7 @@ describe("minimal secure desktop shell", () => {
     const css = read("src/renderer/styles.css");
 
     expect(css).toContain(".conversation-log");
+    expect(css.match(/\.conversation-log\s*\{[^}]*z-index:\s*9;/s)?.[0]).toBeTruthy();
     expect(css).toContain("position: absolute");
     expect(css).toContain("right: clamp(18px, 3vw, 36px)");
     expect(css).toContain("bottom: clamp(96px, 14vh, 126px)");
@@ -58,16 +134,18 @@ describe("minimal secure desktop shell", () => {
     expect(css).toContain(".app-shell.log-minimized");
     expect(css).toContain("grid-template-columns: 54px minmax(0, 1fr)");
     expect(css).toContain(".log-reopen");
+    expect(css.match(/\.log-reopen\s*\{[^}]*z-index:\s*9;/s)?.[0]).toBeTruthy();
     expect(css).toContain("position: absolute");
   });
 
-  it("keeps launch, History and New Chat separated from active conversation messages", () => {
+  it("keeps launch, Library and New Chat separated from active conversation messages", () => {
     const renderer = read("src/renderer/main.tsx");
     const client = read("src/shared/frontendClient.ts");
     const types = read("src/shared/types.ts");
 
     expect(renderer).toContain("conversationIndex");
     expect(renderer).toContain("historyPanelOpen");
+    expect(renderer).toContain("librarySection");
     expect(renderer).toContain("messages: []");
     expect(renderer).toContain("openNewConversation");
     expect(renderer).toContain("openConversationFromHistory");
@@ -201,7 +279,10 @@ describe("minimal secure desktop shell", () => {
     expect(renderer).toContain("validateModelSelection");
     expect(renderer).toContain("Secrets are never displayed");
     expect(renderer).not.toContain("Privacy");
-    expect(client).toContain("settingsSnapshot()");
+    expect(client).toContain("settingsSnapshot(agentId?: string)");
+    expect(renderer).toContain('update("agentName", event.target.value)');
+    expect(renderer).toContain('update("personality", event.target.value)');
+    expect(client).toContain('this.url("/api/audio/synthesize")');
     expect(client).toContain('"/api/models/default"');
     expect(client).toContain('"/api/models/catalog"');
     expect(client).toContain('"/api/models/providers"');
@@ -227,7 +308,8 @@ describe("minimal secure desktop shell", () => {
     expect(renderer).toContain("theme-sample");
     expect(renderer).toContain("provider-facts");
     expect(renderer).toContain("voice-pack-grid");
-    expect(renderer).toContain("Default Voice Pack discovery reports");
+    expect(renderer).toContain('aria-label="Default Voice Pack voices"');
+    expect(renderer).toContain('className="voice-card-actions"');
     expect(renderer).toContain("activeSection === \"models\" && !snapshot");
     expect(renderer).toContain("activeSection === \"voice\" && !snapshot");
   });
@@ -253,8 +335,12 @@ describe("minimal secure desktop shell", () => {
     expect(renderer).toContain("Start Conversation Mode");
     expect(renderer).toContain("Stop Conversation Mode");
     expect(renderer).toContain("Record voice for transcription");
-    expect(renderer).toContain('conversationModeState !== "inactive"');
+    expect(renderer).toContain("conversationModeCapturesMicrophone");
+    expect(renderer).toContain("conversationModeMinimumVoicePeak");
+    expect(renderer).toContain("conversationModeRestartDelayMs");
     expect(renderer).toContain("playConversationModeAudio");
+    expect(renderer).toContain("audioBlobUrl");
+    expect(renderer).toContain("URL.revokeObjectURL");
     expect(renderer).toContain("cleanupConversationModePlayback");
   });
 
@@ -275,7 +361,7 @@ describe("minimal secure desktop shell", () => {
     expect(presence).toContain("makeParticles(340)");
     expect(presence).toContain("requestAnimationFrame");
     expect(presence).toContain("drawTechnicalRing");
-    expect(presence).toContain("presenceDisplayStatus");
+    expect(presence).toContain("presence-accessible-state");
     expect(adapter).toContain('"listening"');
     expect(adapter).toContain('"transcribing"');
     expect(adapter).toContain('"processing"');
@@ -286,7 +372,7 @@ describe("minimal secure desktop shell", () => {
     expect(css).toContain("@media (prefers-reduced-motion: reduce)");
   });
 
-  it("keeps factual Activity wired while parking the constellation graph for the next version", () => {
+  it("keeps factual Activity wired to the live constellation renderer", () => {
     const renderer = read("src/renderer/main.tsx");
     const activity = read("src/renderer/ActivityConstellation.tsx");
     const adapter = read("src/shared/activityAdapter.ts");
@@ -294,23 +380,29 @@ describe("minimal secure desktop shell", () => {
     const css = read("src/renderer/styles.css");
 
     expect(renderer).toContain("activeVisual");
-    expect(renderer).toContain("activitySnapshot(projectId)");
+    expect(renderer).toContain("activitySnapshot(activityProjectId)");
     expect(renderer).toContain("openActivityStream");
     expect(renderer).toContain("applyActivityEvent");
     expect(renderer).toContain("deriveActivityScene");
     expect(client).toContain("/api/projects/");
     expect(client).toContain("/activity/stream");
-    expect(activity).toContain("activity-preview-card");
-    expect(activity).toContain("Constellation arrives in the next version");
-    expect(activity).not.toContain("<svg");
-    expect(activity).not.toContain("activity-node-core");
+    expect(activity).toContain("ConstellationCanvas");
+    expect(activity).toContain("constellation-canvas");
+    expect(activity).toContain("canvas.destroy()");
+    expect(activity).toContain("modelSummary");
+    expect(activity).toContain("activity-work-log");
+    expect(activity).toContain("selectedNode.metadata.title");
+    expect(activity).not.toContain("Constellation arrives in the next version");
+    expect(activity).not.toContain("Graph preview paused");
     expect(adapter).toContain("parentEntityId");
+    expect(adapter).toContain("withBaselineActivityState");
     expect(activity).toContain("activityStatus(scene)");
     expect(adapter).toContain("activityPerformanceBudget");
     expect(adapter).toContain("aggregate:overflow");
     expect(adapter).toContain("activity resync required");
     expect(css).toContain(".activity-view");
-    expect(css).toContain(".activity-preview-card");
+    expect(css).toContain(".activity-svg");
+    expect(css).not.toContain(".activity-preview-card");
   });
 
   it("keeps heavy visualization modules outside the startup path", () => {
@@ -338,6 +430,7 @@ describe("minimal secure desktop shell", () => {
     expect(main).toContain("contextIsolation: true");
     expect(main).toContain("sandbox: true");
     expect(main).toContain("nodeIntegration: false");
+    expect(main).toContain('appendSwitch("autoplay-policy", "no-user-gesture-required")');
     expect(main).toContain("../preload/preload.cjs");
     expect(preload).toContain("contextBridge.exposeInMainWorld");
     expect(preload).toContain("synapse:window:minimize");
@@ -417,12 +510,9 @@ describe("minimal secure desktop shell", () => {
 
   it("uses the approved icon in Electron without adding renderer authority", () => {
     const main = read("src/main/main.ts");
-    const script = read("scripts/build-root-launcher.ps1");
 
     expect(main).toContain("assets/icons/synapse.ico");
     expect(main).toContain("icon: iconPath");
-    expect(script).toContain("assets\\icons\\synapse.ico");
-    expect(script).toContain("/win32icon:$iconPath");
   });
 
   it("keeps slash command discovery as composer-local surface", () => {
@@ -498,11 +588,49 @@ describe("minimal secure desktop shell", () => {
     expect(css).not.toContain(".side-rail .notifications");
   });
 
+  it("renders Project Files inside Library without running retrieval", () => {
+    const renderer = read("src/renderer/main.tsx");
+    const discovery = read("src/shared/commandDiscovery.ts");
+    const client = read("src/shared/frontendClient.ts");
+    const types = read("src/shared/types.ts");
+    const css = read("src/renderer/styles.css");
+
+    expect(discovery).toContain('tool_id: "project.files"');
+    expect(discovery).toContain('opens_surface: "project_files"');
+    expect(renderer).toContain("<LibraryPanel");
+    expect(renderer).toContain("Histórico de chat");
+    expect(renderer).toContain("Arquivos enviados");
+    expect(renderer).toContain("ProjectFilesPanel");
+    expect(renderer).toContain("projectFilesOpen");
+    expect(renderer).toContain("state.bootstrap?.project_id, state.projectFilesOpen");
+    expect(renderer).toContain("Library opened on Project Files without running retrieval.");
+    expect(renderer).toContain("text.trim().length > 0 || attachments.length > 0");
+    expect(renderer).toContain("Abrir/listar arquivos não executa retrieval nem gera embedding de query.");
+    expect(renderer).toContain("Reindexar");
+    expect(renderer).toContain("Remover");
+    expect(renderer).toContain("Busca semântica local");
+    expect(renderer).toContain("Fallback lexical continua disponível quando factual.");
+    expect(client).toContain("projectKnowledgeDocuments(projectId");
+    expect(client).toContain("/api/project-knowledge/documents?");
+    expect(client).toContain("/reindex`");
+    expect(client).toContain("/remove`");
+    expect(client).not.toContain("/api/project-knowledge/query");
+    expect(types).toContain("ProjectKnowledgeDocumentsResult");
+    expect(types).toContain("ProjectKnowledgeSemanticStatus");
+    expect(css).toContain(".library-tabs");
+    expect(css).toContain(".project-files-panel");
+    expect(css).toContain(".project-files-panel.embedded");
+    expect(css).toContain(".project-files-list");
+    expect(css).toContain("overflow: auto");
+  });
+
   it("applies theme changes to the shell icon components immediately", () => {
     const renderer = read("src/renderer/main.tsx");
     const css = read("src/renderer/styles.css");
 
     expect(renderer).toContain("onPreviewFrontendSettings");
+    expect(renderer).toContain('aria-label={`Backend status: ${state}`}');
+    expect(renderer).not.toContain('<div className={`backend-pill ${state}`}>{state}</div>');
     expect(renderer).toContain("const shellIcons = assetsForTheme(state.frontendSettings.theme)");
     expect(renderer).toContain("iconVisualOffsets");
     expect(renderer).toContain('type ShellIconVisualKey = "constellation" | "history" | "settings" | "notificationsIdle" | "notificationsActive"');
@@ -521,19 +649,26 @@ describe("minimal secure desktop shell", () => {
     expect(css).toContain("--shell-nav-bg-hover");
     expect(css).toContain("--shell-nav-bg-active");
     expect(css).toContain("--shell-nav-border");
+    expect(css).toContain("color: var(--primary-accent)");
+    expect(css).toContain("background: color-mix(in srgb, var(--shell-nav-bg) 72%, transparent)");
+    expect(css).toContain(".backend-pill::before");
+    expect(css).toContain("font-size: 0");
+    expect(css).toContain(".backend-pill.degraded");
+    expect(css).toContain(".backend-pill.connecting");
     expect(css).toContain(".shell-nav-icon-frame");
     expect(css).toContain(".shell-nav-icon");
     expect(css).toContain("drop-shadow(1px 0 0 rgba(0, 0, 0, 0.9))");
     expect(css).toContain("transform: translate(var(--shell-icon-x, 0), var(--shell-icon-y, 0)) scale(var(--shell-icon-scale, 1))");
   });
 
-  it("defines root executable build automation", () => {
+  it("keeps installer and root launcher automation out of the frontend package", () => {
     const packageJson = read("package.json");
-    const script = read("scripts/build-root-launcher.ps1");
 
-    expect(packageJson).toContain("build:root-exe");
-    expect(script).toContain("Synapse.exe");
-    expect(script).toContain("electron.exe");
-    expect(script).toContain("CreateNoWindow = true");
+    expect(packageJson).not.toContain("package:win");
+    expect(packageJson).not.toContain("release:artifacts");
+    expect(packageJson).not.toContain("build:root-exe");
+    expect(packageJson).not.toContain("electron-builder");
+    expect(packageJson).not.toContain("nsis");
+    expect(packageJson).not.toContain("Synapse-Setup");
   });
 });

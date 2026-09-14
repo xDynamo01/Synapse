@@ -112,6 +112,8 @@ class MemoryContextRead:
     confidence: float | None
     revision: int
     source: str
+    tags: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class ConversationContextReader(Protocol):
@@ -141,9 +143,11 @@ class MemoryContextReader(Protocol):
     def retrieve(
         self,
         permission_context: PermissionContext,
+        query: str,
         scopes: list[str],
         owner_ids: list[str],
         limit: int,
+        filters: dict[str, Any] | None = None,
     ) -> list[MemoryContextRead]: ...
 
 

@@ -1,6 +1,6 @@
 # Synapse — operational backend roadmap
 
-Status global: **Backend READY / Windows Release Candidate READY**.
+Status global: **Backend READY / local Frontend V2 active**.
 
 Este é o único roadmap operacional atual. O [roadmap V3 anterior](../roadmap.md) é
 histórico/superseded. Evidência detalhada permanece nas specifications e audits;
@@ -26,7 +26,7 @@ backend is globally ready.
 
 ## Current product phase — Frontend V2 foundation
 
-Status: **FRONTEND V2 RELEASE CANDIDATE READY**
+Status: **FRONTEND V2 LOCAL APP ACTIVE**
 
 Scope: clean rebuild planning for the local-first desktop frontend. The retired
 Electron ADE frontend remains retired and is not a baseline for the new work.
@@ -40,7 +40,6 @@ Canonical frontend foundation documents:
 - [Backend contracts](../frontend/BACKEND_CONTRACTS.md)
 - [Visual system](../frontend/VISUAL_SYSTEM.md)
 - [ADR 0120 — Frontend V2 desktop stack](../adr/0120-frontend-v2-stack.md)
-- [Frontend V2 Windows release plan](../frontend/RELEASE_PLAN.md)
 
 Recommended stack for the initial rebuild: **Electron + React + TypeScript +
 Vite + PixiJS**, with minimal state management and no heavy docking, global data
@@ -57,8 +56,7 @@ cache, 3D engine or design-system dependency until a later slice proves the need
    client skeleton, degraded/offline state, no Presence animation beyond factual
    placeholder. **Slice 2 complete:** `apps/frontend-v2/` implements the minimal
    Electron/React shell, first-run onboarding, text Conversation Log, compact
-   composer, typed client, custom window controls and root
-   `F:\Projetos\Synapse\Synapse.exe` launcher.
+   composer, typed client and custom window controls.
 3. **First-run + text conversation hardening** — no usable agent opens onboarding; providers
    and models are factual; valid creation sets Primary/default; text turn and
    streaming open the normal workspace. **Slice 3 complete:** conversation state,
@@ -66,7 +64,7 @@ cache, 3D engine or design-system dependency until a later slice proves the need
    double-submit prevention and Conversation Log runtime UX are implemented without
    changing the approved elevated panel structure.
    **Micro-slice 3.5 complete:** the official root icon is preserved as source,
-   governed frontend icon derivatives are used by Electron/root launcher, and the
+   governed frontend icon derivatives are used by Electron, and the
    composer supports `/` slash-command discovery from the existing tool catalog.
 4. **Conversation Log** — persistent/minimizable log, message pagination, stream
    lifecycle, cancellation, summaries and attachment references. **Slice 4 complete:**
@@ -138,8 +136,8 @@ cache, 3D engine or design-system dependency until a later slice proves the need
    from the composer without a governed route.
 12. **Integration hardening** — contract tests, stream/error recovery, no simulated
     operational state, IPC allowlist/security gates, degraded provider paths.
-13. **Packaging/release** — Windows packaging, sidecar lifecycle, update/recovery and
-    release readiness gates.
+13. **Local runtime hardening** — sidecar lifecycle, update/recovery and local
+    readiness gates. Installer/release packaging is not an active target.
 
 First completed implementation slice: **Frontend V2 Slice 1 — contract closure
 for first-run and text conversation boot**.
@@ -147,26 +145,23 @@ for first-run and text conversation boot**.
 **Slice 13 complete:** the composer `+` now uses an allowlisted Electron picker,
 governed frontend staging, backend-owned checksum/storage refs, conversation-scoped
 registration, removable composer chips and refs on the next text turn. Advanced file
-browser, previews, remote uploads, multimodal processing, advanced panels and final
-packaging remain out of scope.
+browser, previews, remote uploads, multimodal processing and advanced panels remain
+out of scope.
 
 **Slice 14 complete:** frontend hardening moved Presence and Activity/Constellation
 behind lazy React chunks, isolated visual load failures behind a local fallback,
 revalidated renderer cleanup/security gates, and reduced the initial renderer chunk
 from 539.88 kB to 265.25 kB. The Vite >500 kB warning is no longer emitted in the
-Slice 14 build. Packaging/release remains out of scope.
+Slice 14 build. Installer/release packaging remains outside the active product target.
 
-Current governed campaign result: **SYNAPSE v0.01 READY**.
-The packaged first-run, text conversation, Voice/STT/TTS and runtime validation
-gates are green. The retired installed E2E harness is documented only as
-historical context in `docs/legacy/installed-e2e-harness.md`; current Activity,
-Settings, theme and conversation validation must use the real local runtime and
-normal component/integration tests. The v0.01 installer checksum is generated in
-`apps/frontend-v2/release/checksums.txt` and the clean install/uninstall smoke
-completed with no orphan sidecar processes.
-The canonical release slice list, criteria, evidence ledger, produced artifacts
-and limitations are tracked in
-[Frontend V2 Windows release plan](../frontend/RELEASE_PLAN.md).
+Current governed campaign result: **SYNAPSE LOCAL APP ACTIVE**.
+First-run, text conversation, Voice/STT/TTS and runtime validation are governed
+through local development builds, Electron smoke tests and component/integration
+tests. The retired installed E2E harness is documented only as historical context
+in `docs/legacy/installed-e2e-harness.md`; current Activity, Settings, theme and
+conversation validation must use the real local runtime and normal component/
+integration tests. Installer, root launcher and release artifact generation are
+not active targets.
 
 ## Completed phase — Deployment Runtime
 

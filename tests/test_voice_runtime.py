@@ -20,6 +20,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "tests"))
 
 from factories.audio import ControlledAudioDeviceBackend
 from synapse.audio.devices import DeviceRuntime
+from synapse.audio.models import TextToSpeechResult
 from synapse.core.app import create_runtime
 from synapse.core.config import Settings
 from synapse.core.exceptions import ValidationError
@@ -153,23 +154,25 @@ class VoiceRuntimeTests(unittest.TestCase):
         self.assertTrue(all(voice.usable for voice in fixture_voices))
         self.assertTrue(all(voice.provider == "piper" for voice in fixture_voices))
 
-    def test_packaged_default_voice_pack_contains_six_usable_redistributable_voices(self) -> None:
-        directory, _, runtime = runtime_in_tempdir()
+    def test_packaged_voice_pack_contains_original_dora_only(self) -> None:
+        directory, settings, runtime = runtime_in_tempdir()
         self.addCleanup(directory.cleanup)
+        write_json(settings.data_dir / "voice/kokoro-runtime.json",
+                   {"root": str(PROJECT_ROOT / "data/voice")})
 
         pack = next(
             item
             for item in runtime.voice.list_voice_packs()
-            if item.pack_id == "synapse-default-v0.01"
+            if item.pack_id == "kokoro-dora-v1"
         )
 
         self.assertEqual(pack.status, "ready")
-        self.assertEqual(len(pack.voices), 6)
-        self.assertEqual(sum(1 for voice in pack.voices if voice.voice_profile["gender"] == "masculine"), 3)
-        self.assertEqual(sum(1 for voice in pack.voices if voice.voice_profile["gender"] == "feminine"), 3)
+        self.assertEqual(len(pack.voices), 1)
+        self.assertEqual({voice.locale for voice in pack.voices}, {"pt-BR"})
+        self.assertEqual({voice.voice_id for voice in pack.voices}, {"pf_dora"})
         self.assertTrue(all(voice.usable for voice in pack.voices))
-        self.assertTrue(all(voice.asset_reference.startswith("resource://voice/") for voice in pack.voices))
-        self.assertTrue(all(voice.license.lower() in {"public domain", "cc0"} for voice in pack.voices))
+        self.assertEqual(pack.voices[0].provider, "kokoro")
+        self.assertEqual(pack.voices[0].license, "Apache-2.0")
 
     def test_voice_pack_corrupt_asset_is_not_usable(self) -> None:
         directory, settings, runtime = runtime_in_tempdir()
@@ -405,6 +408,37 @@ class VoiceRuntimeTests(unittest.TestCase):
 
         self.assertEqual(summary.provider_status["text_to_speech"]["state"], "unavailable")
         self.assertEqual(runtime.voice.provider_unavailable_count(), 1)
+
+    def test_synthesis_falls_back_when_saved_tts_provider_is_unavailable(self) -> None:
+        directory, _, runtime = runtime_in_tempdir()
+        self.addCleanup(directory.cleanup)
+        runtime.voice.update_settings(tts_provider_id="missing_tts_provider")
+        session = runtime.voice.create_session("artemis")
+        utterance = runtime.voice.queue_utterance(session.session_id, "Olá")
+        observed_provider_ids: list[str | None] = []
+
+        def synthesize(request):
+            observed_provider_ids.append(request.provider_id)
+            return TextToSpeechResult(
+                output_ref="inline://tts/test",
+                provider_id="piper",
+                voice_id="synapse-cadu",
+                audio_base64=base64.b64encode(valid_wav()).decode("ascii"),
+                audio_format="audio/wav",
+                duration_ms=250,
+            )
+
+        runtime.speech_adapters.synthesize = synthesize
+
+        result = runtime.voice.synthesize_utterance(
+            session.session_id,
+            utterance.utterance_id,
+            "Olá",
+        )
+
+        self.assertEqual(observed_provider_ids, [None])
+        self.assertEqual(result.provider_id, "piper")
+        self.assertEqual(result.voice_id, "synapse-cadu")
 
     def test_default_voice_configuration_is_global_and_explicit(self) -> None:
         directory, _, runtime = runtime_in_tempdir()

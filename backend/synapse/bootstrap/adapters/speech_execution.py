@@ -24,6 +24,8 @@ class LocalSpeechExecutionPort:
                 request.argv,
                 input=request.stdin.text if request.stdin else None,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 capture_output=True,
                 timeout=request.timeout_seconds,
                 shell=False,

@@ -1,225 +1,4 @@
 models:
-- availability_state: loaded/server-ready
-  chat_usable: true
-  context_window: null
-  cpu_compatible: true
-  estimated_ram_gb: null
-  estimated_vram_gb: null
-  gpu_compatible: true
-  id: lmstudio:gemma-2-2b-it-abliterated
-  is_default: false
-  metadata:
-    object: model
-  name: gemma-2-2b-it-abliterated
-  origin: http://127.0.0.1:1234/v1
-  provider: lmstudio
-  quantization: null
-  runtime: lmstudio
-  size_bytes: null
-  status: available
-  type: chat
-- availability_state: library-only/not-installed
-  chat_usable: false
-  context_window: null
-  cpu_compatible: true
-  estimated_ram_gb: 1.91
-  estimated_vram_gb: 1.59
-  gpu_compatible: true
-  id: lmstudio-library:Alex01837178373/gemma-2-2b-it-abliterated-Q4_K_M-GGUF/gemma-2-2b-it-abliterated-q4_k_m.gguf
-  is_default: false
-  metadata:
-    extension: .gguf
-    library_path: C:\Users\arthu\.lmstudio\models
-    path: C:\Users\arthu\.lmstudio\models\Alex01837178373\gemma-2-2b-it-abliterated-Q4_K_M-GGUF\gemma-2-2b-it-abliterated-q4_k_m.gguf
-  name: gemma-2-2b-it-abliterated-q4_k_m
-  origin: LM Studio Library
-  provider: lmstudio
-  quantization: Q4_K_M
-  runtime: llama.cpp
-  size_bytes: 1708582432
-  status: available
-  type: gguf
-- availability_state: loaded/server-ready
-  chat_usable: true
-  context_window: null
-  cpu_compatible: true
-  estimated_ram_gb: null
-  estimated_vram_gb: null
-  gpu_compatible: true
-  id: lmstudio:gemma-4-e2b-it-qat
-  is_default: true
-  metadata:
-    object: model
-  name: gemma-4-e2b-it-qat
-  origin: http://127.0.0.1:1234/v1
-  provider: lmstudio
-  quantization: null
-  runtime: lmstudio
-  size_bytes: null
-  status: available
-  type: chat
-- availability_state: library-only/not-installed
-  chat_usable: false
-  context_window: null
-  cpu_compatible: true
-  estimated_ram_gb: 3.74
-  estimated_vram_gb: 3.12
-  gpu_compatible: true
-  id: lmstudio-library:google/gemma-4-E2B-it-qat-q4_0-gguf/gemma-4-E2B_q4_0-it.gguf
-  is_default: false
-  metadata:
-    extension: .gguf
-    library_path: C:\Users\arthu\.lmstudio\models
-    path: C:\Users\arthu\.lmstudio\models\google\gemma-4-E2B-it-qat-q4_0-gguf\gemma-4-E2B_q4_0-it.gguf
-  name: gemma-4-E2B_q4_0-it
-  origin: LM Studio Library
-  provider: lmstudio
-  quantization: Q4_0
-  runtime: llama.cpp
-  size_bytes: 3349514112
-  status: available
-  type: gguf
-- availability_state: library-only/not-installed
-  chat_usable: false
-  context_window: null
-  cpu_compatible: true
-  estimated_ram_gb: 5.96
-  estimated_vram_gb: 4.97
-  gpu_compatible: true
-  id: lmstudio-library:lmstudio-community/gemma-4-E4B-it-GGUF/gemma-4-E4B-it-Q4_K_M.gguf
-  is_default: false
-  metadata:
-    extension: .gguf
-    library_path: C:\Users\arthu\.lmstudio\models
-    path: C:\Users\arthu\.lmstudio\models\lmstudio-community\gemma-4-E4B-it-GGUF\gemma-4-E4B-it-Q4_K_M.gguf
-  name: gemma-4-E4B-it-Q4_K_M
-  origin: LM Studio Library
-  provider: lmstudio
-  quantization: Q4_K_M
-  runtime: llama.cpp
-  size_bytes: 5335289664
-  status: available
-  type: gguf
-- availability_state: loaded/server-ready
-  chat_usable: true
-  context_window: null
-  cpu_compatible: true
-  estimated_ram_gb: null
-  estimated_vram_gb: null
-  gpu_compatible: true
-  id: lmstudio:gemma-4-e4b-uncensored-hauhaucs-aggressive
-  is_default: false
-  metadata:
-    object: model
-  name: gemma-4-e4b-uncensored-hauhaucs-aggressive
-  origin: http://127.0.0.1:1234/v1
-  provider: lmstudio
-  quantization: null
-  runtime: lmstudio
-  size_bytes: null
-  status: available
-  type: chat
-- availability_state: library-only/not-installed
-  chat_usable: false
-  context_window: null
-  cpu_compatible: true
-  estimated_ram_gb: 5.96
-  estimated_vram_gb: 4.97
-  gpu_compatible: true
-  id: lmstudio-library:HauhauCS/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive-Q4_K_M.gguf
-  is_default: false
-  metadata:
-    extension: .gguf
-    library_path: C:\Users\arthu\.lmstudio\models
-    path: C:\Users\arthu\.lmstudio\models\HauhauCS\Gemma-4-E4B-Uncensored-HauhauCS-Aggressive\Gemma-4-E4B-Uncensored-HauhauCS-Aggressive-Q4_K_M.gguf
-  name: Gemma-4-E4B-Uncensored-HauhauCS-Aggressive-Q4_K_M
-  origin: LM Studio Library
-  provider: lmstudio
-  quantization: Q4_K_M
-  runtime: llama.cpp
-  size_bytes: 5335285728
-  status: available
-  type: gguf
-- availability_state: loaded/server-ready
-  chat_usable: true
-  context_window: null
-  cpu_compatible: true
-  estimated_ram_gb: null
-  estimated_vram_gb: null
-  gpu_compatible: true
-  id: lmstudio:google/gemma-4-e4b
-  is_default: false
-  metadata:
-    object: model
-  name: google/gemma-4-e4b
-  origin: http://127.0.0.1:1234/v1
-  provider: lmstudio
-  quantization: null
-  runtime: lmstudio
-  size_bytes: null
-  status: available
-  type: chat
-- availability_state: library-only/not-installed
-  chat_usable: false
-  context_window: null
-  cpu_compatible: true
-  estimated_ram_gb: 1.11
-  estimated_vram_gb: 0.92
-  gpu_compatible: true
-  id: lmstudio-library:lmstudio-community/gemma-4-E4B-it-GGUF/mmproj-gemma-4-E4B-it-BF16.gguf
-  is_default: false
-  metadata:
-    extension: .gguf
-    library_path: C:\Users\arthu\.lmstudio\models
-    path: C:\Users\arthu\.lmstudio\models\lmstudio-community\gemma-4-E4B-it-GGUF\mmproj-gemma-4-E4B-it-BF16.gguf
-  name: mmproj-gemma-4-E4B-it-BF16
-  origin: LM Studio Library
-  provider: lmstudio
-  quantization: null
-  runtime: llama.cpp
-  size_bytes: 991551840
-  status: available
-  type: gguf
-- availability_state: library-only/not-installed
-  chat_usable: false
-  context_window: null
-  cpu_compatible: true
-  estimated_ram_gb: 1.11
-  estimated_vram_gb: 0.92
-  gpu_compatible: true
-  id: lmstudio-library:HauhauCS/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive/mmproj-Gemma-4-E4B-Uncensored-HauhauCS-Aggressive-f16.gguf
-  is_default: false
-  metadata:
-    extension: .gguf
-    library_path: C:\Users\arthu\.lmstudio\models
-    path: C:\Users\arthu\.lmstudio\models\HauhauCS\Gemma-4-E4B-Uncensored-HauhauCS-Aggressive\mmproj-Gemma-4-E4B-Uncensored-HauhauCS-Aggressive-f16.gguf
-  name: mmproj-Gemma-4-E4B-Uncensored-HauhauCS-Aggressive-f16
-  origin: LM Studio Library
-  provider: lmstudio
-  quantization: null
-  runtime: llama.cpp
-  size_bytes: 990288832
-  status: available
-  type: gguf
-- availability_state: loaded/server-ready
-  chat_usable: true
-  context_window: null
-  cpu_compatible: true
-  estimated_ram_gb: null
-  estimated_vram_gb: null
-  gpu_compatible: true
-  id: lmstudio:text-embedding-nomic-embed-text-v1.5
-  is_default: false
-  metadata:
-    object: model
-  name: text-embedding-nomic-embed-text-v1.5
-  origin: http://127.0.0.1:1234/v1
-  provider: lmstudio
-  quantization: null
-  runtime: lmstudio
-  size_bytes: null
-  status: available
-  type: chat
 - availability_state: unavailable
   chat_usable: false
   context_window: null
@@ -239,12 +18,173 @@ models:
   size_bytes: null
   status: configured
   type: chat
+- availability_state: installed
+  chat_usable: false
+  context_window: null
+  cpu_compatible: true
+  estimated_ram_gb: 5.62
+  estimated_vram_gb: 4.68
+  gpu_compatible: true
+  id: synapse-local:lmstudio-community/DeepSeek-R1-0528-Qwen3-8B-GGUF/DeepSeek-R1-0528-Qwen3-8B-Q4_K_M.gguf
+  is_default: false
+  metadata:
+    execution: installed-files-only
+    extension: .gguf
+    library_path: F:\SynapseRuntime\models
+    path: F:\SynapseRuntime\models\lmstudio-community\DeepSeek-R1-0528-Qwen3-8B-GGUF\DeepSeek-R1-0528-Qwen3-8B-Q4_K_M.gguf
+    runtime_required: synapse-managed-llama-server
+  name: DeepSeek-R1-0528-Qwen3-8B-Q4_K_M
+  origin: Synapse Runtime Models
+  provider: synapse_local
+  quantization: Q4_K_M
+  runtime: llama.cpp
+  size_bytes: 5027782720
+  status: available
+  type: gguf
+- availability_state: installed
+  chat_usable: false
+  context_window: null
+  cpu_compatible: true
+  estimated_ram_gb: 1.91
+  estimated_vram_gb: 1.59
+  gpu_compatible: true
+  id: synapse-local:Alex01837178373/gemma-2-2b-it-abliterated-Q4_K_M-GGUF/gemma-2-2b-it-abliterated-q4_k_m.gguf
+  is_default: false
+  metadata:
+    execution: installed-files-only
+    extension: .gguf
+    library_path: F:\SynapseRuntime\models
+    path: F:\SynapseRuntime\models\Alex01837178373\gemma-2-2b-it-abliterated-Q4_K_M-GGUF\gemma-2-2b-it-abliterated-q4_k_m.gguf
+    runtime_required: synapse-managed-llama-server
+  name: gemma-2-2b-it-abliterated-q4_k_m
+  origin: Synapse Runtime Models
+  provider: synapse_local
+  quantization: Q4_K_M
+  runtime: llama.cpp
+  size_bytes: 1708582432
+  status: available
+  type: gguf
+- availability_state: installed
+  chat_usable: false
+  context_window: null
+  cpu_compatible: true
+  estimated_ram_gb: 3.74
+  estimated_vram_gb: 3.12
+  gpu_compatible: true
+  id: synapse-local:google/gemma-4-E2B-it-qat-q4_0-gguf/gemma-4-E2B_q4_0-it.gguf
+  is_default: false
+  metadata:
+    execution: installed-files-only
+    extension: .gguf
+    library_path: F:\SynapseRuntime\models
+    path: F:\SynapseRuntime\models\google\gemma-4-E2B-it-qat-q4_0-gguf\gemma-4-E2B_q4_0-it.gguf
+    runtime_required: synapse-managed-llama-server
+  name: gemma-4-E2B_q4_0-it
+  origin: Synapse Runtime Models
+  provider: synapse_local
+  quantization: Q4_0
+  runtime: llama.cpp
+  size_bytes: 3349514112
+  status: available
+  type: gguf
+- availability_state: installed
+  chat_usable: false
+  context_window: null
+  cpu_compatible: true
+  estimated_ram_gb: 5.96
+  estimated_vram_gb: 4.97
+  gpu_compatible: true
+  id: synapse-local:lmstudio-community/gemma-4-E4B-it-GGUF/gemma-4-E4B-it-Q4_K_M.gguf
+  is_default: false
+  metadata:
+    execution: installed-files-only
+    extension: .gguf
+    library_path: F:\SynapseRuntime\models
+    path: F:\SynapseRuntime\models\lmstudio-community\gemma-4-E4B-it-GGUF\gemma-4-E4B-it-Q4_K_M.gguf
+    runtime_required: synapse-managed-llama-server
+  name: gemma-4-E4B-it-Q4_K_M
+  origin: Synapse Runtime Models
+  provider: synapse_local
+  quantization: Q4_K_M
+  runtime: llama.cpp
+  size_bytes: 5335289664
+  status: available
+  type: gguf
+- availability_state: installed
+  chat_usable: false
+  context_window: null
+  cpu_compatible: true
+  estimated_ram_gb: 5.96
+  estimated_vram_gb: 4.97
+  gpu_compatible: true
+  id: synapse-local:HauhauCS/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive-Q4_K_M.gguf
+  is_default: false
+  metadata:
+    execution: installed-files-only
+    extension: .gguf
+    library_path: F:\SynapseRuntime\models
+    path: F:\SynapseRuntime\models\HauhauCS\Gemma-4-E4B-Uncensored-HauhauCS-Aggressive\Gemma-4-E4B-Uncensored-HauhauCS-Aggressive-Q4_K_M.gguf
+    runtime_required: synapse-managed-llama-server
+  name: Gemma-4-E4B-Uncensored-HauhauCS-Aggressive-Q4_K_M
+  origin: Synapse Runtime Models
+  provider: synapse_local
+  quantization: Q4_K_M
+  runtime: llama.cpp
+  size_bytes: 5335285728
+  status: available
+  type: gguf
+- availability_state: installed
+  chat_usable: false
+  context_window: null
+  cpu_compatible: true
+  estimated_ram_gb: 1.11
+  estimated_vram_gb: 0.92
+  gpu_compatible: true
+  id: synapse-local:lmstudio-community/gemma-4-E4B-it-GGUF/mmproj-gemma-4-E4B-it-BF16.gguf
+  is_default: false
+  metadata:
+    execution: installed-files-only
+    extension: .gguf
+    library_path: F:\SynapseRuntime\models
+    path: F:\SynapseRuntime\models\lmstudio-community\gemma-4-E4B-it-GGUF\mmproj-gemma-4-E4B-it-BF16.gguf
+    runtime_required: synapse-managed-llama-server
+  name: mmproj-gemma-4-E4B-it-BF16
+  origin: Synapse Runtime Models
+  provider: synapse_local
+  quantization: null
+  runtime: llama.cpp
+  size_bytes: 991551840
+  status: available
+  type: gguf
+- availability_state: installed
+  chat_usable: false
+  context_window: null
+  cpu_compatible: true
+  estimated_ram_gb: 1.11
+  estimated_vram_gb: 0.92
+  gpu_compatible: true
+  id: synapse-local:HauhauCS/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive/mmproj-Gemma-4-E4B-Uncensored-HauhauCS-Aggressive-f16.gguf
+  is_default: false
+  metadata:
+    execution: installed-files-only
+    extension: .gguf
+    library_path: F:\SynapseRuntime\models
+    path: F:\SynapseRuntime\models\HauhauCS\Gemma-4-E4B-Uncensored-HauhauCS-Aggressive\mmproj-Gemma-4-E4B-Uncensored-HauhauCS-Aggressive-f16.gguf
+    runtime_required: synapse-managed-llama-server
+  name: mmproj-Gemma-4-E4B-Uncensored-HauhauCS-Aggressive-f16
+  origin: Synapse Runtime Models
+  provider: synapse_local
+  quantization: null
+  runtime: llama.cpp
+  size_bytes: 990288832
+  status: available
+  type: gguf
 providers:
 - active: false
   default_model: null
   display_name: Anthropic
   endpoint: https://api.anthropic.com/v1
-  last_refreshed_at: '2026-06-30T17:18:29.856375+00:00'
+  last_refreshed_at: '2026-09-03T19:57:23.074274+00:00'
   metadata:
     configured_from_provider_settings: true
     registered: false
@@ -255,7 +195,7 @@ providers:
   default_model: null
   display_name: Gemini
   endpoint: https://generativelanguage.googleapis.com/v1beta
-  last_refreshed_at: '2026-06-30T17:18:29.856375+00:00'
+  last_refreshed_at: '2026-09-03T19:57:23.074274+00:00'
   metadata:
     configured_from_provider_settings: true
     registered: false
@@ -266,28 +206,30 @@ providers:
   default_model: null
   display_name: Groq
   endpoint: https://api.groq.com/openai/v1
-  last_refreshed_at: '2026-06-30T17:18:29.856375+00:00'
+  last_refreshed_at: '2026-09-03T19:57:23.074274+00:00'
   metadata:
     configured_from_provider_settings: true
     registered: false
   model_count: 0
   provider_id: groq
   status: unconfigured
-- active: true
+- active: false
   default_model: gemma-4-e2b-it-qat
   display_name: LM Studio
   endpoint: http://127.0.0.1:1234/v1
-  last_refreshed_at: '2026-06-30T17:18:29.856375+00:00'
+  last_refreshed_at: '2026-09-03T19:57:23.074274+00:00'
   metadata:
-    message: LM Studio is available.
-  model_count: 11
+    message: 'LM Studio unavailable: <urlopen error [WinError 10061] Nenhuma conexão
+      pôde ser feita porque a máquina de destino as recusou ativamente>'
+    server_message: <urlopen error timed out>
+  model_count: 0
   provider_id: lmstudio
-  status: available
+  status: unavailable
 - active: false
   default_model: llama3.1
   display_name: Ollama
   endpoint: http://127.0.0.1:11434
-  last_refreshed_at: '2026-06-30T17:18:29.856375+00:00'
+  last_refreshed_at: '2026-09-03T19:57:23.074274+00:00'
   metadata:
     message: <urlopen error timed out>
   model_count: 1
@@ -297,7 +239,7 @@ providers:
   default_model: null
   display_name: OpenAI
   endpoint: https://api.openai.com/v1
-  last_refreshed_at: '2026-06-30T17:18:29.856375+00:00'
+  last_refreshed_at: '2026-09-03T19:57:23.074274+00:00'
   metadata:
     configured_from_provider_settings: true
     registered: false
@@ -308,7 +250,7 @@ providers:
   default_model: null
   display_name: OpenAI Compatible
   endpoint: null
-  last_refreshed_at: '2026-06-30T17:18:29.856375+00:00'
+  last_refreshed_at: '2026-09-03T19:57:23.074274+00:00'
   metadata:
     configured_from_provider_settings: true
     registered: false
@@ -319,11 +261,24 @@ providers:
   default_model: null
   display_name: OpenRouter
   endpoint: https://openrouter.ai/api/v1
-  last_refreshed_at: '2026-06-30T17:18:29.856375+00:00'
+  last_refreshed_at: '2026-09-03T19:57:23.074274+00:00'
   metadata:
     configured_from_provider_settings: true
     registered: false
   model_count: 0
   provider_id: openrouter
   status: unconfigured
-updated_at: '2026-06-30T17:18:30.971408+00:00'
+- active: true
+  default_model: null
+  display_name: Synapse Local Models
+  endpoint: F:\SynapseRuntime\models
+  last_refreshed_at: '2026-09-03T19:57:23.074274+00:00'
+  metadata:
+    execution: installed-files-only
+    model_roots:
+    - F:\SynapseRuntime\models
+    runtime_required: synapse-managed-llama-server
+  model_count: 7
+  provider_id: synapse_local
+  status: available
+updated_at: '2026-09-03T19:57:27.233050+00:00'

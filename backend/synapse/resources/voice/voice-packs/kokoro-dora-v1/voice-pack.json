@@ -1,0 +1,23 @@
+{
+  "pack_id": "kokoro-dora-v1",
+  "display_name": "Dora · Português brasileiro",
+  "version": "1.0",
+  "provider": "kokoro",
+  "engine": "kokoro",
+  "locale": "pt-BR",
+  "expected_voice_count": 1,
+  "voices": [{
+    "voice_id": "pf_dora",
+    "display_name": "Dora",
+    "provider": "kokoro",
+    "language": "Português brasileiro",
+    "locale": "pt-BR",
+    "voice_profile": {"gender": "feminine", "tone": "natural", "locale": "pt-BR"},
+    "asset_reference": "voice/models/kokoro/voices-v1.0.bin",
+    "checksum": "bca610b8308e8d99f32e6fe4197e7ec01679264efed0cac9140fe9c29f1fbf7d",
+    "license": "Apache-2.0",
+    "provenance": "hexgrad/Kokoro-82M v1.0; thewh1teagle/kokoro-onnx model-files-v1.0",
+    "default": true,
+    "metadata": {"speaker": "pf_dora", "sample_rate_hz": 24000, "local_only": true}
+  }]
+}

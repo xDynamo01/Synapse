@@ -323,6 +323,15 @@ SEED_FILES = {
         '      "last_tested_at": null,\n'
         '      "test_message": null\n'
         "    },\n"
+        '    "synapse_local": {\n'
+        '      "enabled": false,\n'
+        '      "endpoint": "F:/SynapseRuntime/models",\n'
+        '      "default_model": null,\n'
+        '      "status": "unconfigured",\n'
+        '      "updated_at": null,\n'
+        '      "last_tested_at": null,\n'
+        '      "test_message": null\n'
+        "    },\n"
         '    "ollama_local": {\n'
         '      "enabled": false,\n'
         '      "endpoint": "http://127.0.0.1:11434",\n'

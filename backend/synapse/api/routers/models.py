@@ -122,6 +122,18 @@ def lmstudio_status(request: Request) -> dict[str, Any]:
         raise api_error(exc) from exc
 
 
+@router.get("/providers/synapse-local/status")
+def synapse_local_status(request: Request, model: str | None = None) -> dict[str, Any]:
+    runtime = runtime_from(request)
+    try:
+        adapter = runtime.models.adapters.get("synapse_local")
+        if adapter is None or not hasattr(adapter, "explain_status"):
+            raise NotFound("Synapse Local Models runtime is unavailable.")
+        return adapter.explain_status(model=model)
+    except Exception as exc:
+        raise api_error(exc) from exc
+
+
 @router.get("/providers/lmstudio/models")
 def lmstudio_models(request: Request) -> list[dict[str, Any]]:
     runtime = runtime_from(request)

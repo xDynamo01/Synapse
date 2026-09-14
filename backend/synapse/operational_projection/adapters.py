@@ -62,6 +62,7 @@ _PREFIX_KIND = {
     "conversation": OperationalEntityKind.TASK,
     "message": OperationalEntityKind.AGENT,
     "presence": OperationalEntityKind.AGENT,
+    "lmstudio": OperationalEntityKind.RUNTIME,
     "context_build_started": OperationalEntityKind.CONTEXT_SOURCE,
 }
 _ID_KEYS = {
@@ -82,11 +83,21 @@ _SAFE_METADATA_KEYS = {
     "attempt",
     "capability_status",
     "file_count",
+    "finish_reason",
+    "input_count",
+    "latency_ms",
     "memory_count",
+    "model_name",
+    "output_count",
+    "output_rate",
+    "phase",
     "provider",
+    "provider_id",
     "result_count",
+    "first_output_ms",
     "status_code",
     "tool",
+    "total_count",
     "worker_count",
 }
 
@@ -118,7 +129,20 @@ def adapt_source_record(record: OperationalSourceRecord, revision: int) -> Sourc
             reason="source event has no stable entity identity",
         )
     status = _status(record.event_type, record.payload)
-    metadata = _metadata(record.payload)
+    metadata = dict(_metadata(record.payload))
+    # Direction comes from existing chat lifecycle events, not visual node placement.
+    # Other phases (including failures) must not masquerade as a delivered response.
+    if record.event_type in {"local_chat.thinking", "local_chat.completed"}:
+        parent_id = _parent_entity_id(kind, record)
+        runtime_id = f"{kind.value}:{entity_id}"
+        if kind is OperationalEntityKind.RUNTIME and parent_id and len(runtime_id) <= 256 and len(parent_id) <= 256:
+            outgoing = record.event_type == "local_chat.thinking"
+            metadata.update({
+                "transfer_source": parent_id if outgoing else runtime_id,
+                "transfer_target": runtime_id if outgoing else parent_id,
+                "transfer_kind": "request" if outgoing else "response",
+            })
+    metadata = dict(safe_metadata(metadata))
     entity = OperationalEntity(
         entity_id=f"{kind.value}:{entity_id}",
         kind=kind,
@@ -157,6 +181,10 @@ def _entity_id(
     kind: OperationalEntityKind, record: OperationalSourceRecord
 ) -> str | None:
     if record.event_type == "chat.response_generated":
+        model_id = _chat_model_id(record.payload)
+        if model_id is not None:
+            return model_id
+    if kind is OperationalEntityKind.RUNTIME:
         model_id = _chat_model_id(record.payload)
         if model_id is not None:
             return model_id
@@ -216,7 +244,11 @@ def _chat_model_id(payload: Mapping[str, object]) -> str | None:
         if provider and model_name:
             return f"{provider}:{model_name}"
         return model_name or provider
-    return _optional_text(payload.get("model_name") or payload.get("provider_id"))
+    provider = _optional_text(payload.get("provider_id"))
+    model_name = _optional_text(payload.get("model_name"))
+    if provider and model_name:
+        return f"{provider}:{model_name}"
+    return model_name or provider
 
 
 def _parent_entity_id(kind: OperationalEntityKind, record: OperationalSourceRecord) -> str | None:
@@ -225,7 +257,7 @@ def _parent_entity_id(kind: OperationalEntityKind, record: OperationalSourceReco
         return explicit
     if kind is OperationalEntityKind.RUNTIME:
         agent_id = _optional_text(record.payload.get("agent_id"))
-        return f"agent:{agent_id}" if agent_id else None
+        return (agent_id if agent_id.startswith("agent:") else f"agent:{agent_id}") if agent_id else None
     return None
 
 

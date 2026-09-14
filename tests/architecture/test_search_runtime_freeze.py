@@ -205,7 +205,7 @@ def test_consumer_migration_has_one_path_and_permission_is_not_egress() -> None:
     assert "EXTERNAL_SEARCH" in governance and "EXTERNAL_RETRIEVAL" in governance
 
 
-def test_composition_is_local_opt_in_build_only_and_not_bootstrapped() -> None:
+def test_composition_is_local_opt_in_build_only_and_bootstrapped_only_by_adapter() -> None:
     runtime = (COMPOSITION_ROOT / "runtime.py").read_text(encoding="utf-8")
     assert "def build_search_runtime(" in runtime
     assert "def initialize_persistence(" in runtime
@@ -216,18 +216,22 @@ def test_composition_is_local_opt_in_build_only_and_not_bootstrapped() -> None:
     assert ".extract(" not in build
     assert ".assess(" not in build
     bootstrap_imports = {
-        module
+        (path.relative_to(SOURCE_ROOT), module)
         for path in (SOURCE_ROOT / "bootstrap").rglob("*.py")
         for module in _runtime_imports(path)
+        if module.startswith("synapse.search_composition")
     }
-    assert not any(module.startswith("synapse.search_composition") for module in bootstrap_imports)
+    assert bootstrap_imports == {
+        (Path("bootstrap/adapters/search.py"), "synapse.search_composition"),
+        (Path("bootstrap/container.py"), "synapse.search_composition"),
+    }
 
 
 def test_search_dependency_directions_graph_and_scc_baseline_are_frozen() -> None:
     runtime = _runtime_context_graph()
     source = context_graph()
-    assert len(runtime) == 304
-    assert len(source) == 339
+    assert len(runtime) == 306  # Primary MoM: api -> mom -> core.
+    assert len(source) == 341  # Primary MoM adds the same two source edges.
     expected = {
         ("search_adapters", "search"),
         ("search_integrations", "intelligence_boundary"),

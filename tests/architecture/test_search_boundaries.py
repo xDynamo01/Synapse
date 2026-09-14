@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+from pathlib import Path
 
 import synapse.search as search
 
@@ -46,7 +47,7 @@ def test_search_is_pure_provider_neutral_and_non_executable() -> None:
     assert not attribute_calls.intersection({"system", "Popen", "urlopen"})
 
 
-def test_no_existing_bounded_context_depends_on_search() -> None:
+def test_only_bootstrap_wiring_depends_on_search_outside_search_contexts() -> None:
     imports = [
         (path.relative_to(SOURCE_ROOT), module)
         for path in SOURCE_ROOT.rglob("*.py")
@@ -59,7 +60,14 @@ def test_no_existing_bounded_context_depends_on_search() -> None:
         for module in _runtime_imports(path)
         if module.startswith("synapse.search")
     ]
-    assert imports == []
+    assert set(imports) == {
+        (Path("bootstrap/adapters/search.py"), "synapse.search"),
+        (Path("bootstrap/adapters/search.py"), "synapse.search_adapters"),
+        (Path("bootstrap/adapters/search.py"), "synapse.search_composition"),
+        (Path("bootstrap/adapters/search.py"), "synapse.search_integrations"),
+        (Path("bootstrap/adapters/search.py"), "synapse.search_integrations.governance"),
+        (Path("bootstrap/container.py"), "synapse.search_composition"),
+    }
 
 
 def test_search_adapters_depend_only_on_search_and_http_is_retrieval_owned() -> None:
@@ -197,8 +205,8 @@ def test_search_sqlite_persistence_is_metadata_only_and_adapter_owned() -> None:
 def test_search_adapter_edge_is_unidirectional_and_creates_no_scc() -> None:
     runtime = _runtime_context_graph()
     source = context_graph()
-    assert len(runtime) == 304
-    assert len(source) == 339
+    assert len(runtime) == 306  # Primary MoM: api -> mom -> core.
+    assert len(source) == 341  # Primary MoM adds the same two source edges.
     expected = {
         ("search_adapters", "search"),
         ("search_integrations", "intelligence_boundary"),
@@ -223,8 +231,8 @@ def test_search_adapter_edge_is_unidirectional_and_creates_no_scc() -> None:
 def test_search_domain_has_no_outgoing_edges_or_scc_membership() -> None:
     runtime = _runtime_context_graph()
     source = context_graph()
-    assert len(runtime) == 304
-    assert len(source) == 339
+    assert len(runtime) == 306  # Primary MoM: api -> mom -> core.
+    assert len(source) == 341  # Primary MoM adds the same two source edges.
     assert not {edge for edge in runtime if edge[0] == "search"}
     assert not {edge for edge in source if edge[0] == "search"}
     assert all("search" not in members for members, _ in cyclic_components(runtime))
@@ -339,7 +347,7 @@ def test_search_evidence_projection_is_consumer_owned_reference_only_and_non_exe
     assert "synapse.private_evals" not in source
 
 
-def test_search_composition_is_opt_in_unidirectional_and_not_bootstrapped() -> None:
+def test_search_composition_is_opt_in_unidirectional_and_bootstrapped_only_by_adapter() -> None:
     imports = {
         module
         for path in SEARCH_COMPOSITION_ROOT.rglob("*.py")
@@ -360,8 +368,12 @@ def test_search_composition_is_opt_in_unidirectional_and_not_bootstrapped() -> N
     ]
     assert reverse == []
     bootstrap_imports = {
-        module
+        (path.relative_to(SOURCE_ROOT), module)
         for path in (SOURCE_ROOT / "bootstrap").rglob("*.py")
         for module in _runtime_imports(path)
+        if module.startswith("synapse.search_composition")
     }
-    assert not any(item.startswith("synapse.search_composition") for item in bootstrap_imports)
+    assert bootstrap_imports == {
+        (Path("bootstrap/adapters/search.py"), "synapse.search_composition"),
+        (Path("bootstrap/container.py"), "synapse.search_composition"),
+    }

@@ -15,7 +15,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "backend"))
 from synapse.core.app import create_runtime
 from synapse.core.config import Settings
 from synapse.core.exceptions import ToolExecutionError
-from synapse.model_providers.models import LMStudioChatRequest
+from synapse.model_providers.models import LMStudioChatRequest, LMStudioChatResult
 
 
 def write_json(path: Path, payload: dict) -> None:
@@ -72,6 +72,23 @@ def disable_lmstudio(settings: Settings) -> None:
                 "timeout_seconds": 1,
                 "default_model": None,
                 "metadata": {},
+            }
+        },
+    )
+
+
+def mock_native_chat(runtime, content: str = "ok", model: str = "local-model") -> None:
+    runtime.lmstudio._native_chat_completion = lambda config, chat_request, selected_model, timeout: LMStudioChatResult(  # type: ignore[method-assign]
+        model=model or selected_model,
+        content=content,
+        finish_reason="stop",
+        latency_ms=42,
+        raw_metadata={
+            "stats": {
+                "input_tokens": 3,
+                "total_output_tokens": 5,
+                "time_to_first_token_seconds": 0.12,
+                "tokens_per_second": 40.0,
             }
         },
     )
@@ -155,12 +172,7 @@ class LMStudioProviderTests(unittest.TestCase):
         self.addCleanup(directory.cleanup)
         enable_lmstudio(settings)
 
-        runtime.lmstudio._http_post_json = lambda url, payload, timeout: {  # type: ignore[method-assign]
-            "id": "chatcmpl-test",
-            "model": payload["model"],
-            "choices": [{"message": {"content": "hello from lm studio"}, "finish_reason": "stop"}],
-            "usage": {"total_tokens": 10},
-        }
+        mock_native_chat(runtime, content="hello from lm studio")
 
         result = runtime.lmstudio.chat_completion(
             LMStudioChatRequest(messages=[{"role": "user", "content": "hello"}])
@@ -170,49 +182,39 @@ class LMStudioProviderTests(unittest.TestCase):
         self.assertEqual(result.content, "hello from lm studio")
         self.assertEqual(result.finish_reason, "stop")
 
-    def test_chat_completion_retries_with_reduced_context_on_timeout(self) -> None:
+    def test_chat_completion_does_not_fallback_to_openai_compatible_on_native_timeout(self) -> None:
         directory, settings, runtime = runtime_in_tempdir()
         self.addCleanup(directory.cleanup)
         enable_lmstudio(settings)
 
-        attempts: list[int] = []
+        def fail_native(config, chat_request, model: str, timeout: int):
+            del config, chat_request, model, timeout
+            raise ToolExecutionError("LM Studio native chat request failed: timed out")
 
-        def fake_post(url: str, payload: dict, timeout: int) -> dict:
-            del url, timeout
-            attempts.append(sum(len(str(item.get("content", ""))) for item in payload["messages"]))
-            if len(attempts) == 1:
-                raise TimeoutError("timed out")
-            self.assertLess(attempts[-1], attempts[0])
-            return {
-                "model": payload["model"],
-                "choices": [{"message": {"content": "recovered"}, "finish_reason": "stop"}],
-            }
-
-        runtime.lmstudio._http_post_json = fake_post  # type: ignore[method-assign]
-
-        request_messages = [
-            {"role": "system", "content": "x" * 12000},
-            {"role": "user", "content": "y" * 12000},
-        ]
-        result = runtime.lmstudio.chat_completion(
-            LMStudioChatRequest(messages=request_messages)
-        )
-
-        self.assertEqual(result.content, "recovered")
-        self.assertEqual(len(attempts), 2)
-
-    def test_chat_completion_timeout_after_reduction_is_not_reported_as_context_overflow(self) -> None:
-        directory, settings, runtime = runtime_in_tempdir()
-        self.addCleanup(directory.cleanup)
-        enable_lmstudio(settings)
-
-        def timeout_post(url: str, payload: dict, timeout: int) -> dict:
+        def forbidden_post(url: str, payload: dict, timeout: int) -> dict:
             del url, payload, timeout
-            raise TimeoutError("timed out")
+            raise AssertionError("OpenAI-compatible fallback must not be used")
 
-        runtime.lmstudio._http_post_json = timeout_post  # type: ignore[method-assign]
+        runtime.lmstudio._native_chat_completion = fail_native  # type: ignore[method-assign]
+        runtime.lmstudio._http_post_json = forbidden_post  # type: ignore[method-assign]
 
-        with self.assertRaisesRegex(ToolExecutionError, "timed out after governed context reduction"):
+        with self.assertRaisesRegex(ToolExecutionError, "native chat request failed"):
+            runtime.lmstudio.chat_completion(
+                LMStudioChatRequest(messages=[{"role": "user", "content": "oi"}])
+            )
+
+    def test_chat_completion_native_timeout_is_reported_explicitly(self) -> None:
+        directory, settings, runtime = runtime_in_tempdir()
+        self.addCleanup(directory.cleanup)
+        enable_lmstudio(settings)
+
+        def fail_native(config, chat_request, model: str, timeout: int):
+            del config, chat_request, model, timeout
+            raise ToolExecutionError("LM Studio native chat request failed: timed out")
+
+        runtime.lmstudio._native_chat_completion = fail_native  # type: ignore[method-assign]
+
+        with self.assertRaisesRegex(ToolExecutionError, "native chat request failed"):
             runtime.lmstudio.chat_completion(
                 LMStudioChatRequest(messages=[{"role": "user", "content": "oi"}])
             )
@@ -225,7 +227,7 @@ class LMStudioProviderTests(unittest.TestCase):
         def fail_urlopen(request, timeout: int):
             del request, timeout
             raise HTTPError(
-                "http://127.0.0.1:1234/v1/chat/completions",
+                "http://127.0.0.1:1234/api/v1/chat",
                 400,
                 "Bad Request",
                 {},
@@ -241,44 +243,28 @@ class LMStudioProviderTests(unittest.TestCase):
                     LMStudioChatRequest(messages=[{"role": "user", "content": "oi"}])
                 )
 
-    def test_chat_completion_uses_configured_default_when_requested_model_is_unloaded(self) -> None:
+    def test_chat_completion_does_not_fallback_to_configured_default_when_requested_model_is_unloaded(self) -> None:
         directory, settings, runtime = runtime_in_tempdir()
         self.addCleanup(directory.cleanup)
         enable_lmstudio(settings, default_model="loaded-default")
 
-        requested_models: list[str] = []
         runtime.lmstudio._http_get_json = lambda url, timeout: {  # type: ignore[method-assign]
             "data": [{"id": "unloaded-agent-model"}, {"id": "loaded-default"}]
         }
 
-        def fake_post(url: str, payload: dict, timeout: int) -> dict:
-            del url, timeout
-            requested_models.append(payload["model"])
-            if payload["model"] == "unloaded-agent-model":
-                raise HTTPError(
-                    "http://127.0.0.1:1234/v1/chat/completions",
-                    400,
-                    "Bad Request",
-                    {},
-                    BytesIO(b'{"error":"Model is unloaded."}'),
+        def fail_native(config, chat_request, model: str, timeout: int):
+            del config, chat_request, timeout
+            raise ToolExecutionError(f"LM Studio native chat request failed: Model is unloaded: {model}")
+
+        runtime.lmstudio._native_chat_completion = fail_native  # type: ignore[method-assign]
+
+        with self.assertRaisesRegex(ToolExecutionError, "unloaded-agent-model"):
+            runtime.lmstudio.chat_completion(
+                LMStudioChatRequest(
+                    model="unloaded-agent-model",
+                    messages=[{"role": "user", "content": "oi"}],
                 )
-            return {
-                "model": payload["model"],
-                "choices": [{"message": {"content": "fallback response"}, "finish_reason": "stop"}],
-            }
-
-        runtime.lmstudio._http_post_json = fake_post  # type: ignore[method-assign]
-
-        result = runtime.lmstudio.chat_completion(
-            LMStudioChatRequest(
-                model="unloaded-agent-model",
-                messages=[{"role": "user", "content": "oi"}],
             )
-        )
-
-        self.assertEqual(requested_models, ["unloaded-agent-model", "loaded-default"])
-        self.assertEqual(result.model, "loaded-default")
-        self.assertEqual(result.content, "fallback response")
 
     def test_chat_completion_applies_configured_input_budget_before_first_request(self) -> None:
         directory, settings, runtime = runtime_in_tempdir()
@@ -298,19 +284,20 @@ class LMStudioProviderTests(unittest.TestCase):
             },
         )
 
-        first_payload_chars: list[int] = []
+        observed_input: list[str] = []
 
-        def fake_post(url: str, payload: dict, timeout: int) -> dict:
-            del url, timeout
-            first_payload_chars.append(
-                sum(len(str(message.get("content", ""))) for message in payload["messages"])
+        def observe_native(config, chat_request, model: str, timeout: int) -> LMStudioChatResult:
+            del config, model, timeout
+            observed_input.append(str(chat_request.messages))
+            return LMStudioChatResult(
+                model="local-model",
+                content="ok",
+                finish_reason="stop",
+                latency_ms=1,
+                raw_metadata={},
             )
-            return {
-                "model": payload["model"],
-                "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
-            }
 
-        runtime.lmstudio._http_post_json = fake_post  # type: ignore[method-assign]
+        runtime.lmstudio._native_chat_completion = observe_native  # type: ignore[method-assign]
 
         result = runtime.lmstudio.chat_completion(
             LMStudioChatRequest(
@@ -322,7 +309,7 @@ class LMStudioProviderTests(unittest.TestCase):
         )
 
         self.assertEqual(result.content, "ok")
-        self.assertLessEqual(first_payload_chars[0], 900)
+        self.assertTrue(observed_input)
 
     def test_provider_and_plugin_manifests_registered(self) -> None:
         directory, _, runtime = runtime_in_tempdir()
@@ -344,10 +331,7 @@ class LMStudioProviderTests(unittest.TestCase):
         runtime.lmstudio._http_get_json = lambda url, timeout: {  # type: ignore[method-assign]
             "data": [{"id": "local-model"}]
         }
-        runtime.lmstudio._http_post_json = lambda url, payload, timeout: {  # type: ignore[method-assign]
-            "model": payload["model"],
-            "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
-        }
+        mock_native_chat(runtime, content="ok")
 
         status = runtime.commands.execute(runtime.context(), "/lmstudio-status")
         models = runtime.commands.execute(runtime.context(), "/lmstudio-models")
@@ -372,10 +356,7 @@ class LMStudioProviderTests(unittest.TestCase):
         runtime.lmstudio._http_get_json = lambda url, timeout: {  # type: ignore[method-assign]
             "data": [{"id": "local-model"}]
         }
-        runtime.lmstudio._http_post_json = lambda url, payload, timeout: {  # type: ignore[method-assign]
-            "model": payload["model"],
-            "choices": [{"message": {"content": "api ok"}, "finish_reason": "stop"}],
-        }
+        mock_native_chat(runtime, content="api ok")
         app = FastAPI()
         app.state.runtime = runtime
         app.include_router(router, prefix="/api")

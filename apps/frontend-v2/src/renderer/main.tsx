@@ -1,13 +1,17 @@
 import React, { FormEvent, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { createRoot } from "react-dom/client";
+import { MoMSettings } from "./MoMSettings";
+import { createPresencePublicationGate } from "./presencePublication";
+import { MoMToggle } from "./MoMToggle";
 import {
   applyActivityEvent,
   applyActivitySnapshot,
   createEmptyActivityState,
   createBaselineActivityState,
   deriveActivityScene,
-  markActivityDisconnected
+  markActivityDisconnected,
+  withBaselineActivityState
 } from "../shared/activityAdapter";
 import type { ActivityGraphState } from "../shared/activityAdapter";
 import {
@@ -39,13 +43,18 @@ import {
 import type { FrontendSettingsPreferences, FrontendThemePreference } from "../shared/settingsPreferences";
 import { assetsForTheme } from "../shared/themeAssets";
 import {
+  conversationModeCapturesMicrophone,
   conversationModeStatusLabel,
+  defaultConversationVadConfig,
   isEmptyRecording,
+  isLikelyConversationModeEcho,
   mergeTranscriptionIntoDraft,
   normalizeVoiceError,
   releaseAudioTracks,
+  updateConversationVad,
   voiceStatusLabel
 } from "../shared/voiceCapture";
+import type { ConversationVadSnapshot } from "../shared/voiceCapture";
 import type {
   BackendConnectionState,
   AttachmentStageState,
@@ -62,12 +71,14 @@ import type {
   FrontendBootstrap,
   InsightReport,
   NotificationRecord,
+  ProjectKnowledgeDocumentRecord,
+  ProjectKnowledgeDocumentsResult,
   SettingsSnapshot,
   ProviderModelOption,
   PrimaryAgentSummary,
   TextStreamEvent,
   ConversationModeState,
-  UpdateModelDefaultsRequest,
+  LMStudioTelemetryEntry,
   UpdateProviderSettingRequest,
   UpdateVoiceSettingsRequest,
   VoiceConversationTurnRequest,
@@ -79,6 +90,11 @@ import "./styles.css";
 
 const workspaceId = "default";
 const historyPageSize = 50;
+const conversationModeMinimumVoicePeak = 0.025;
+const conversationModeListenWindowMs = 6200;
+const conversationModeRestartDelayMs = 850;
+const conversationModePostSpeechCooldownMs = 2200;
+const conversationModeMaxCaptureMs = 12_000;
 const Presence = lazy(() => import("./Presence").then((module) => ({ default: module.Presence })));
 const ActivityConstellation = lazy(() =>
   import("./ActivityConstellation").then((module) => ({ default: module.ActivityConstellation }))
@@ -103,7 +119,8 @@ function shellIconStyle(key: ShellIconVisualKey): CSSProperties {
   } as CSSProperties;
 }
 
-type SettingsSection = "personalization" | "voice" | "models" | "themes" | "insight";
+type SettingsSection = "personalization" | "voice" | "models" | "mom" | "themes" | "insight";
+type LibrarySection = "history" | "files";
 
 interface AppState {
   backendState: BackendConnectionState;
@@ -116,6 +133,7 @@ interface AppState {
   conversationError: FrontendConversationError | null;
   conversationIndex: ConversationIndexItem[];
   historyPanelOpen: boolean;
+  librarySection: LibrarySection;
   historyStatus: "idle" | "loading" | "ready" | "empty" | "error";
   historyError: string | null;
   commands: CommandDiscoveryItem[];
@@ -133,6 +151,7 @@ interface AppState {
   focused: boolean;
   activeVisual: "presence" | "activity";
   activityGraph: ActivityGraphState;
+  modelTelemetry: string[];
   selectedActivityNodeId: string | null;
   insightStatus: "idle" | "loading" | "ready" | "degraded" | "unavailable" | "error";
   insightReport: InsightReport | null;
@@ -147,6 +166,11 @@ interface AppState {
   notifications: NotificationRecord[];
   notificationError: string | null;
   selectedNotificationIndex: number;
+  projectFilesOpen: boolean;
+  projectFilesStatus: "idle" | "loading" | "ready" | "empty" | "degraded" | "error";
+  projectFiles: ProjectKnowledgeDocumentsResult | null;
+  projectFilesError: string | null;
+  projectFilesBusyDocumentId: string | null;
   error: string | null;
 }
 
@@ -240,6 +264,8 @@ function VisualLoadingFallback({ label, failed = false }: { label: string; faile
 }
 
 interface SettingsChanges {
+  agentName: string;
+  personality: string;
   defaultProvider: string;
   defaultModel: string;
   providerEnabled: boolean;
@@ -276,6 +302,7 @@ function App(): React.ReactElement {
     conversationError: null,
     conversationIndex: [],
     historyPanelOpen: false,
+    librarySection: "history",
     historyStatus: "idle",
     historyError: null,
     commands: [],
@@ -293,6 +320,7 @@ function App(): React.ReactElement {
     focused: true,
     activeVisual: "presence",
     activityGraph: createEmptyActivityState(null),
+    modelTelemetry: [],
     selectedActivityNodeId: null,
     insightStatus: "idle",
     insightReport: null,
@@ -307,6 +335,11 @@ function App(): React.ReactElement {
     notifications: [],
     notificationError: null,
     selectedNotificationIndex: 0,
+    projectFilesOpen: false,
+    projectFilesStatus: "idle",
+    projectFiles: null,
+    projectFilesError: null,
+    projectFilesBusyDocumentId: null,
     error: null
   });
 
@@ -368,7 +401,11 @@ function App(): React.ReactElement {
           backendState: bootstrap.degraded.length > 0 ? "degraded" : "ready",
           bootstrap,
           conversation: bootstrap.conversation,
-      activityGraph: createBaselineActivityState(bootstrap.project_id, bootstrap.primary_agent),
+          activityGraph: createBaselineActivityState(
+            bootstrap.project_id,
+            bootstrap.primary_agent,
+            primaryModelOption(bootstrap.provider_model_options)
+          ),
           error: null
         }));
         await window.synapse.reportBootstrap(bootstrap.onboarding_required ? "onboarding" : (bootstrap.degraded.length > 0 ? "degraded" : "ready"));
@@ -706,6 +743,42 @@ function Workspace({
     [client, refreshConversationIndex, setState, state.bootstrap?.primary_agent?.agent_id, state.bootstrap?.project_id, state.bootstrap?.session_id, state.conversation]
   );
 
+  const loadProjectFiles = useCallback(
+    async () => {
+      const projectId = state.bootstrap?.project_id;
+      if (!projectId) {
+        setState((current) => ({
+          ...current,
+          projectFilesStatus: "empty",
+          projectFiles: null,
+          projectFilesError: "No active project selected."
+        }));
+        return;
+      }
+      setState((current) => ({
+        ...current,
+        projectFilesStatus: "loading",
+        projectFilesError: null
+      }));
+      try {
+        const result = await client.projectKnowledgeDocuments(projectId, workspaceId);
+        setState((current) => ({
+          ...current,
+          projectFiles: result,
+          projectFilesStatus: result.documents.length > 0 ? "ready" : "empty",
+          projectFilesError: null
+        }));
+      } catch (error) {
+        setState((current) => ({
+          ...current,
+          projectFilesStatus: current.projectFiles ? "degraded" : "error",
+          projectFilesError: readableError(error)
+        }));
+      }
+    },
+    [client, setState, state.bootstrap?.project_id]
+  );
+
   const stageAttachment = useCallback(
     async (file: { filename: string; mime_type: string; size: number; content_base64: string }) => {
       if (!state.conversation) {
@@ -717,9 +790,12 @@ function Workspace({
         project_id: state.bootstrap?.project_id ?? null,
         session_id: state.bootstrap?.session_id ?? null
       });
+      if (state.bootstrap?.project_id) {
+        void loadProjectFiles();
+      }
       return result.attachment;
     },
-    [client, state.bootstrap?.project_id, state.bootstrap?.session_id, state.conversation]
+    [client, loadProjectFiles, state.bootstrap?.project_id, state.bootstrap?.session_id, state.conversation]
   );
 
   const transcribeVoice = useCallback(
@@ -741,21 +817,35 @@ function Workspace({
 
   const runVoiceConversationTurn = useCallback(
     async (
-      payload: Pick<VoiceConversationTurnRequest, "audio_base64" | "audio_format" | "voice_session_id" | "idempotency_key">
+      payload: Pick<VoiceConversationTurnRequest, "audio_base64" | "audio_format" | "voice_session_id" | "idempotency_key">,
+      onGenerating?: () => void,
+      signal?: AbortSignal
     ): Promise<VoiceConversationTurnResult> => {
       if (!state.conversation) {
         throw new Error("Conversation is unavailable.");
       }
+      const voiceConversationId = state.conversation.conversation_id;
+      setState((current) => ({ ...current, streamText: "" }));
       const result = await client.voiceConversationTurn({
         ...payload,
         workspace_id: workspaceId,
         project_id: state.bootstrap?.project_id ?? null,
         session_id: state.bootstrap?.session_id ?? null,
-        conversation_id: state.conversation.conversation_id
-      });
-      setState((current) => ({
+        conversation_id: state.conversation.conversation_id,
+        language: state.settingsSnapshot?.voice.settings.language ?? "pt-BR"
+      }, (delta) => {
+        onGenerating?.();
+        setState((current) => current.conversation?.conversation_id === voiceConversationId
+          ? { ...current, streamText: current.streamText + delta, conversationStatus: "streaming" }
+          : current);
+      }, signal);
+      if (signal?.aborted) throw new DOMException("Voice turn cancelled", "AbortError");
+      const updatedConversation = { ...state.conversation, conversation_id: result.conversation_id };
+      setState((current) => current.conversation?.conversation_id !== voiceConversationId ? current : ({
         ...current,
-        conversation: { ...current.conversation!, conversation_id: result.conversation_id },
+        conversation: current.conversation
+          ? { ...current.conversation, conversation_id: result.conversation_id }
+          : updatedConversation,
         messages: result.messages,
         pagination: result.pagination,
         summary: result.summary,
@@ -766,7 +856,7 @@ function Workspace({
       }));
       return result;
     },
-    [client, setState, state.bootstrap?.project_id, state.bootstrap?.session_id, state.conversation]
+    [client, setState, state.bootstrap?.project_id, state.bootstrap?.session_id, state.conversation, state.settingsSnapshot?.voice.settings.language]
   );
 
   const loadCommands = useCallback(
@@ -1071,8 +1161,10 @@ function Workspace({
     [client, setState, state.bootstrap?.project_id, state.bootstrap?.session_id, state.conversation]
   );
 
+  const presencePublicationRef = useRef(createPresencePublicationGate());
   const updatePresenceFacts = useCallback(
     (manualVoiceState: VoiceCaptureState, conversationModeState: ConversationModeState, amplitude: number) => {
+      if (!presencePublicationRef.current(`${manualVoiceState}:${conversationModeState}`, amplitude, performance.now())) return;
       setState((current) => ({
         ...current,
         manualVoiceState,
@@ -1119,7 +1211,7 @@ function Workspace({
         settingsError: null
       }));
       try {
-        const snapshot = await client.settingsSnapshot();
+        const snapshot = await client.settingsSnapshot(state.bootstrap?.primary_agent?.agent_id);
         setState((current) => ({
           ...current,
           settingsSnapshot: snapshot,
@@ -1134,7 +1226,7 @@ function Workspace({
         }));
       }
     },
-    [client, setState]
+    [client, setState, state.bootstrap?.primary_agent?.agent_id]
   );
 
   const toggleSettings = useCallback(
@@ -1170,17 +1262,16 @@ function Workspace({
           return;
         }
         const selectedProvider = changes.defaultProvider || null;
-        const selectedModel = changes.defaultModel || null;
-        validateModelSelection(current, selectedProvider, selectedModel);
-        const modelPayload: UpdateModelDefaultsRequest = {
-          default_provider: selectedProvider,
-          default_chat_model: selectedModel,
-          preferred_runtime: selectedProvider
-        };
+        if (current.personalization && (
+          changes.agentName !== current.personalization.display_name ||
+          changes.personality !== current.personalization.system_prompt
+        )) {
+          if (!changes.agentName.trim()) throw new Error("Agent name is required.");
+          await client.updatePersonality(current.personalization.agent_id, changes.agentName, changes.personality);
+        }
         const providerPayload: UpdateProviderSettingRequest = {
           enabled: changes.providerEnabled,
-          endpoint: changes.providerEndpoint,
-          default_model: selectedModel
+          endpoint: changes.providerEndpoint
         };
         const voicePayload: UpdateVoiceSettingsRequest = {
           enabled: changes.voiceEnabled,
@@ -1193,20 +1284,35 @@ function Workspace({
           vad_enabled: changes.vadEnabled,
           store_raw_audio: changes.storeRawAudio
         };
-        await client.updateModelDefaults(modelPayload);
         if (selectedProvider) {
           await client.updateProviderSetting(selectedProvider, providerPayload);
+        }
+        if (changes.defaultProvider !== current.models.defaults.default_provider ||
+            changes.defaultModel !== current.models.defaults.default_chat_model) {
+          await client.updateModelDefaults({ default_provider: selectedProvider,
+            default_chat_model: changes.defaultModel || null });
         }
         await client.updateVoiceSettings(voicePayload);
         const preferences = saveFrontendSettingsPreferences({
           reducedMotion: changes.reducedMotion,
           theme: changes.theme
         });
-        const snapshot = await client.settingsSnapshot();
+        const snapshot = await client.settingsSnapshot(current.personalization?.agent_id);
+        const bootstrap = await client.bootstrap();
         setState((stateAfterSave) => ({
           ...stateAfterSave,
           frontendSettings: preferences,
           reducedMotion: effectiveReducedMotion(preferences.reducedMotion, stateAfterSave.systemReducedMotion),
+          backendState: bootstrap.degraded.length > 0 ? "degraded" : "ready",
+          bootstrap,
+          conversation: bootstrap.conversation ?? stateAfterSave.conversation,
+          activityGraph: createBaselineActivityState(
+            bootstrap.project_id,
+            bootstrap.primary_agent,
+            primaryModelOption(bootstrap.provider_model_options)
+          ),
+          selectedActivityNodeId: null,
+          modelTelemetry: [],
           settingsSnapshot: snapshot,
           settingsStatus: "ready",
           settingsError: null
@@ -1284,6 +1390,16 @@ function Workspace({
         }
         return { status: "completed", message: "Settings opened." };
       }
+      if (command === "project.files") {
+        setState((current) => ({
+          ...current,
+          historyPanelOpen: true,
+          librarySection: "files",
+          projectFilesOpen: true
+        }));
+        void loadProjectFiles();
+        return { status: "completed", message: "Library opened on Project Files without running retrieval." };
+      }
       if (command === "project") {
         const projectId = resolution.args.project_id;
         await client.project(projectId);
@@ -1305,6 +1421,8 @@ function Workspace({
           streamText: "",
           activityGraph: createEmptyActivityState(projectId),
           selectedActivityNodeId: null,
+          projectFiles: null,
+          projectFilesStatus: current.projectFilesOpen ? "idle" : current.projectFilesStatus,
           backendState: opened.degraded.length > 0 ? "degraded" : "ready"
         }));
         return { status: "completed", message: `Project switched to ${projectId}.` };
@@ -1314,6 +1432,7 @@ function Workspace({
     [
       client,
       loadInsight,
+      loadProjectFiles,
       loadSettings,
       setState,
       state.bootstrap?.session_id,
@@ -1322,6 +1441,54 @@ function Workspace({
       state.settingsSnapshot
     ]
   );
+
+  const reindexProjectFile = useCallback(
+    async (documentId: string) => {
+      setState((current) => ({ ...current, projectFilesBusyDocumentId: documentId, projectFilesError: null }));
+      try {
+        await client.reindexProjectKnowledgeDocument(documentId, workspaceId);
+        await loadProjectFiles();
+      } catch (error) {
+        setState((current) => ({
+          ...current,
+          projectFilesStatus: current.projectFiles ? "degraded" : "error",
+          projectFilesError: readableError(error)
+        }));
+      } finally {
+        setState((current) => ({ ...current, projectFilesBusyDocumentId: null }));
+      }
+    },
+    [client, loadProjectFiles, setState]
+  );
+
+  const removeProjectFile = useCallback(
+    async (documentId: string, displayName: string) => {
+      const confirmed = window.confirm(`Remove "${displayName}" from project retrieval?`);
+      if (!confirmed) {
+        return;
+      }
+      setState((current) => ({ ...current, projectFilesBusyDocumentId: documentId, projectFilesError: null }));
+      try {
+        await client.removeProjectKnowledgeDocument(documentId, workspaceId);
+        await loadProjectFiles();
+      } catch (error) {
+        setState((current) => ({
+          ...current,
+          projectFilesStatus: current.projectFiles ? "degraded" : "error",
+          projectFilesError: readableError(error)
+        }));
+      } finally {
+        setState((current) => ({ ...current, projectFilesBusyDocumentId: null }));
+      }
+    },
+    [client, loadProjectFiles, setState]
+  );
+
+  useEffect(() => {
+    if (state.projectFilesOpen) {
+      void loadProjectFiles();
+    }
+  }, [loadProjectFiles, state.bootstrap?.project_id, state.projectFilesOpen]);
 
   const loadNotifications = useCallback(
     async () => {
@@ -1440,17 +1607,18 @@ function Workspace({
       setState((current) => ({ ...current, activityGraph: createEmptyActivityState(null) }));
       return;
     }
+    const activityProjectId = projectId;
     let cancelled = false;
     let stream: EventSource | null = null;
     async function connectActivity(): Promise<void> {
       try {
-        const snapshot = await client.activitySnapshot(projectId);
+        const snapshot = await client.activitySnapshot(activityProjectId);
         if (cancelled) return;
         setState((current) => ({
           ...current,
           activityGraph: applyActivitySnapshot(current.activityGraph, snapshot, current.activityGraph.cursor)
         }));
-        stream = openActivityStream(client.activityStreamUrl(projectId, activityCursorRef.current), {
+        stream = openActivityStream(client.activityStreamUrl(activityProjectId, null), {
           onSnapshot: (nextSnapshot, cursor) => {
             setState((current) => ({
               ...current,
@@ -1491,6 +1659,40 @@ function Workspace({
     };
   }, [client, setState, state.activeVisual, state.bootstrap?.project_id, state.conversation?.conversation_id]);
 
+  useEffect(() => {
+    if (state.activeVisual !== "activity") {
+      return;
+    }
+    let cancelled = false;
+    let timer: number | null = null;
+    async function refreshModelTelemetry(): Promise<void> {
+      try {
+        const model = primaryModelOption(state.bootstrap?.provider_model_options ?? []);
+        const status = model?.provider_id === "synapse_local"
+          ? await client.synapseLocalStatus(model.model_id)
+          : await client.lmstudioStatus();
+        if (cancelled) return;
+        setState((current) => ({
+          ...current,
+          modelTelemetry: formatModelTelemetry(status.telemetry?.recent ?? [])
+        }));
+      } catch (error) {
+        if (!cancelled) {
+          setState((current) => ({
+            ...current,
+            modelTelemetry: [`Unable to read model log: ${readableError(error)}`]
+          }));
+        }
+      }
+    }
+    void refreshModelTelemetry();
+    timer = window.setInterval(() => void refreshModelTelemetry(), 1600);
+    return () => {
+      cancelled = true;
+      if (timer) window.clearInterval(timer);
+    };
+  }, [client, setState, state.activeVisual, state.bootstrap?.provider_model_options]);
+
   const presenceScene = derivePresenceState({
     backendState: state.backendState,
     conversationStatus: state.conversationStatus,
@@ -1500,14 +1702,20 @@ function Workspace({
     reducedMotion: state.reducedMotion,
     focused: state.focused
   });
-  const activityScene = deriveActivityScene(state.activityGraph, {
+  const activityScene = deriveActivityScene(withBaselineActivityState(
+    state.activityGraph,
+    state.bootstrap?.primary_agent ?? null,
+    primaryModelOption(state.bootstrap?.provider_model_options ?? [])
+  ), {
     selectedNodeId: state.selectedActivityNodeId,
     reducedMotion: state.reducedMotion,
-    focused: state.focused
+    focused: state.focused,
+    modelTelemetry: state.modelTelemetry
   });
 
   return (
     <Frame
+      settingsClient={client}
       state={state}
       activeVisual={state.activeVisual}
       onToggleActivity={() => setState((current) => ({
@@ -1517,12 +1725,30 @@ function Workspace({
       onRefreshInsight={() => void loadInsight()}
       onToggleSettings={toggleSettings}
       onToggleHistory={() => {
-        setState((current) => ({ ...current, historyPanelOpen: !current.historyPanelOpen }));
+        setState((current) => ({
+          ...current,
+          historyPanelOpen: !current.historyPanelOpen,
+          librarySection: "history"
+        }));
         if (!state.historyPanelOpen) {
           void refreshConversationIndex();
         }
       }}
-      onCloseHistory={() => setState((current) => ({ ...current, historyPanelOpen: false }))}
+      onCloseHistory={() => setState((current) => ({ ...current, historyPanelOpen: false, projectFilesOpen: false }))}
+      onSelectLibrarySection={(section) => {
+        setState((current) => ({
+          ...current,
+          historyPanelOpen: true,
+          librarySection: section,
+          projectFilesOpen: section === "files"
+        }));
+        if (section === "history") {
+          void refreshConversationIndex();
+        }
+        if (section === "files") {
+          void loadProjectFiles();
+        }
+      }}
       onRefreshHistory={() => void refreshConversationIndex()}
       onOpenConversation={(conversationId) => void openConversationFromHistory(conversationId)}
       onDeleteConversation={(conversationId) => void deleteConversationFromHistory(conversationId)}
@@ -1539,6 +1765,9 @@ function Workspace({
       onMarkNotificationRead={(notificationId) => void markNotificationRead(notificationId)}
       onDismissNotification={(notificationId) => void dismissNotification(notificationId)}
       onMoveNotificationSelection={moveNotificationSelection}
+      onRefreshProjectFiles={() => void loadProjectFiles()}
+      onReindexProjectFile={(documentId) => void reindexProjectFile(documentId)}
+      onRemoveProjectFile={(documentId, displayName) => void removeProjectFile(documentId, displayName)}
       onToggleLog={() => setState((current) => ({ ...current, logMinimized: !current.logMinimized }))}
       onLoadOlderHistory={() => void loadOlderHistory()}
       onRecoverConversation={() => void recoverConversation()}
@@ -1550,6 +1779,7 @@ function Workspace({
                 {state.activeVisual === "activity" ? (
                   <ActivityConstellation
                     scene={activityScene}
+                    theme={state.frontendSettings.theme}
                     onSelectNode={(nodeId) => setState((current) => ({ ...current, selectedActivityNodeId: nodeId }))}
                   />
                 ) : (
@@ -1559,6 +1789,7 @@ function Workspace({
             </VisualErrorBoundary>
           </div>
           <Composer
+            client={client}
             onSend={sendMessage}
             onCancel={cancelTurn}
             commands={state.commands}
@@ -1585,6 +1816,7 @@ function Workspace({
 }
 
 function Frame({
+  settingsClient,
   state,
   main,
   activeVisual,
@@ -1593,6 +1825,7 @@ function Frame({
   onToggleSettings,
   onToggleHistory = () => undefined,
   onCloseHistory = () => undefined,
+  onSelectLibrarySection = () => undefined,
   onRefreshHistory = () => undefined,
   onOpenConversation = () => undefined,
   onDeleteConversation = () => undefined,
@@ -1609,10 +1842,14 @@ function Frame({
   onMarkNotificationRead = () => undefined,
   onDismissNotification = () => undefined,
   onMoveNotificationSelection = () => undefined,
+  onRefreshProjectFiles = () => undefined,
+  onReindexProjectFile = () => undefined,
+  onRemoveProjectFile = () => undefined,
   onToggleLog,
   onLoadOlderHistory,
   onRecoverConversation
 }: {
+  settingsClient?: SynapseFrontendClient;
   state: AppState;
   main: React.ReactNode;
   activeVisual: "presence" | "activity";
@@ -1621,6 +1858,7 @@ function Frame({
   onToggleSettings: () => void;
   onToggleHistory?: () => void;
   onCloseHistory?: () => void;
+  onSelectLibrarySection?: (section: LibrarySection) => void;
   onRefreshHistory?: () => void;
   onOpenConversation?: (conversationId: string) => void;
   onDeleteConversation?: (conversationId: string) => void;
@@ -1637,6 +1875,9 @@ function Frame({
   onMarkNotificationRead?: (notificationId: string) => void;
   onDismissNotification?: (notificationId: string) => void;
   onMoveNotificationSelection?: (delta: number) => void;
+  onRefreshProjectFiles?: () => void;
+  onReindexProjectFile?: (documentId: string) => void;
+  onRemoveProjectFile?: (documentId: string, displayName: string) => void;
   onToggleLog: () => void;
   onLoadOlderHistory: () => void;
   onRecoverConversation: () => void;
@@ -1669,7 +1910,7 @@ function Frame({
         </button>
         <button
           className={`shell-nav-button history-button ${state.historyPanelOpen ? "active" : ""}`}
-          title={state.historyPanelOpen ? "Close History" : "Open History"}
+          title={state.historyPanelOpen ? "Close Library" : "Open Library"}
           aria-pressed={state.historyPanelOpen}
           onClick={onToggleHistory}
         >
@@ -1714,20 +1955,31 @@ function Frame({
         onNewConversation={onNewConversation}
       />
       {state.historyPanelOpen ? (
-        <HistoryPanel
-          status={state.historyStatus}
+        <LibraryPanel
+          activeSection={state.librarySection}
+          historyStatus={state.historyStatus}
           conversations={state.conversationIndex}
           activeConversationId={state.conversation?.conversation_id ?? null}
-          error={state.historyError}
+          historyError={state.historyError}
+          projectId={state.bootstrap?.project_id ?? null}
+          projectFilesStatus={state.projectFilesStatus}
+          projectFiles={state.projectFiles}
+          projectFilesError={state.projectFilesError}
+          projectFilesBusyDocumentId={state.projectFilesBusyDocumentId}
           onClose={onCloseHistory}
-          onRefresh={onRefreshHistory}
+          onSelectSection={onSelectLibrarySection}
+          onRefreshHistory={onRefreshHistory}
           onOpenConversation={onOpenConversation}
           onDeleteConversation={onDeleteConversation}
           onClearConversationHistory={onClearConversationHistory}
+          onRefreshProjectFiles={onRefreshProjectFiles}
+          onReindex={onReindexProjectFile}
+          onRemove={onRemoveProjectFile}
         />
       ) : null}
       {state.settingsOpen ? (
         <SettingsPanel
+          client={settingsClient}
           status={state.settingsStatus}
           snapshot={state.settingsSnapshot}
           frontendSettings={state.frontendSettings}
@@ -1845,6 +2097,204 @@ function RecommendationGroup({ title, items }: { title: string; items: InsightRe
   );
 }
 
+function ProjectFilesPanel({
+  projectId,
+  status,
+  data,
+  error,
+  busyDocumentId,
+  onClose,
+  onRefresh,
+  onReindex,
+  onRemove,
+  embedded = false
+}: {
+  projectId: string | null;
+  status: AppState["projectFilesStatus"];
+  data: ProjectKnowledgeDocumentsResult | null;
+  error: string | null;
+  busyDocumentId: string | null;
+  onClose: () => void;
+  onRefresh: () => void;
+  onReindex: (documentId: string) => void;
+  onRemove: (documentId: string, displayName: string) => void;
+  embedded?: boolean;
+}): React.ReactElement {
+  const documents = data?.documents ?? [];
+  const learned = data?.capabilities.learned_semantic ?? null;
+  const lexicalAvailable = data?.capabilities.lexical.available ?? false;
+  const learnedStatus = learned?.status ?? "unconfigured";
+
+  function onKeyDown(event: React.KeyboardEvent<HTMLElement>): void {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      onClose();
+    }
+  }
+
+  return (
+    <section
+      className={`project-files-panel ${status} ${embedded ? "embedded" : ""}`}
+      aria-label="Project Files"
+      role={embedded ? "region" : "dialog"}
+      aria-modal={embedded ? undefined : "false"}
+      onKeyDown={onKeyDown}
+      tabIndex={-1}
+    >
+      {!embedded ? (
+        <header className="project-files-header">
+          <div>
+            <span>Arquivos do Projeto</span>
+            <small>{projectId ? `Projeto ${projectId}` : "Nenhum projeto ativo"}</small>
+          </div>
+          <div className="project-files-actions">
+            <button
+              type="button"
+              onClick={() => navigator.clipboard?.writeText("/project ")}
+              title="Copiar comando /project para o chat"
+            >
+              /project
+            </button>
+            <button type="button" onClick={onRefresh} disabled={status === "loading" || !projectId}>Refresh</button>
+            <button type="button" aria-label="Close Project Files" onClick={onClose}>×</button>
+          </div>
+        </header>
+      ) : null}
+      <div className="project-files-capabilities" aria-label="Project Knowledge capability status">
+        <span className={lexicalAvailable ? "available" : "unavailable"}>
+          Busca lexical: {lexicalAvailable ? "disponível" : "indisponível"}
+        </span>
+        <span className={semanticCapabilityClass(learnedStatus)}>
+          Busca semântica local: {semanticStatusLabel(learnedStatus)}
+        </span>
+        {learnedStatus !== "available" && learnedStatus !== "ready" ? (
+          <small>Fallback lexical continua disponível quando factual.</small>
+        ) : null}
+      </div>
+      {status === "loading" ? <p className="project-files-state">Carregando fatos dos documentos…</p> : null}
+      {!projectId ? <p className="project-files-state empty">Selecione um projeto com /project &lt;project_id&gt; antes de administrar arquivos.</p> : null}
+      {error ? <p className="project-files-state error">{error}</p> : null}
+      {status === "degraded" ? <p className="project-files-state degraded">Mostrando último estado conhecido. Refresh falhou.</p> : null}
+      {projectId && documents.length === 0 && status !== "loading" ? (
+        <p className="project-files-state empty">Nenhum documento indexável registrado para este projeto.</p>
+      ) : null}
+      {documents.length > 0 ? (
+        <div className="project-files-list" role="list" aria-label="Project indexed documents">
+          {documents.map((record) => (
+            <ProjectFileItem
+              key={record.document.document_id}
+              record={record}
+              busy={busyDocumentId === record.document.document_id}
+              onReindex={onReindex}
+              onRemove={onRemove}
+            />
+          ))}
+        </div>
+      ) : null}
+      <footer className="project-files-policy">
+        Abrir/listar arquivos não executa retrieval nem gera embedding de query.
+      </footer>
+    </section>
+  );
+}
+
+function ProjectFileItem({
+  record,
+  busy,
+  onReindex,
+  onRemove
+}: {
+  record: ProjectKnowledgeDocumentRecord;
+  busy: boolean;
+  onReindex: (documentId: string) => void;
+  onRemove: (documentId: string, displayName: string) => void;
+}): React.ReactElement {
+  const document = record.document;
+  const version = record.version;
+  const status = version?.status ?? document.status;
+  const chunkCount = typeof record.facts.chunk_count === "number" ? record.facts.chunk_count : version?.chunk_count ?? 0;
+  const indexed = record.facts.document_indexed === true;
+  const updatedAt = version?.completed_at ?? version?.started_at ?? version?.queued_at ?? document.created_at;
+  const failure = version?.failure_message ?? (typeof record.facts.failure_message === "string" ? record.facts.failure_message : null);
+  const type = documentTypeLabel(document.display_name);
+  const removable = status !== "removed";
+  const activeOperation = busy || status === "queued" || status === "reading" || status === "chunking" || status === "indexing";
+
+  return (
+    <article className={`project-file-item ${status}`} role="listitem">
+      <div className="project-file-main">
+        <div>
+          <strong>{document.display_name}</strong>
+          <small>{type} · versão {version ? shortVersion(version.version_id) : "indisponível"}</small>
+        </div>
+        <span className={`project-file-status ${status}`}>{statusLabel(status)}</span>
+      </div>
+      <dl className="project-file-facts">
+        <div><dt>Retrieval</dt><dd>{indexed && status === "ready" ? "disponível" : "não disponível"}</dd></div>
+        <div><dt>Chunks</dt><dd>{chunkCount}</dd></div>
+        <div><dt>Atualizado</dt><dd>{formatDateTime(updatedAt)}</dd></div>
+      </dl>
+      {failure ? <p className="project-file-error">{failure}</p> : null}
+      {version?.superseded_by ? <p className="project-file-note">Versão substituída por {shortVersion(version.superseded_by)}.</p> : null}
+      {status === "removed" ? <p className="project-file-note">Removido do retrieval do projeto.</p> : null}
+      <div className="project-file-actions">
+        <button
+          type="button"
+          onClick={() => onReindex(document.document_id)}
+          disabled={activeOperation || status === "removed"}
+        >
+          {busy ? "Processando…" : "Reindexar"}
+        </button>
+        <button
+          type="button"
+          className="danger"
+          onClick={() => onRemove(document.document_id, document.display_name)}
+          disabled={busy || !removable}
+        >
+          Remover
+        </button>
+      </div>
+    </article>
+  );
+}
+
+function semanticStatusLabel(status: string): string {
+  switch (status) {
+    case "available":
+    case "ready":
+      return "pronta";
+    case "loading":
+      return "carregando";
+    case "unavailable":
+      return "indisponível";
+    case "incompatible":
+      return "incompatível";
+    case "failed":
+      return "falhou";
+    case "degraded":
+      return "degradada";
+    default:
+      return "não configurada";
+  }
+}
+
+function semanticCapabilityClass(status: string): string {
+  return status === "available" || status === "ready" ? "available" : status === "loading" ? "loading" : "unavailable";
+}
+
+function statusLabel(status: string): string {
+  return status.replace(/_/g, " ").toUpperCase();
+}
+
+function shortVersion(versionId: string): string {
+  return versionId.length > 12 ? `${versionId.slice(0, 12)}…` : versionId;
+}
+
+function documentTypeLabel(name: string): string {
+  const extension = name.includes(".") ? name.split(".").pop()?.toLowerCase() : "";
+  return extension ? extension : "documento";
+}
+
 function NotificationsPanel({
   status,
   notifications,
@@ -1939,87 +2389,151 @@ function NotificationsPanel({
   );
 }
 
-function HistoryPanel({
-  status,
+function LibraryPanel({
+  activeSection,
+  historyStatus,
   conversations,
   activeConversationId,
-  error,
+  historyError,
+  projectId,
+  projectFilesStatus,
+  projectFiles,
+  projectFilesError,
+  projectFilesBusyDocumentId,
   onClose,
-  onRefresh,
+  onSelectSection,
+  onRefreshHistory,
+  onRefreshProjectFiles,
   onOpenConversation,
   onDeleteConversation,
-  onClearConversationHistory
+  onClearConversationHistory,
+  onReindex,
+  onRemove
 }: {
-  status: AppState["historyStatus"];
+  activeSection: LibrarySection;
+  historyStatus: AppState["historyStatus"];
   conversations: ConversationIndexItem[];
   activeConversationId: string | null;
-  error: string | null;
+  historyError: string | null;
+  projectId: string | null;
+  projectFilesStatus: AppState["projectFilesStatus"];
+  projectFiles: ProjectKnowledgeDocumentsResult | null;
+  projectFilesError: string | null;
+  projectFilesBusyDocumentId: string | null;
   onClose: () => void;
-  onRefresh: () => void;
+  onSelectSection: (section: LibrarySection) => void;
+  onRefreshHistory: () => void;
+  onRefreshProjectFiles: () => void;
   onOpenConversation: (conversationId: string) => void;
   onDeleteConversation: (conversationId: string) => void;
   onClearConversationHistory: () => void;
+  onReindex: (documentId: string) => void;
+  onRemove: (documentId: string, displayName: string) => void;
 }): React.ReactElement {
   const visibleConversations = conversations.filter((item) => item.message_count > 0);
+  const historySelected = activeSection === "history";
   return (
-    <section className={`history-panel ${status}`} aria-label="History panel" role="dialog" aria-modal="false">
+    <section className={`history-panel library-panel ${activeSection}`} aria-label="Library panel" role="dialog" aria-modal="false">
       <header className="history-header">
         <div>
-          <span>History</span>
-          <small>{historyStatusLabel(status, visibleConversations)}</small>
+          <span>Library</span>
+          <small>{historySelected ? historyStatusLabel(historyStatus, visibleConversations) : projectFilesStatusLabel(projectFilesStatus, projectFiles?.documents.length ?? 0, projectId)}</small>
         </div>
         <div className="history-actions">
+          {historySelected ? (
+            <button
+              type="button"
+              onClick={onClearConversationHistory}
+              disabled={historyStatus === "loading" || visibleConversations.length === 0}
+            >
+              Clear
+            </button>
+          ) : null}
           <button
             type="button"
-            onClick={onClearConversationHistory}
-            disabled={status === "loading" || visibleConversations.length === 0}
+            onClick={historySelected ? onRefreshHistory : onRefreshProjectFiles}
+            disabled={historySelected ? historyStatus === "loading" : projectFilesStatus === "loading"}
           >
-            Clear
+            Refresh
           </button>
-          <button type="button" onClick={onRefresh} disabled={status === "loading"}>Refresh</button>
-          <button type="button" aria-label="Close History" onClick={onClose}>×</button>
+          <button type="button" aria-label="Close Library" onClick={onClose}>×</button>
         </div>
       </header>
-      {status === "loading" ? <p className="history-state">Loading persisted conversations…</p> : null}
-      {error ? <p className="history-state error">{error}</p> : null}
-      {visibleConversations.length === 0 && status !== "loading" ? (
-        <p className="history-state empty">No previous conversations.</p>
-      ) : null}
-      {visibleConversations.length > 0 ? (
-        <div className="history-list" role="listbox" aria-label="Persisted conversations">
-          {visibleConversations.map((item) => {
-            const conversation = item.conversation;
-            return (
-              <article
-                key={conversation.conversation_id}
-                className="history-item"
-                role="option"
-                aria-selected={conversation.conversation_id === activeConversationId}
-              >
-                <button
-                  type="button"
-                  className="history-item-open"
-                  onClick={() => onOpenConversation(conversation.conversation_id)}
-                >
-                  <strong>{conversation.title || "Synapse conversation"}</strong>
-                  <span>{item.preview || "No text preview"}</span>
-                  <small>{formatDateTime(conversation.updated_at)} · {item.message_count} messages</small>
-                </button>
-                <button
-                  type="button"
-                  className="history-item-delete"
-                  aria-label={`Delete conversation ${conversation.title || conversation.conversation_id}`}
-                  title="Delete conversation"
-                  onClick={() => onDeleteConversation(conversation.conversation_id)}
-                  disabled={status === "loading"}
-                >
-                  <TrashIcon />
-                </button>
-              </article>
-            );
-          })}
-        </div>
-      ) : null}
+      <nav className="library-tabs" aria-label="Library sections">
+        <button
+          type="button"
+          className={historySelected ? "active" : ""}
+          aria-pressed={historySelected}
+          onClick={() => onSelectSection("history")}
+        >
+          Histórico de chat
+        </button>
+        <button
+          type="button"
+          className={!historySelected ? "active" : ""}
+          aria-pressed={!historySelected}
+          onClick={() => onSelectSection("files")}
+        >
+          Arquivos enviados
+        </button>
+      </nav>
+      {historySelected ? (
+        <>
+          {historyStatus === "loading" ? <p className="history-state">Loading persisted conversations…</p> : null}
+          {historyError ? <p className="history-state error">{historyError}</p> : null}
+          {visibleConversations.length === 0 && historyStatus !== "loading" ? (
+            <p className="history-state empty">No previous conversations.</p>
+          ) : null}
+          {visibleConversations.length > 0 ? (
+            <div className="history-list" role="listbox" aria-label="Persisted conversations">
+              {visibleConversations.map((item) => {
+                const conversation = item.conversation;
+                return (
+                  <article
+                    key={conversation.conversation_id}
+                    className="history-item"
+                    role="option"
+                    aria-selected={conversation.conversation_id === activeConversationId}
+                  >
+                    <button
+                      type="button"
+                      className="history-item-open"
+                      onClick={() => onOpenConversation(conversation.conversation_id)}
+                    >
+                      <strong>{conversation.title || "Synapse conversation"}</strong>
+                      <span>{item.preview || "No text preview"}</span>
+                      <small>{formatDateTime(conversation.updated_at)} · {item.message_count} messages</small>
+                    </button>
+                    <button
+                      type="button"
+                      className="history-item-delete"
+                      aria-label={`Delete conversation ${conversation.title || conversation.conversation_id}`}
+                      title="Delete conversation"
+                      onClick={() => onDeleteConversation(conversation.conversation_id)}
+                      disabled={historyStatus === "loading"}
+                    >
+                      <TrashIcon />
+                    </button>
+                  </article>
+                );
+              })}
+            </div>
+          ) : null}
+        </>
+      ) : (
+        <ProjectFilesPanel
+          projectId={projectId}
+          status={projectFilesStatus}
+          data={projectFiles}
+          error={projectFilesError}
+          busyDocumentId={projectFilesBusyDocumentId}
+          onClose={onClose}
+          onRefresh={onRefreshProjectFiles}
+          onReindex={onReindex}
+          onRemove={onRemove}
+          embedded
+        />
+      )}
     </section>
   );
 }
@@ -2047,6 +2561,8 @@ function sectionLabel(section: SettingsSection): string {
       return "Voice";
     case "models":
       return "Models";
+    case "mom":
+      return "MoM";
     case "themes":
       return "Themes";
     case "insight":
@@ -2054,7 +2570,7 @@ function sectionLabel(section: SettingsSection): string {
   }
 }
 
-const settingsSections: SettingsSection[] = ["personalization", "voice", "models", "themes", "insight"];
+const settingsSections: SettingsSection[] = ["personalization", "voice", "models", "mom", "themes", "insight"];
 
 const themeOptions: Array<{
   id: FrontendThemePreference;
@@ -2075,6 +2591,7 @@ interface ThemedSelectOption {
 }
 
 function SettingsPanel({
+  client,
   status,
   snapshot,
   frontendSettings,
@@ -2091,6 +2608,7 @@ function SettingsPanel({
   onSave,
   onPreviewFrontendSettings
 }: {
+  client?: SynapseFrontendClient;
   status: AppState["settingsStatus"];
   snapshot: SettingsSnapshot | null;
   frontendSettings: FrontendSettingsPreferences;
@@ -2110,10 +2628,66 @@ function SettingsPanel({
   const initial = settingsChangesFromSnapshot(snapshot, frontendSettings);
   const [draft, setDraft] = useState<SettingsChanges>(initial);
   const [localError, setLocalError] = useState<string | null>(null);
+  const [previewId, setPreviewId] = useState<string | null>(null);
+  const [previewPlaying, setPreviewPlaying] = useState(false);
+  const previewAudio = useRef<HTMLAudioElement | null>(null);
+  const previewUrl = useRef<string | null>(null);
+  const previewRequest = useRef<AbortController | null>(null);
+  const stopPreview = useCallback(() => {
+    previewRequest.current?.abort();
+    previewRequest.current = null;
+    if (previewAudio.current) {
+      previewAudio.current.onended = null;
+      previewAudio.current.onerror = null;
+      previewAudio.current.pause();
+      previewAudio.current.removeAttribute("src");
+      previewAudio.current.load();
+      previewAudio.current = null;
+    }
+    if (previewUrl.current) {
+      URL.revokeObjectURL(previewUrl.current);
+      previewUrl.current = null;
+    }
+    setPreviewId(null);
+    setPreviewPlaying(false);
+  }, []);
+  useEffect(() => stopPreview, [activeSection, stopPreview]);
+
+  async function preview(voiceId: string): Promise<void> {
+    const wasPlaying = previewId === voiceId;
+    stopPreview();
+    if (wasPlaying || !client) return;
+    const controller = new AbortController();
+    previewRequest.current = controller;
+    setPreviewId(voiceId);
+    setLocalError(null);
+    try {
+      const result = await client.previewVoice(
+        `Eu sou ${draft.agentName.trim() || primaryAgent?.name || "Synapse"}.`,
+        voiceId, snapshot?.voice.voices.find((voice) => voice.voice_id === voiceId)?.provider || draft.ttsProvider,
+        "pt-BR", controller.signal
+      );
+      if (controller.signal.aborted) return;
+      previewUrl.current = audioBlobUrl(result.audio_base64, result.audio_format || "audio/wav");
+      const audio = new Audio(previewUrl.current);
+      previewAudio.current = audio;
+      audio.onended = stopPreview;
+      audio.onerror = () => {
+        stopPreview();
+        setLocalError("Unable to play this voice preview.");
+      };
+      await audio.play();
+      if (!controller.signal.aborted) setPreviewPlaying(true);
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        stopPreview();
+        setLocalError(readableError(error));
+      }
+    }
+  }
   useEffect(() => {
     setDraft(settingsChangesFromSnapshot(snapshot, frontendSettings));
   }, [frontendSettings, snapshot]);
-  const modelOptions = modelOptionsForProvider(snapshot, draft.defaultProvider);
   const providerSetting = snapshot?.models.provider_settings.find((item) => item.provider_id === draft.defaultProvider);
   const sttProviders = snapshot?.voice.providers.filter((item) => item.adapter_type === "stt") ?? [];
   const ttsProviders = snapshot?.voice.providers.filter((item) => item.adapter_type === "tts") ?? [];
@@ -2121,7 +2695,20 @@ function SettingsPanel({
   const canSave = (Boolean(snapshot) || activeSection === "themes") && status !== "loading" && status !== "saving";
 
   function update<K extends keyof SettingsChanges>(key: K, value: SettingsChanges[K]): void {
-    const next = { ...draft, [key]: value };
+    let next = { ...draft, [key]: value };
+    if (key === "defaultProvider") {
+      const providerId = typeof value === "string" ? value : "";
+      const nextProviderSetting = snapshot?.models.provider_settings.find((item) => item.provider_id === providerId);
+      const nextModel = snapshot?.models.catalog.find(
+        (model) => model.provider === providerId && model.chat_usable && model.status !== "unavailable"
+      );
+      next = {
+        ...next,
+        defaultModel: nextModel?.name ?? "",
+        providerEnabled: nextProviderSetting?.enabled ?? Boolean(providerId),
+        providerEndpoint: nextProviderSetting?.endpoint ?? ""
+      };
+    }
     setDraft(next);
     if (key === "theme" || key === "reducedMotion") {
       onPreviewFrontendSettings({
@@ -2134,10 +2721,8 @@ function SettingsPanel({
 
   function submit(event: FormEvent): void {
     event.preventDefault();
+    if (activeSection === "mom") return;
     try {
-      if (snapshot) {
-        validateModelSelection(snapshot, draft.defaultProvider || null, draft.defaultModel || null);
-      }
       onSave(draft);
     } catch (validationError) {
       setLocalError(readableError(validationError));
@@ -2145,11 +2730,11 @@ function SettingsPanel({
   }
 
   return (
-    <section className={`settings-panel ${status}`} aria-label="Settings panel" role="dialog" aria-modal="false">
+    <section className={`settings-panel settings-conservative ${status}`} aria-label="Settings panel" role="dialog" aria-modal="false">
       <header className="settings-header">
         <div>
-          <span>Settings</span>
-          <small>{status}</small>
+          <span>Configurações</span>
+          <small>{status === "ready" ? "Preferências do aplicativo" : status}</small>
         </div>
         <div className="settings-actions">
           <button type="button" onClick={onRefresh} disabled={status === "loading" || status === "saving"}>Refresh</button>
@@ -2177,6 +2762,8 @@ function SettingsPanel({
         ))}
       </nav>
       <form className="settings-content" onSubmit={submit}>
+        {activeSection === "mom" ? <MoMSettings client={client} snapshot={snapshot}
+          primaryId={primaryAgent?.agent_id} workspaceId={workspaceId} Select={ThemedSelect} /> : null}
         {status === "loading" ? <p className="settings-state">Loading real settings from backend contracts…</p> : null}
         {(error || localError) && activeSection !== "insight" ? (
           <p className="settings-state error">{localError ?? error}</p>
@@ -2185,14 +2772,17 @@ function SettingsPanel({
           {activeSection === "personalization" ? (
           <section className="settings-card" aria-label="Settings Personalization">
             <h3>Personalization</h3>
-            <dl>
-              <div><dt>Primary agent</dt><dd>{primaryAgent?.name ?? "Not configured"}</dd></div>
-              <div><dt>Agent role</dt><dd>{primaryAgent?.role ?? "backend-owned"}</dd></div>
-              <div><dt>Agent kind</dt><dd>{primaryAgent?.kind ?? "backend-owned"}</dd></div>
-              <div><dt>Workspace</dt><dd>{workspaceId}</dd></div>
-              <div><dt>Conversation</dt><dd>preserved behind Settings</dd></div>
-            </dl>
-            <p className="muted">Primary agent identity is created during first-run. Provider and model ownership stays in Models.</p>
+            <p className="muted">Give your agent a name and describe how you want it to communicate.</p>
+            <label>Agent name
+              <input value={draft.agentName} required maxLength={80} disabled={!snapshot?.personalization}
+                onChange={(event) => update("agentName", event.target.value)} placeholder={primaryAgent?.name ?? "Agent name"} />
+            </label>
+            <label>Personality
+              <textarea value={draft.personality} rows={7} maxLength={8000} disabled={!snapshot?.personalization}
+                onChange={(event) => update("personality", event.target.value)}
+                placeholder="For example: Speak Brazilian Portuguese. Be curious, direct and friendly. Avoid emojis unless I ask." />
+            </label>
+            <p className="muted">Saved changes apply to future replies. Your conversations stay here.</p>
           </section>
           ) : null}
 
@@ -2217,30 +2807,24 @@ function SettingsPanel({
               })}
             </div>
             <ThemedSelect
-              label="Default provider"
+              label="Provedor padrão"
               value={draft.defaultProvider}
               onChange={(value) => update("defaultProvider", value)}
               options={[
-                { value: "", label: "No default provider" },
+                { value: "", label: "Selecione um provedor" },
                 ...snapshot.models.providers.map((provider) => ({
                   value: provider.provider_id,
                   label: `${provider.display_name} · ${provider.status}`
                 }))
               ]}
             />
-            <ThemedSelect
-              label="Default chat model"
-              value={draft.defaultModel}
+            <ThemedSelect label="Modelo padrão" value={draft.defaultModel}
               onChange={(value) => update("defaultModel", value)}
-              disabled={!draft.defaultProvider}
-              options={[
-                { value: "", label: "No default model" },
-                ...modelOptions.map((model) => ({
-                  value: model.name,
-                  label: `${model.name} · ${model.status}`
-                }))
-              ]}
-            />
+              options={[{ value: "", label: "Não configurado" }, ...snapshot.models.catalog
+                .filter((model) => model.provider === draft.defaultProvider && model.chat_usable)
+                .map((model) => ({ value: model.name, label: `${model.name} · ${model.status}`,
+                  disabled: model.status === "unavailable" }))]} />
+            <p className="muted">O generalista atende o uso normal. Ative o MoM no chat para permitir especialistas configurados na aba MoM.</p>
             <label>
               Provider enabled
               <input type="checkbox" checked={draft.providerEnabled} onChange={(event) => update("providerEnabled", event.target.checked)} disabled={!draft.defaultProvider} />
@@ -2313,22 +2897,30 @@ function SettingsPanel({
             />
             <div className="voice-pack-grid" aria-label="Default Voice Pack voices">
               {ttsVoices.map((voice) => (
-                <button
+                <article
                   key={voice.voice_id}
-                  type="button"
                   className={`voice-choice ${draft.defaultTtsVoice === voice.voice_id ? "selected" : ""}`}
-                  disabled={!voice.usable}
-                  onClick={() => update("defaultTtsVoice", voice.voice_id)}
                 >
                   <strong>{voice.display_name}</strong>
                   <span>{String(voice.voice_profile.gender ?? "voice")} · {voice.locale || voice.language}</span>
-                  <small>{voice.usable ? "usable" : voice.reason ?? "unavailable"}</small>
-                </button>
+                  <div className="voice-card-actions">
+                    <button type="button" disabled={!voice.usable || !client} onClick={() => void preview(voice.voice_id)}
+                      aria-label={`${previewId === voice.voice_id ? "Stop" : "Preview"} ${voice.display_name}`}>
+                      {previewId === voice.voice_id ? previewPlaying ? "■ Stop" : "■ Preparing…" : "▷ Preview"}
+                    </button>
+                    <button type="button" disabled={!voice.usable} aria-pressed={draft.defaultTtsVoice === voice.voice_id}
+                      onClick={() => update("defaultTtsVoice", voice.voice_id)}>
+                      {draft.defaultTtsVoice === voice.voice_id ? "Selected" : "Select"}
+                    </button>
+                  </div>
+                  <div className={`voice-wave ${previewId === voice.voice_id && previewPlaying ? "playing" : ""}`} aria-hidden="true">
+                    {[8, 18, 12, 28, 20, 10, 24, 32, 14, 22, 12, 26].map((height, index) => <i key={index} style={{ height, animationDelay: `${index * 65}ms` }} />)}
+                  </div>
+                  {!voice.usable ? <small>{voice.reason ?? "Unavailable"}</small> : null}
+                </article>
               ))}
             </div>
-            <p className="muted">
-              Default Voice Pack discovery reports {ttsVoices.length} voices. Preview is unavailable in v0.01 unless a governed TTS sample endpoint is present.
-            </p>
+            <p className="muted">Preview: “Eu sou {draft.agentName.trim() || primaryAgent?.name || "Synapse"}.”</p>
             {snapshot.voice.packs.length === 0 ? (
               <p className="muted">No governed voice pack is installed.</p>
             ) : null}
@@ -2417,10 +3009,10 @@ function SettingsPanel({
           </section>
           ) : null}
 
-          <footer className="settings-footer">
+          {activeSection !== "mom" ? <footer className="settings-footer">
             <span>Only real settings with active owners are shown.</span>
             <button type="submit" disabled={!canSave}>{status === "saving" ? "Saving…" : "Save"}</button>
-          </footer>
+          </footer> : null}
         </form>
       </div>
     </section>
@@ -2571,7 +3163,7 @@ function TitleBar({
   return (
     <header className="title-bar" onDoubleClick={() => void toggleMaximize()}>
       <div className="brand" aria-label="Synapse">S</div>
-      <div className={`backend-pill ${state}`}>{state}</div>
+      <div className={`backend-pill ${state}`} aria-label={`Backend status: ${state}`} title={state} />
       <button
         type="button"
         className={`notification-button ${notificationsOpen ? "active" : ""}`}
@@ -2695,8 +3287,13 @@ function ConversationLog({
 
   if (minimized) {
     return (
-      <button className="log-reopen" onClick={onToggle} aria-label="Reopen Conversation Log">
-        Log
+      <button type="button" className="log-reopen" onClick={onToggle}
+        aria-label="Reopen Conversation Log" title="Abrir conversa">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+          <path d="M5 4h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H9l-6 3V6a2 2 0 0 1 2-2Z" />
+          <path d="M7 9h10M7 13h7" />
+        </svg>
       </button>
     );
   }
@@ -2745,6 +3342,7 @@ function ConversationLog({
 }
 
 function Composer({
+  client,
   onSend,
   onCancel,
   commands,
@@ -2759,6 +3357,7 @@ function Composer({
   canCancel,
   failedDraft
 }: {
+  client: SynapseFrontendClient;
   onSend: (content: string, attachments?: ConversationAttachment[]) => Promise<void>;
   onCancel: () => Promise<void>;
   commands: CommandDiscoveryItem[];
@@ -2768,7 +3367,9 @@ function Composer({
   onStageAttachment: (file: { filename: string; mime_type: string; size: number; content_base64: string }) => Promise<ConversationAttachment>;
   onTranscribeVoice: (payload: Pick<VoiceTranscriptionRequest, "audio_base64" | "audio_format" | "duration_ms">) => Promise<string>;
   onConversationVoiceTurn: (
-    payload: Pick<VoiceConversationTurnRequest, "audio_base64" | "audio_format" | "voice_session_id" | "idempotency_key">
+    payload: Pick<VoiceConversationTurnRequest, "audio_base64" | "audio_format" | "voice_session_id" | "idempotency_key">,
+    onGenerating?: () => void,
+    signal?: AbortSignal
   ) => Promise<VoiceConversationTurnResult>;
   onPresenceChange: (manualVoiceState: VoiceCaptureState, conversationModeState: ConversationModeState, amplitude: number) => void;
   disabled: boolean;
@@ -2776,6 +3377,7 @@ function Composer({
   failedDraft: string;
 }): React.ReactElement {
   const [text, setText] = useState("");
+  const [momPending, setMomPending] = useState(false);
   const textRef = useRef("");
   const [busy, setBusy] = useState(false);
   const submittingRef = useRef(false);
@@ -2790,10 +3392,16 @@ function Composer({
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const [conversationModeState, setConversationModeState] = useState<ConversationModeState>("inactive");
   const [conversationModeError, setConversationModeError] = useState<string | null>(null);
+  const [voiceUnderstanding, setVoiceUnderstanding] = useState<string | null>(null);
   const conversationModeActiveRef = useRef(false);
+  const microphoneMutedRef = useRef(false);
+  const [microphoneMuted, setMicrophoneMuted] = useState(false);
+  const microphoneEpochRef = useRef(0);
   const conversationModeStateRef = useRef<ConversationModeState>("inactive");
   const conversationModeSessionRef = useRef<string | null>(null);
+  const conversationModeRequestRef = useRef<AbortController | null>(null);
   const playbackRef = useRef<HTMLAudioElement | null>(null);
+  const playbackUrlRef = useRef<string | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const amplitudeFrameRef = useRef<number | null>(null);
@@ -2803,13 +3411,18 @@ function Composer({
   const chunksRef = useRef<Blob[]>([]);
   const recordingStartedAtRef = useRef<number | null>(null);
   const recordingCancelledRef = useRef(false);
+  const conversationModePeakAmplitudeRef = useRef(0);
+  const conversationModeVadRef = useRef<ConversationVadSnapshot | null>(null);
+  const conversationModeLastAmplitudeAtRef = useRef<number | null>(null);
   const filteredCommands = useMemo(() => filterCommands(commands, text), [commands, text]);
   const canSend = useMemo(
-    () => text.trim().length > 0 && !disabled && !busy && attachmentState !== "staging" && voiceState !== "recording" && voiceState !== "transcribing",
-    [attachmentState, busy, disabled, text, voiceState]
+    () => (text.trim().length > 0 || attachments.length > 0) && !disabled && !busy && attachmentState !== "staging" && voiceState !== "recording" && voiceState !== "transcribing",
+    [attachmentState, attachments.length, busy, disabled, text, voiceState]
   );
   const voiceStatus = voiceStatusLabel(voiceState, voiceError);
   const conversationModeStatus = conversationModeStatusLabel(conversationModeState, conversationModeError);
+  const conversationModeCapturing = conversationModeCapturesMicrophone(conversationModeState);
+  const conversationModeRunning = conversationModeState !== "inactive" && conversationModeState !== "failed" && conversationModeState !== "interrupted";
 
   useEffect(() => {
     if (failedDraft && !text) {
@@ -2819,6 +3432,9 @@ function Composer({
 
   useEffect(() => {
     return () => {
+      conversationModeActiveRef.current = false;
+      conversationModeRequestRef.current?.abort();
+      conversationModeRequestRef.current = null;
       releaseAudioTracks(streamRef.current);
       const playback = playbackRef.current;
       if (playback) {
@@ -2827,6 +3443,7 @@ function Composer({
         playback.load();
       }
       playbackRef.current = null;
+      cleanupConversationModePlaybackUrl();
       clearConversationModeTimer();
       stopAmplitudeMeter();
     };
@@ -2841,18 +3458,19 @@ function Composer({
     event.preventDefault();
     const content = textRef.current.trim();
     const canSubmitContent =
-      content.length > 0 &&
+      (content.length > 0 || attachments.length > 0) &&
       !disabled &&
+      !momPending &&
       !busy &&
       attachmentState !== "staging" &&
       voiceState !== "recording" &&
       voiceState !== "transcribing";
-    if (content.startsWith("/") && shouldExecuteSlashInput(content)) {
+    if (content.startsWith("/") && attachments.length === 0 && shouldExecuteSlashInput(content)) {
       setCommandOpen(false);
       await executeSlashInput(content);
       return;
     }
-    if (commandOpen && content.startsWith("/")) {
+    if (commandOpen && content.startsWith("/") && attachments.length === 0) {
       selectCommand(filteredCommands[selectedCommand]);
       return;
     }
@@ -2942,6 +3560,7 @@ function Composer({
       setCommandOpen(false);
       return;
     }
+    textRef.current = selected;
     setText(selected);
     setCommandOpen(false);
   }
@@ -2980,7 +3599,7 @@ function Composer({
   }
 
   async function startVoiceRecording(): Promise<void> {
-    if (disabled || conversationModeActiveRef.current || voiceState === "recording" || voiceState === "transcribing") {
+    if (disabled || conversationModeActiveRef.current || conversationModeCapturing || voiceState === "recording" || voiceState === "transcribing") {
       return;
     }
     setVoiceError(null);
@@ -3089,26 +3708,47 @@ function Composer({
 
   async function startConversationModeRecording(): Promise<void> {
     clearConversationModeTimer();
-    if (!conversationModeActiveRef.current) {
+    if (!conversationModeActiveRef.current || microphoneMutedRef.current) {
       return;
     }
+    const microphoneEpoch = microphoneEpochRef.current;
     try {
       if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
         throw new Error("Microphone recording is not available in this environment.");
       }
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream);
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        }
+      });
+      if (!conversationModeActiveRef.current || microphoneMutedRef.current || microphoneEpoch !== microphoneEpochRef.current) {
+        releaseAudioTracks(stream);
+        return;
+      }
+      logConversationModeInputDevice(stream);
+      const recorder = new MediaRecorder(stream, preferredAudioRecorderOptions());
       streamRef.current = stream;
       recorderRef.current = recorder;
-      startAmplitudeMeter(stream, (amplitude) => onPresenceChange("idle", "listening", amplitude));
+      conversationModePeakAmplitudeRef.current = 0;
+      conversationModeVadRef.current = null;
+      conversationModeLastAmplitudeAtRef.current = null;
+      startAmplitudeMeter(stream, (amplitude) => {
+        conversationModePeakAmplitudeRef.current = Math.max(conversationModePeakAmplitudeRef.current, amplitude);
+        updateConversationModeVad(amplitude);
+        onPresenceChange("idle", conversationModeStateRef.current === "capturing" ? "capturing" : "listening", amplitude);
+      });
       chunksRef.current = [];
       recordingCancelledRef.current = false;
       recorder.addEventListener("dataavailable", (event) => {
+        if (microphoneEpoch !== microphoneEpochRef.current) return;
         if (event.data.size > 0) {
           chunksRef.current.push(event.data);
         }
       });
       recorder.addEventListener("stop", () => {
+        if (microphoneEpoch !== microphoneEpochRef.current) return;
         if (recordingCancelledRef.current) {
           recordingCancelledRef.current = false;
           return;
@@ -3117,27 +3757,61 @@ function Composer({
       }, { once: true });
       recorder.start();
       setConversationModeState("listening");
-      loopTimerRef.current = window.setTimeout(() => stopConversationModeRecording(), 4200);
+      loopTimerRef.current = window.setTimeout(() => stopConversationModeRecording("listen_timeout"), conversationModeMaxCaptureMs);
     } catch (error) {
-      failConversationMode(error);
+      recoverConversationModeTurnError(error);
     }
   }
 
-  function stopConversationModeRecording(): void {
+  function stopConversationModeRecording(reason: "speech_ended" | "listen_timeout" | "manual" = "manual"): void {
     clearConversationModeTimer();
     const recorder = recorderRef.current;
     if (!recorder || recorder.state === "inactive") {
       return;
     }
-    setConversationModeState("transcribing");
-    onPresenceChange("idle", "transcribing", 0);
+    console.log("voice_capture_diag:conversation_recording_stop", {
+      reason,
+      peakAmplitude: conversationModePeakAmplitudeRef.current,
+      vad: conversationModeVadRef.current
+    });
+    setConversationModeState("finalizing");
+    onPresenceChange("idle", "finalizing", 0);
     recorder.stop();
+  }
+
+  function updateConversationModeVad(amplitude: number): void {
+    if (!conversationModeActiveRef.current || !recorderRef.current || recorderRef.current.state !== "recording") {
+      return;
+    }
+    const now = performance.now();
+    const previousTime = conversationModeLastAmplitudeAtRef.current ?? now;
+    conversationModeLastAmplitudeAtRef.current = now;
+    const next = updateConversationVad(
+      conversationModeVadRef.current,
+      amplitude,
+      now - previousTime,
+      {
+        ...defaultConversationVadConfig,
+        maxCaptureMs: conversationModeMaxCaptureMs
+      }
+    );
+    conversationModeVadRef.current = next;
+    if (next.shouldStart && conversationModeStateRef.current === "listening") {
+      setConversationModeState("capturing");
+      onPresenceChange("idle", "capturing", amplitude);
+    }
+    if (next.shouldStop) {
+      stopConversationModeRecording(next.started ? "speech_ended" : "listen_timeout");
+    }
   }
 
   async function finishConversationModeRecording(audioFormat: string): Promise<void> {
     const blob = new Blob(chunksRef.current, { type: audioFormat });
+    const vad = conversationModeVadRef.current;
     chunksRef.current = [];
     recorderRef.current = null;
+    conversationModeVadRef.current = null;
+    conversationModeLastAmplitudeAtRef.current = null;
     releaseAudioTracks(streamRef.current);
     streamRef.current = null;
     stopAmplitudeMeter();
@@ -3148,22 +3822,81 @@ function Composer({
       if (isEmptyRecording(blob)) {
         throw new Error("Recording did not capture audio.");
       }
-      setConversationModeState("processing");
-      onPresenceChange("idle", "processing", 0);
+      if (!vad?.started || conversationModePeakAmplitudeRef.current < conversationModeMinimumVoicePeak) {
+        setConversationModeError(null);
+        if (conversationModeActiveRef.current) {
+          scheduleConversationModeListening(conversationModeRestartDelayMs);
+        }
+        return;
+      }
+      setConversationModeState("transcribing");
+      onPresenceChange("idle", "transcribing", 0);
+      const voiceRequest = new AbortController();
+      conversationModeRequestRef.current = voiceRequest;
+      const captureEpoch = microphoneEpochRef.current;
+      const audioBase64 = await blobToBase64(blob);
+      if (!conversationModeActiveRef.current || microphoneMutedRef.current || captureEpoch !== microphoneEpochRef.current) {
+        if (conversationModeRequestRef.current === voiceRequest) conversationModeRequestRef.current = null;
+        if (conversationModeActiveRef.current) scheduleConversationModeListening(conversationModeRestartDelayMs);
+        return;
+      }
       const result = await onConversationVoiceTurn({
-        audio_base64: await blobToBase64(blob),
+        audio_base64: audioBase64,
         audio_format: blob.type || audioFormat,
         voice_session_id: conversationModeSessionRef.current,
         idempotency_key: crypto.randomUUID()
-      });
+      }, () => {
+        setConversationModeState("generating");
+        onPresenceChange("idle", "generating", 0);
+      }, voiceRequest.signal);
+      if (!conversationModeActiveRef.current || voiceRequest.signal.aborted) return;
+      conversationModeRequestRef.current = null;
       conversationModeSessionRef.current = result.voice_session_id;
-      await playConversationModeAudio(result.tts.audio_base64, result.tts.audio_format);
+      setVoiceUnderstanding(result.status === "needs_repetition"
+        ? `Não entendi com segurança. Transcrição incerta: “${result.transcript}”. Pode repetir?`
+        : `Entendi: “${result.transcript}”`);
+      await waitForNextPaint();
+      setConversationModeState("generating");
+      if (result.status === "needs_repetition") {
+        setConversationModeError(null);
+        scheduleConversationModeListening(conversationModePostSpeechCooldownMs);
+        return;
+      }
+      if (result.status === "ignored_echo" || isLikelyConversationModeEcho(result.transcript)) {
+        setConversationModeError(null);
+        scheduleConversationModeListening(conversationModePostSpeechCooldownMs);
+        return;
+      }
+      if (result.tts.audio_base64) {
+        try {
+          setConversationModeState("synthesizing");
+          await playConversationModeAudio(result.tts.audio_base64, result.tts.audio_format);
+          setConversationModeError(null);
+        } catch (playbackError) {
+          console.error("voice_tts_diag:conversation_playback_failed", {
+            name: playbackError instanceof Error ? playbackError.name : null,
+            message: playbackError instanceof Error ? playbackError.message : String(playbackError),
+            error: playbackError
+          });
+          cleanupConversationModePlayback();
+          setConversationModeError(normalizeVoiceError(playbackError));
+        }
+      } else {
+        console.error("voice_tts_diag:conversation_tts_audio_unavailable", {
+          synthesisId: result.synthesis_id,
+          ttsStatus: result.tts.status,
+          providerId: result.tts.provider_id,
+          voiceId: result.tts.voice_id,
+          audioBase64State: result.tts.audio_base64 ? "populated" : "empty",
+          degraded: result.degraded
+        });
+        setConversationModeError(result.degraded[0]?.message ?? "TTS audio is unavailable.");
+      }
       if (conversationModeActiveRef.current) {
-        setConversationModeState("listening");
-        void startConversationModeRecording();
+        scheduleConversationModeListening(conversationModePostSpeechCooldownMs);
       }
     } catch (error) {
-      failConversationMode(error);
+      recoverConversationModeTurnError(error);
     }
   }
 
@@ -3174,20 +3907,42 @@ function Composer({
     cleanupConversationModePlayback();
     setConversationModeState("speaking");
     onPresenceChange("idle", "speaking", 0.18);
-    const audioUrl = `data:${audioFormat ?? "audio/wav"};base64,${audioBase64}`;
+    const audioUrl = audioBlobUrl(audioBase64, audioFormat ?? "audio/wav");
+    playbackUrlRef.current = audioUrl;
     const audio = new Audio(audioUrl);
     playbackRef.current = audio;
     startPlaybackAmplitudeMeter(audio);
     await new Promise<void>((resolve, reject) => {
       audio.addEventListener("ended", () => resolve(), { once: true });
-      audio.addEventListener("error", () => reject(new Error("TTS playback failed.")), { once: true });
-      void audio.play().catch(reject);
+      audio.addEventListener("error", () => {
+        const mediaError = audio.error;
+        console.error("voice_tts_diag:audio_element_error", {
+          code: mediaError?.code ?? null,
+          message: mediaError?.message ?? null,
+          networkState: audio.networkState,
+          readyState: audio.readyState
+        });
+        reject(new Error(`TTS playback failed: ${mediaError?.message ?? "HTMLAudioElement error"}`));
+      }, { once: true });
+      void audio.play().catch((playbackError) => {
+        console.error("voice_tts_diag:audio_play_rejected", {
+          name: playbackError instanceof Error ? playbackError.name : null,
+          message: playbackError instanceof Error ? playbackError.message : String(playbackError),
+          networkState: audio.networkState,
+          readyState: audio.readyState,
+          error: playbackError
+        });
+        reject(playbackError);
+      });
     });
     cleanupConversationModePlayback();
   }
 
   function stopConversationMode(state: ConversationModeState = "inactive"): void {
+    microphoneEpochRef.current += 1;
     conversationModeActiveRef.current = false;
+    conversationModeRequestRef.current?.abort();
+    conversationModeRequestRef.current = null;
     conversationModeSessionRef.current = null;
     clearConversationModeTimer();
     cancelVoiceRecording();
@@ -3197,13 +3952,78 @@ function Composer({
 
   function failConversationMode(error: unknown): void {
     conversationModeActiveRef.current = false;
+    conversationModeSessionRef.current = null;
     clearConversationModeTimer();
+    recorderRef.current = null;
+    chunksRef.current = [];
+    recordingStartedAtRef.current = null;
+    conversationModeVadRef.current = null;
+    conversationModeLastAmplitudeAtRef.current = null;
+    recordingCancelledRef.current = false;
     releaseAudioTracks(streamRef.current);
     streamRef.current = null;
     stopAmplitudeMeter();
     cleanupConversationModePlayback();
     setConversationModeState("failed");
     setConversationModeError(normalizeVoiceError(error));
+  }
+
+  function recoverConversationModeTurnError(error: unknown): void {
+    if (!conversationModeActiveRef.current) return;
+    // A completed/failed request must not block unmuting and starting capture.
+    conversationModeRequestRef.current = null;
+    conversationModeSessionRef.current = null;
+    clearConversationModeTimer();
+    recorderRef.current = null;
+    chunksRef.current = [];
+    recordingStartedAtRef.current = null;
+    conversationModeVadRef.current = null;
+    conversationModeLastAmplitudeAtRef.current = null;
+    recordingCancelledRef.current = false;
+    releaseAudioTracks(streamRef.current);
+    streamRef.current = null;
+    stopAmplitudeMeter();
+    cleanupConversationModePlayback();
+    setConversationModeError(normalizeVoiceError(error));
+    if (!conversationModeActiveRef.current) {
+      setConversationModeState("failed");
+      return;
+    }
+    scheduleConversationModeListening(conversationModePostSpeechCooldownMs);
+  }
+
+  function scheduleConversationModeListening(delayMs: number): void {
+    clearConversationModeTimer();
+    setConversationModeState("cooldown");
+    onPresenceChange("idle", "cooldown", 0);
+    if (microphoneMutedRef.current) return;
+    loopTimerRef.current = window.setTimeout(() => {
+      loopTimerRef.current = null;
+      if (!conversationModeActiveRef.current) {
+        return;
+      }
+      setConversationModeError(null);
+      setConversationModeState("listening");
+      void startConversationModeRecording();
+    }, delayMs);
+  }
+
+  function toggleMicrophoneMute(): void {
+    const muted = !microphoneMutedRef.current;
+    microphoneMutedRef.current = muted;
+    setMicrophoneMuted(muted);
+    microphoneEpochRef.current += 1;
+    if (muted) {
+      clearConversationModeTimer();
+      // Discard partial capture, but preserve any response already in progress.
+      if (!conversationModeRequestRef.current && !playbackRef.current) {
+        cancelVoiceRecording();
+        setConversationModeState("cooldown");
+        onPresenceChange("idle", "cooldown", 0);
+      }
+    } else if (conversationModeActiveRef.current && !conversationModeRequestRef.current && !playbackRef.current) {
+      void startConversationModeRecording();
+    }
   }
 
   function cleanupConversationModePlayback(): void {
@@ -3214,7 +4034,21 @@ function Composer({
       playback.load();
     }
     playbackRef.current = null;
+    cleanupConversationModePlaybackUrl();
     stopAmplitudeMeter();
+  }
+
+  function cleanupConversationModePlaybackUrl(): void {
+    if (playbackUrlRef.current) {
+      URL.revokeObjectURL(playbackUrlRef.current);
+      playbackUrlRef.current = null;
+    }
+  }
+
+  function waitForNextPaint(): Promise<void> {
+    return new Promise((resolve) => {
+      requestAnimationFrame(() => resolve());
+    });
   }
 
   function startAmplitudeMeter(stream: MediaStream, onAmplitude: (amplitude: number) => void): void {
@@ -3246,7 +4080,7 @@ function Composer({
       analyserRef.current = analyser;
       pumpAmplitude((amplitude) => onPresenceChange("idle", "speaking", amplitude));
     } catch {
-      onPresenceChange("idle", "speaking", 0.42);
+      onPresenceChange("idle", "speaking", 0);
     }
   }
 
@@ -3283,6 +4117,42 @@ function Composer({
       void audioContextRef.current.close();
       audioContextRef.current = null;
     }
+  }
+
+  function logConversationModeInputDevice(stream: MediaStream): void {
+    const tracks = stream.getAudioTracks();
+    const devices = tracks.map((track) => {
+      const settings = track.getSettings();
+      return {
+        id: track.id,
+        label: track.label,
+        enabled: track.enabled,
+        muted: track.muted,
+        readyState: track.readyState,
+        deviceId: settings.deviceId ?? null,
+        groupId: settings.groupId ?? null,
+        sampleRate: settings.sampleRate ?? null,
+        channelCount: settings.channelCount ?? null,
+        echoCancellation: settings.echoCancellation ?? null,
+        noiseSuppression: settings.noiseSuppression ?? null,
+        autoGainControl: settings.autoGainControl ?? null
+      };
+    });
+    console.log("voice_capture_diag:conversation_input_device", { devices });
+  }
+
+  function preferredAudioRecorderOptions(): MediaRecorderOptions | undefined {
+    const candidates = [
+      "audio/webm;codecs=opus",
+      "audio/webm",
+      "audio/ogg;codecs=opus"
+    ];
+    for (const mimeType of candidates) {
+      if (MediaRecorder.isTypeSupported(mimeType)) {
+        return { mimeType };
+      }
+    }
+    return undefined;
   }
 
   function clearConversationModeTimer(): void {
@@ -3341,12 +4211,15 @@ function Composer({
           ))}
         </div>
       ) : null}
+      <div className="composer-voice-feedback">
       {voiceStatus ? <div className={`voice-status ${voiceState}`} role="status">{voiceStatus}</div> : null}
+      {voiceUnderstanding ? <div className="voice-understanding" role="status" aria-live="polite">{voiceUnderstanding}</div> : null}
       {conversationModeStatus ? (
         <div className={`voice-status conversation-mode ${conversationModeState}`} role="status">
-          {conversationModeStatus}
+          {microphoneMuted ? "Microfone mudo — a conversa continua ativa" : conversationModeStatus}
         </div>
       ) : null}
+      </div>
       {commandExecutionMessage ? (
         <div className={`command-status ${commandExecutionState}`} role="status">
           {commandExecutionMessage}
@@ -3385,27 +4258,30 @@ function Composer({
         onKeyDown={handleKeyDown}
         onChange={(event) => changeText(event.target.value)}
       />
+      <MoMToggle client={client} workspaceId={workspaceId} onBusy={setMomPending} />
       <button
         type="button"
         className="composer-action composer-mic"
-        title={voiceState === "recording" ? "Stop recording and transcribe" : "Record voice for transcription"}
-        disabled={disabled || conversationModeState !== "inactive" || voiceState === "transcribing"}
-        onClick={voiceState === "recording" ? stopVoiceRecording : () => void startVoiceRecording()}
+        title={conversationModeRunning ? (microphoneMuted ? "Ativar microfone" : "Silenciar microfone") : voiceState === "recording" ? "Stop recording and transcribe" : "Record voice for transcription"}
+        aria-label={conversationModeRunning ? (microphoneMuted ? "Ativar microfone" : "Silenciar microfone") : "Gravar mensagem de voz"}
+        aria-pressed={conversationModeRunning ? microphoneMuted : undefined}
+        disabled={!conversationModeRunning && (disabled || conversationModeCapturing || voiceState === "transcribing")}
+        onClick={conversationModeRunning ? toggleMicrophoneMute : voiceState === "recording" ? stopVoiceRecording : () => void startVoiceRecording()}
       >
-        {voiceState === "recording" ? <StopIcon /> : <MicIcon />}
+        {conversationModeRunning && microphoneMuted ? <span aria-hidden="true">Mudo</span> : voiceState === "recording" ? <StopIcon /> : <MicIcon />}
       </button>
       <button
         type="button"
-        className={`composer-action composer-record ${conversationModeState !== "inactive" ? "active" : ""}`}
+        className={`composer-action composer-record ${conversationModeRunning ? "active" : ""}`}
         title={
-          conversationModeState === "inactive" && voiceState === "recording"
+          !conversationModeRunning && voiceState === "recording"
             ? "Cancel manual recording"
-            : conversationModeState === "inactive"
+            : !conversationModeRunning
               ? "Start Conversation Mode"
               : "Stop Conversation Mode"
         }
-        disabled={disabled && conversationModeState === "inactive"}
-        onClick={conversationModeState === "inactive" && voiceState === "recording" ? cancelVoiceRecording : toggleConversationMode}
+        disabled={disabled && !conversationModeRunning}
+        onClick={!conversationModeRunning && voiceState === "recording" ? cancelVoiceRecording : toggleConversationMode}
       >
         <RecordIcon />
       </button>
@@ -3413,7 +4289,7 @@ function Composer({
         type="submit"
         className={`composer-action composer-send ${canCancel ? "cancel" : ""}`}
         onClick={canCancel ? () => void onCancel() : (event) => void submit(event)}
-        disabled={!canCancel && !canSend}
+        disabled={!canCancel && (!canSend || momPending)}
         title={canCancel ? "Cancel response" : "Send message"}
       >
         {canCancel ? <StopIcon /> : <SendIcon />}
@@ -3474,6 +4350,15 @@ async function blobToBase64(blob: Blob): Promise<string> {
     binary += String.fromCharCode(byte);
   }
   return btoa(binary);
+}
+
+function audioBlobUrl(audioBase64: string, audioFormat: string): string {
+  const binary = atob(audioBase64);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return URL.createObjectURL(new Blob([bytes], { type: audioFormat }));
 }
 
 function groupRecommendations(items: InsightReport["models"]["recommendations"]): {
@@ -3559,6 +4444,8 @@ function settingsChangesFromSnapshot(
   const setting = snapshot?.models.provider_settings.find((item) => item.provider_id === defaults?.default_provider);
   const voice = snapshot?.voice.settings;
   return {
+    agentName: snapshot?.personalization?.display_name ?? "",
+    personality: snapshot?.personalization?.system_prompt ?? "",
     defaultProvider: defaults?.default_provider ?? "",
     defaultModel: defaults?.default_chat_model ?? "",
     providerEnabled: setting?.enabled ?? false,
@@ -3575,13 +4462,6 @@ function settingsChangesFromSnapshot(
     reducedMotion: frontendSettings.reducedMotion,
     theme: normalizeTheme(frontendSettings.theme)
   };
-}
-
-function modelOptionsForProvider(snapshot: SettingsSnapshot | null, providerId: string): SettingsSnapshot["models"]["catalog"] {
-  if (!snapshot || !providerId) {
-    return [];
-  }
-  return snapshot.models.catalog.filter((model) => model.provider === providerId && model.status !== "unavailable");
 }
 
 function validateModelSelection(snapshot: SettingsSnapshot, providerId: string | null, modelName: string | null): void {
@@ -3636,6 +4516,45 @@ function historyStatusLabel(status: AppState["historyStatus"], conversations: Co
   return status;
 }
 
+function projectFilesStatusLabel(
+  status: AppState["projectFilesStatus"],
+  documentCount: number,
+  projectId: string | null
+): string {
+  if (!projectId) return "No active project";
+  if (status === "ready") return `${documentCount} uploaded files`;
+  if (status === "empty") return "No uploaded files";
+  return status;
+}
+
+function formatModelTelemetry(entries: LMStudioTelemetryEntry[]): string[] {
+  return entries.slice(-80).map((entry) => {
+    if (entry.raw_line) return entry.raw_line;
+    const timestamp = formatTelemetryTimestamp(entry.occurred_at);
+    const level = entry.status === "completed" ? "INFO" : "DEBUG";
+    const model = entry.model_name ? `[${entry.model_name}] ` : "";
+    const parts = [];
+    const phase = entry.phase ? entry.phase.replace(/_/g, " ") : null;
+    const task = entry.current_task ?? entry.current_operation ?? null;
+    if (phase) parts.push(phase);
+    if (task) parts.push(task);
+    if (typeof entry.input_count === "number" || typeof entry.output_count === "number" || typeof entry.total_count === "number") {
+      parts.push(`tokens: prompt ${entry.input_count ?? "?"} | eval ${entry.output_count ?? "?"} | total ${entry.total_count ?? "?"}`);
+    }
+    if (typeof entry.latency_ms === "number") parts.push(`total time ${(entry.latency_ms / 1000).toFixed(2)}s`);
+    if (typeof entry.first_output_ms === "number") parts.push(`first token ${entry.first_output_ms}ms`);
+    if (typeof entry.output_rate === "number") parts.push(`${entry.output_rate.toFixed(2)} tokens/s`);
+    return `${timestamp} [${level}] ${model}${parts.length > 0 ? parts.join(" | ") : "native telemetry event"}`;
+  });
+}
+
+function formatTelemetryTimestamp(value: string | undefined): string {
+  if (!value) return new Date().toISOString().replace("T", " ").slice(0, 19);
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value.replace("T", " ").slice(0, 19);
+  return parsed.toISOString().replace("T", " ").slice(0, 19);
+}
+
 function formatDateTime(value: string): string {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) {
@@ -3652,6 +4571,15 @@ function readableError(error: unknown): string {
     return error.message;
   }
   return String(error);
+}
+
+function primaryModelOption(options: ProviderModelOption[]): ProviderModelOption | null {
+  return (
+    options.find((option) => option.is_default) ??
+    options.find((option) => option.provider_active && option.provider_status === "ready" && option.model_status === "ready") ??
+    options[0] ??
+    null
+  );
 }
 
 function toReactConversationState(snapshot: {

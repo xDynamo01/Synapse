@@ -5,16 +5,20 @@ import hashlib
 import io
 import json
 import math
+import time
 import wave
 from pathlib import Path
 from unittest.mock import patch
+
+import pytest
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from acceptance.agent_kinds_support import runtime_at
+from synapse.api.routers.frontend_boundary import validate_frontend_attachment_metadata
 from synapse.api.routes import router
-from synapse.audio.models import TextToSpeechResult
+from synapse.audio.models import TextToSpeechResult, TranscriptResult
 from synapse.core.exceptions import ValidationError
 from synapse.core.serialization import load_structured_file
 from synapse.model_hub.models import ModelCatalogEntry, ModelProviderInfo
@@ -52,6 +56,7 @@ def install_frontend_test_model(runtime, *, provider: str = "mock", model: str =
     )
     runtime.model_hub.list_providers = lambda: [provider_info]
     runtime.model_hub.list_catalog = lambda: [model_info]
+    runtime.model_hub.update_defaults(default_provider=provider, default_chat_model=model)
     return {"provider": provider, "model": model}
 
 
@@ -86,6 +91,42 @@ def valid_wav_base64() -> str:
     return base64.b64encode(output.getvalue()).decode("ascii")
 
 
+def test_settings_personality_persists_without_changing_agent_identity(tmp_path):
+    runtime = runtime_at(tmp_path)
+    client = client_for(runtime)
+    create_ready_primary(client, runtime)
+    before = client.get("/api/agents/synapse").json()
+    result = client.patch("/api/agents/synapse", json={
+        "display_name": "Aurora", "system_prompt": "Responda em português, com clareza e sem emojis."
+    })
+    assert result.status_code == 200, result.text
+    assert result.json()["updated"] is True
+    restarted = client_for(runtime_at(tmp_path))
+    after = restarted.get("/api/agents/synapse").json()
+    assert after["display_name"] == "Aurora"
+    assert after["system_prompt"] == "Responda em português, com clareza e sem emojis."
+    assert after["agent_id"] == before["agent_id"]
+    assert after["preferred_model"] == before["preferred_model"]
+    soul = runtime.data_dir.resolve("agents/synapse/SOUL.md").read_text(encoding="utf-8")
+    assert "Aurora" in soul
+    assert after["system_prompt"] in soul
+
+
+def test_settings_voice_preview_uses_requested_voice_and_returns_audio(tmp_path):
+    runtime = runtime_at(tmp_path)
+    client = client_for(runtime)
+    with patch.object(runtime.audio, "synthesize", return_value=TextToSpeechResult(
+        output_ref="inline://tts/preview", audio_base64=valid_wav_base64(), audio_format="audio/wav"
+    )) as synthesize:
+        response = client.post("/api/audio/synthesize", json={
+            "text": "Eu sou Aurora.", "provider_id": "piper", "voice_id": "pt_BR-cadu-medium", "language": "pt-BR"
+        })
+    assert response.status_code == 200, response.text
+    assert response.json()["audio_base64"]
+    assert synthesize.call_args.args[0].voice_id == "pt_BR-cadu-medium"
+    assert synthesize.call_args.args[0].text == "Eu sou Aurora."
+
+
 class ControlledTtsAdapter:
     def synthesize(self, request) -> TextToSpeechResult:
         return TextToSpeechResult(
@@ -96,6 +137,38 @@ class ControlledTtsAdapter:
             audio_format="audio/wav",
             duration_ms=120,
             metadata={"controlled": True},
+        )
+
+
+class RepeatedEchoSttAdapter:
+    def transcribe(self, request) -> TranscriptResult:
+        return TranscriptResult(
+            text=(
+                "O que é o que é o que é o que é o que é o que é "
+                "o que é o que é o que é o que é o que é"
+            ),
+            status="success",
+            language=request.language or "pt-BR",
+            provider_id=request.provider_id or "mock_stt_adapter",
+        )
+
+
+class LowConfidenceSttAdapter:
+    def transcribe(self, request) -> TranscriptResult:
+        return TranscriptResult(
+            text="Ainda não é a gente.", confidence=0.10407962094303848,
+            status="success", language="pt-BR",
+            provider_id=request.provider_id or "mock_stt_adapter",
+        )
+
+
+class ProjectRetrievalSttAdapter:
+    def transcribe(self, request) -> TranscriptResult:
+        return TranscriptResult(
+            text="pesquise nos arquivos desse projeto onde definimos fencing",
+            status="success",
+            language=request.language or "pt-BR",
+            provider_id=request.provider_id or "mock_stt_adapter",
         )
 
 
@@ -716,12 +789,48 @@ def test_frontend_voice_transcription_uses_real_stt_boundary_without_sending_mes
     payload = transcription.json()
     assert payload["schema"] == "frontend-v2-voice-transcription-v1"
     assert payload["transcript"] == "mock transcript"
+    assert payload["retrieval_intent"]["intent"] == "none"
+    assert payload["retrieval_intent"]["source"] == "none"
     assert payload["conversation_id"] == conversation_id
     assert runtime.voice.get_recording(payload["recording_id"]).audio_ref is None
     assert client.get(
         f"/api/frontend/conversations/{conversation_id}/history",
         params={"workspace_id": "default", "project_id": "project-a", "session_id": "session-a"},
     ).json()["messages"] == []
+
+
+def test_frontend_voice_transcription_reports_explicit_project_retrieval_intent(
+    tmp_path: Path,
+) -> None:
+    with patch.dict("os.environ", {"SYNAPSE_DEV_MODE": "true"}):
+        runtime = runtime_at(tmp_path / "data", clean=True)
+    runtime.voice.update_settings(stt_provider_id="mock_stt_adapter", store_raw_audio=False)
+    runtime.speech_adapters._runtime_adapters["mock_stt_adapter"] = ProjectRetrievalSttAdapter()
+    client = client_for(runtime)
+    create_ready_primary(client, runtime)
+    opened = client.post(
+        "/api/frontend/conversations/open",
+        json={"workspace_id": "default", "project_id": "project-a", "session_id": "session-a"},
+    )
+    conversation_id = opened.json()["conversation"]["conversation_id"]
+
+    transcription = client.post(
+        "/api/frontend/voice/transcriptions",
+        json={
+            "audio_base64": valid_wav_base64(),
+            "audio_format": "audio/wav",
+            "workspace_id": "default",
+            "project_id": "project-a",
+            "session_id": "session-a",
+            "conversation_id": conversation_id,
+        },
+    )
+
+    assert transcription.status_code == 200, transcription.text
+    intent = transcription.json()["retrieval_intent"]
+    assert intent["intent"] == "project_knowledge"
+    assert intent["source"] == "voice_explicit"
+    assert intent["query"] == "onde definimos fencing"
 
 
 def test_frontend_voice_transcription_then_text_send_uses_same_conversation(
@@ -777,6 +886,7 @@ def test_frontend_voice_conversation_turn_persists_text_and_returns_tts_audio(
             "audio_format": "audio/wav",
             "workspace_id": "default",
             "conversation_id": conversation_id,
+            "language": "pt-BR",
             "idempotency_key": "voice-turn-1",
         },
     )
@@ -789,7 +899,11 @@ def test_frontend_voice_conversation_turn_persists_text_and_returns_tts_audio(
     assert payload["tts"]["status"] == "completed"
     assert payload["tts"]["audio_base64"]
     assert [message["role"] for message in payload["messages"]] == ["user", "assistant"]
-    assert runtime.voice.get_recording(payload["recording_id"]).audio_ref is None
+    recording = runtime.voice.get_recording(payload["recording_id"])
+    assert recording.audio_ref is None
+    assert recording.language == "pt-BR"
+    assert recording.metadata["vad_filter"] is False
+    assert recording.metadata["frontend_vad"] is True
 
 
 def test_frontend_voice_conversation_tts_failure_preserves_text_history(
@@ -820,9 +934,102 @@ def test_frontend_voice_conversation_tts_failure_preserves_text_history(
         params={"workspace_id": "default"},
     )
 
-    assert failed.status_code == 422
-    assert "tts_unavailable" in failed.text
+    assert failed.status_code == 200, failed.text
+    payload = failed.json()
+    assert payload["tts"]["status"] == "failed"
+    assert payload["tts"]["audio_base64"] is None
+    assert payload["degraded"][0]["code"] == "tts_unavailable"
     assert [message["role"] for message in history.json()["messages"]] == ["user", "assistant"]
+
+
+@pytest.mark.parametrize("adapter,expected_status", [
+    (RepeatedEchoSttAdapter(), "ignored_echo"),
+    (LowConfidenceSttAdapter(), "needs_repetition"),
+])
+def test_frontend_voice_conversation_ignores_repeated_audio_echo_before_chat_history(
+    tmp_path: Path,
+    adapter,
+    expected_status,
+) -> None:
+    with patch.dict("os.environ", {"SYNAPSE_DEV_MODE": "true"}):
+        runtime = runtime_at(tmp_path / "data", clean=True)
+    runtime.voice.update_settings(stt_provider_id="mock_stt_adapter", tts_provider_id="mock_tts")
+    runtime.speech_adapters._runtime_adapters["mock_stt_adapter"] = adapter
+    runtime.speech_adapters._runtime_adapters["mock_tts_adapter"] = ControlledTtsAdapter()
+    client = client_for(runtime)
+    create_ready_primary(client, runtime)
+    opened = client.post("/api/frontend/conversations/open", json={"workspace_id": "default"})
+    conversation_id = opened.json()["conversation"]["conversation_id"]
+
+    ignored = client.post(
+        "/api/frontend/voice/conversation-turn",
+        json={
+            "audio_base64": valid_wav_base64(),
+            "audio_format": "audio/wav",
+            "workspace_id": "default",
+            "conversation_id": conversation_id,
+            "language": "pt-BR",
+            "idempotency_key": "voice-turn-echo-loop",
+        },
+    )
+    history = client.get(
+        f"/api/frontend/conversations/{conversation_id}/history",
+        params={"workspace_id": "default"},
+    )
+
+    assert ignored.status_code == 200, ignored.text
+    payload = ignored.json()
+    assert payload["status"] == expected_status
+    assert payload["response"] == ""
+    assert payload["tts"]["status"] == "skipped"
+    assert payload["tts"]["audio_base64"] is None
+    assert payload["degraded"] == []
+    assert payload["messages"] == []
+    assert history.json()["messages"] == []
+
+
+def test_frontend_voice_conversation_replaces_error_session_before_recording(
+    tmp_path: Path,
+) -> None:
+    with patch.dict("os.environ", {"SYNAPSE_DEV_MODE": "true"}):
+        runtime = runtime_at(tmp_path / "data", clean=True)
+    runtime.voice.update_settings(
+        stt_provider_id="mock_stt_adapter",
+        tts_provider_id="mock_tts",
+        store_raw_audio=False,
+    )
+    runtime.speech_adapters._runtime_adapters["mock_tts_adapter"] = ControlledTtsAdapter()
+    client = client_for(runtime)
+    create_ready_primary(client, runtime)
+    opened = client.post("/api/frontend/conversations/open", json={"workspace_id": "default"})
+    conversation_id = opened.json()["conversation"]["conversation_id"]
+    broken_session = runtime.voice.create_session(
+        agent_id="synapse",
+        conversation_id=conversation_id,
+        metadata={"source": "frontend_v2_conversation_mode"},
+    )
+    runtime.voice.transition_session(broken_session.session_id, "listening")
+    runtime.voice.transition_session(broken_session.session_id, "recording")
+    runtime.voice.transition_session(broken_session.session_id, "processing")
+    runtime.voice.transition_session(broken_session.session_id, "error", error="previous_failure")
+
+    turn = client.post(
+        "/api/frontend/voice/conversation-turn",
+        json={
+            "audio_base64": valid_wav_base64(),
+            "audio_format": "audio/wav",
+            "workspace_id": "default",
+            "conversation_id": conversation_id,
+            "voice_session_id": broken_session.session_id,
+            "idempotency_key": "voice-turn-after-error",
+        },
+    )
+
+    assert turn.status_code == 200, turn.text
+    payload = turn.json()
+    assert payload["voice_session_id"] != broken_session.session_id
+    assert runtime.voice.get_session(broken_session.session_id).status == "error"
+    assert [message["role"] for message in payload["messages"]] == ["user", "assistant"]
 
 
 def test_frontend_voice_transcription_rejects_empty_invalid_scope_and_unavailable_stt(
@@ -923,7 +1130,81 @@ def test_frontend_attachment_staging_registers_backend_owned_identity(tmp_path: 
     assert attachment["filename"] == "note.txt"
     assert attachment["checksum"] == hashlib.sha256(content).hexdigest()
     assert attachment["storage_ref"].startswith(f"conversations/{conversation_id}/attachments/storage/")
+    assert payload["knowledge_ingestion"]["status"] == "missing_project_scope"
     assert str(tmp_path) not in response.text
+
+
+def test_frontend_attachment_staging_accepts_safe_unicode_filename(tmp_path: Path) -> None:
+    runtime = runtime_at(tmp_path / "data", clean=True)
+    client = client_for(runtime)
+    create_ready_primary(client, runtime)
+    opened = client.post("/api/frontend/conversations/open", json={"workspace_id": "default"})
+    conversation_id = opened.json()["conversation"]["conversation_id"]
+    content = "Project Files smoke evidence 2026".encode("utf-8")
+
+    response = client.post(
+        f"/api/frontend/conversations/{conversation_id}/attachments/stage",
+        json={
+            "filename": "Arthur Santos Ahl - evidência.txt",
+            "mime_type": "text/plain",
+            "size": len(content),
+            "content_base64": base64.b64encode(content).decode("ascii"),
+            "workspace_id": "default",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["attachment"]["filename"] == "Arthur Santos Ahl - evidência.txt"
+
+
+def test_frontend_attachment_staging_rejects_path_like_unicode_filename() -> None:
+    try:
+        validate_frontend_attachment_metadata("folder:evidência.txt", "text/plain", 7)
+    except ValidationError as exc:
+        assert "attachment_invalid: unsupported filename" in str(exc)
+    else:
+        raise AssertionError("path-like attachment filename was accepted")
+
+
+def test_frontend_text_attachment_is_indexed_as_project_knowledge(tmp_path: Path) -> None:
+    runtime = runtime_at(tmp_path / "data", clean=True)
+    client = client_for(runtime)
+    create_ready_primary(client, runtime)
+    opened = client.post(
+        "/api/frontend/conversations/open",
+        json={"workspace_id": "default", "project_id": "project-a"},
+    )
+    conversation_id = opened.json()["conversation"]["conversation_id"]
+    content = b"briefing motor vector db para o projeto"
+
+    response = client.post(
+        f"/api/frontend/conversations/{conversation_id}/attachments/stage",
+        json={
+            "filename": "briefing.txt",
+            "mime_type": "text/plain",
+            "size": len(content),
+            "content_base64": base64.b64encode(content).decode("ascii"),
+            "workspace_id": "default",
+            "project_id": "project-a",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["knowledge_ingestion"]["status"] == "scheduled"
+    records = []
+    for _ in range(20):
+        records = [
+            item
+            for item in runtime.memory.list(runtime.context(), scope="knowledge")
+            if item.source.startswith("project_document:")
+        ]
+        if records:
+            break
+        time.sleep(0.05)
+    assert len(records) == 1
+    assert records[0].content == "briefing motor vector db para o projeto"
+    assert records[0].metadata["conversation_id"] == conversation_id
+    assert records[0].metadata["project_id"] == "project-a"
 
 
 def test_frontend_attachment_refs_follow_text_turn_and_history(tmp_path: Path) -> None:

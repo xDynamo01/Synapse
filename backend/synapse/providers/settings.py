@@ -54,6 +54,12 @@ PROVIDER_DEFAULTS: dict[str, dict[str, Any]] = {
         "storage_id": "lmstudio_local",
         "aliases": ("lmstudio_local",),
     },
+    "synapse_local": {
+        "name": "Synapse Local Models",
+        "kind": "local-filesystem",
+        "endpoint": "F:/SynapseRuntime/models",
+        "key": False,
+    },
     "ollama_local": {
         "name": "Ollama",
         "kind": "local",
@@ -237,7 +243,11 @@ class ProviderSettingsRuntime:
             record["enabled"] = enabled
         if endpoint is not None:
             endpoint = endpoint.strip()
-            if endpoint and not endpoint.startswith(("http://", "https://")):
+            if (
+                endpoint
+                and definition["kind"] != "local-filesystem"
+                and not endpoint.startswith(("http://", "https://"))
+            ):
                 raise ValidationError("Provider endpoint must use http:// or https://.")
             record["endpoint"] = endpoint
         if default_model is not None:

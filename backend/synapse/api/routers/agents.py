@@ -492,6 +492,7 @@ def _agent_profile(runtime: Any, agent_id: str) -> dict[str, Any]:
     return {
         "agent_id": agent.id,
         "display_name": agent.name,
+        "system_prompt": runtime.agents.personality(agent.id),
         "role": agent.role,
         "kind": agent.kind.value,
         "status": admin.status,

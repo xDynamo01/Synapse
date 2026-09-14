@@ -143,6 +143,41 @@ class DuplicateMemory(Memory):
         return [MemoryContextRead("mem-duplicate", "session", "hello", 10, None, 1, "manual")]
 
 
+class RecordingMemory(Memory):
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, list[str], int, dict | None]] = []
+
+    def retrieve(
+        self,
+        _permission_context,
+        query: str,
+        scopes: list[str],
+        _owner_ids: list[str],
+        limit: int,
+        filters: dict | None = None,
+    ) -> list[MemoryContextRead]:
+        self.calls.append((query, scopes, limit, filters))
+        return [
+            MemoryContextRead(
+                f"knowledge-{index}",
+                "knowledge",
+                f"selected evidence {index}",
+                10,
+                None,
+                index,
+                f"project_document:doc:v1:chunk{index}",
+                ["project_knowledge", "project:project-a"],
+                {
+                    "document_id": "doc",
+                    "version_id": "v1",
+                    "chunk_id": f"chunk{index}",
+                    "trusted_instruction": False,
+                },
+            )
+            for index in range(limit)
+        ]
+
+
 def make_runtime(
     tmp_path: Path,
     *,
@@ -253,6 +288,36 @@ def test_cross_source_deduplication_keeps_higher_priority_item(tmp_path: Path) -
     )
     assert "conversation_message:m1" in [item.id for item in result.items]
     assert "memory:mem-duplicate" not in [item.id for item in result.items]
+
+
+def test_project_knowledge_context_uses_selected_evidence_budget(tmp_path: Path) -> None:
+    memory = RecordingMemory()
+    result = make_runtime(tmp_path, memory=memory).build_context(
+        conversation_id="c1",
+        incoming_message="/project alpha",
+        permission_context=PermissionContext(actor_id="owner"),
+        options={
+            "include_project_knowledge": True,
+            "retrieval_query": "alpha",
+            "retrieval_intent": {
+                "allowed": True,
+                "project_id": "project-a",
+            },
+        },
+        persist_snapshot=False,
+    )
+
+    assert memory.calls == [
+        (
+            "alpha",
+            ["system", "user", "agent", "conversation", "session", "task", "mission", "knowledge"],
+            5,
+            {"tags": ["project_knowledge", "project:project-a"]},
+        )
+    ]
+    knowledge_items = [item for item in result.items if item.source_type == "memory" and item.scope == "knowledge"]
+    assert len(knowledge_items) == 5
+    assert all(item.metadata["trusted_instruction"] is False for item in knowledge_items)
 
 
 def test_invalid_port_result_is_rejected(tmp_path: Path) -> None:

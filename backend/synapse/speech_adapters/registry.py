@@ -120,6 +120,22 @@ def builtin_speech_adapter_registry() -> SpeechAdapterRegistry:
             metadata={"mock": True, "executes_real_provider": False},
         ),
         SpeechAdapterManifest(
+            adapter_id="kokoro_tts_adapter",
+            provider_id="kokoro",
+            adapter_type="tts",
+            name="Kokoro · Dora (pt-BR)",
+            description="Offline CPU speech with the original Dora voice.",
+            version="1.0.0",
+            supported_languages=["pt-BR"],
+            supports_streaming=False,
+            supports_file_input=False,
+            supports_realtime=False,
+            requires_gpu=False,
+            requires_network=False,
+            metadata={"adapter_factory": "kokoro_tts", "engine": "kokoro",
+                      "execution_boundary_required": True, "executes_real_provider": False},
+        ),
+        SpeechAdapterManifest(
             adapter_id="piper_tts_adapter",
             provider_id="piper",
             adapter_type="tts",
@@ -189,6 +205,9 @@ def builtin_speech_adapter_registry() -> SpeechAdapterRegistry:
         registry.register_capability(
             SpeechAdapterCapability("mock_voice_analysis_adapter", "voice_analysis", 100, True)
         )
+    registry.register_capability(
+        SpeechAdapterCapability("kokoro_tts_adapter", "text_to_speech", 5, True)
+    )
     registry.register_capability(
         SpeechAdapterCapability("piper_tts_adapter", "text_to_speech", 10, True)
     )

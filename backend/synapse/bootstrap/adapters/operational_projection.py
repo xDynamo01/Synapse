@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from typing import Protocol
 
 from synapse.core.events import Event, EventBus
 from synapse.operational_projection import (
@@ -13,6 +14,11 @@ from synapse.operational_projection import (
     SourceAdaptationDisposition,
     adapt_source_record,
 )
+from synapse.project_governance.errors import ProjectNotFound
+
+
+class ProjectScopeRegistry(Protocol):
+    def get(self, project_id: str) -> object: ...
 
 
 class OperationalProjectionRuntime:
@@ -70,6 +76,15 @@ class OperationalProjectionRuntime:
             "corrupt_event_records": self._corrupt_event_records,
         }
 
+    def scope_allowed(self, scope_id: str, projects: ProjectScopeRegistry) -> bool:
+        if scope_id.startswith("conversation:") and len(scope_id) > len("conversation:"):
+            return True
+        try:
+            projects.get(scope_id)
+        except ProjectNotFound:
+            return False
+        return True
+
     def _degraded_snapshot(self, snapshot: ProjectActivitySnapshot) -> ProjectActivitySnapshot:
         if self._corrupt_event_records == 0:
             return snapshot
@@ -82,6 +97,10 @@ class OperationalProjectionRuntime:
             ProjectActivityFeed(project_id, max_retained_events=self._max_retained_events),
         )
 def _project_id(event: Event) -> str | None:
+    if event.type.startswith(("local_chat.", "lmstudio.native.")):
+        conversation_id = event.payload.get("conversation_id")
+        if isinstance(conversation_id, str) and conversation_id.strip():
+            return f"conversation:{conversation_id}"
     value = event.payload.get("project_id")
     if isinstance(value, str) and value.strip():
         return value

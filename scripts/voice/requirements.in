@@ -1,0 +1,2 @@
+# Isolated offline TTS runtime; do not add these dependencies to the sidecar.
+kokoro-onnx==0.6.1

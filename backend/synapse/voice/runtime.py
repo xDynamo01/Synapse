@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import logging
 import os
+import re
 from binascii import Error as BinasciiError
 from dataclasses import asdict, replace
 from datetime import UTC, datetime
@@ -23,6 +25,7 @@ from synapse.core.package_resources import (
 from synapse.core.permissions import PermissionContext
 from synapse.core.serialization import dump_structured_file, load_structured_file
 from synapse.providers.runtime import ProviderRuntime
+from synapse.retrieval_intent import detect_voice_retrieval_intent
 from synapse.speech_adapters.runtime import SpeechAdapterRuntime
 from synapse.voice.models import (
     VOICE_MODEL_PRESETS,
@@ -54,6 +57,8 @@ from synapse.voice.perception import (
 from synapse.voice.persistence_models import VoiceRecordDraft, canonical_json
 from synapse.voice.sqlite_persistence import SQLiteVoiceJournal
 from synapse.voice.vad import WebRTCVADProvider
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from synapse.chat.runtime import ChatRuntime
@@ -621,7 +626,9 @@ class VoiceRuntime:
         conversation_id: str | None = None,
         agent_id: str | None = None,
         audio_format: str = "audio/webm",
+        language: str | None = None,
         recording_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> VoiceRecording:
         if session_id:
             self.get_session(session_id)
@@ -632,7 +639,9 @@ class VoiceRuntime:
             conversation_id=conversation_id,
             agent_id=agent_id,
             audio_format=audio_format,
+            language=(language or self.get_settings().language).strip() or "pt-BR",
             status="recording",
+            metadata=metadata or {},
         )
         self._write_recording(recording)
         if session_id:
@@ -796,6 +805,7 @@ class VoiceRuntime:
             metadata={
                 "stt_device": self.get_settings().stt_device,
                 "stt_compute_type": self.get_settings().stt_compute_type,
+                **recording.metadata,
             },
         )
         analysis = self.speech_adapters.analyze(request)
@@ -899,13 +909,16 @@ class VoiceRuntime:
         recording_id: str,
         *,
         idempotency_key: str,
+        model_provider_id: str | None = None,
+        model_name: str | None = None,
     ) -> VoiceConversationTurnResult:
         session = self.get_session(session_id)
         if session.status == "recording":
             session = self.transition_session(session_id, "processing")
         if session.status != "processing":
             raise ValidationError("Voice conversation turn requires processing state.")
-        existing_path = self._turns_root() / f"{idempotency_key}.yaml"
+        turn_receipt_name = hashlib.sha256(idempotency_key.encode("utf-8")).hexdigest()
+        existing_path = self._turns_root() / f"{turn_receipt_name}.yaml"
         existing = load_structured_file(existing_path)
         if existing:
             return VoiceConversationTurnResult(**existing)
@@ -913,9 +926,65 @@ class VoiceRuntime:
         if message.status != "success" or not message.text.strip():
             self.transition_session(session_id, "error", error=message.status)
             raise ValidationError(f"Voice transcription did not produce speech: {message.status}")
+        # Provider confidence is a heuristic, not a calibrated probability.
+        # Reject only clearly weak supplied scores; absent scores remain unknown.
+        low_confidence = message.confidence is not None and message.confidence < 0.2
+        if low_confidence or _is_likely_repeated_transcription_echo(message.text):
+            rejection_reason = "low_transcription_confidence" if low_confidence else "likely_repeated_transcription_echo"
+            utterance = VoiceUtterance(
+                session_id=session_id,
+                text="[ignored uncertain transcription]" if low_confidence else "[ignored repeated audio echo]",
+                state="cancelled",
+                metadata={"reason": rejection_reason},
+            )
+            self._write_utterance(utterance)
+            synthesis_id = f"synthesis-{utterance.utterance_id}"
+            self._write_synthesis(
+                VoiceSynthesis(
+                    synthesis_id=synthesis_id,
+                    session_id=session_id,
+                    utterance_id=utterance.utterance_id,
+                    message_id=None,
+                    provider_id=None,
+                    voice_id=None,
+                    status="skipped",
+                    text_checksum=hashlib.sha256(b"").hexdigest(),
+                    metadata={"reason": rejection_reason},
+                )
+            )
+            self.transition_session(session_id, "thinking")
+            speaking = self.transition_session(session_id, "speaking")
+            listening = self.transition_session(speaking.session_id, "listening")
+            result = VoiceConversationTurnResult(
+                voice_session_id=session_id,
+                recording_id=recording_id,
+                transcript_id=message.transcript_id,
+                utterance_id=utterance.utterance_id,
+                conversation_id=session.conversation_id,
+                user_message_id=None,
+                assistant_message_id=None,
+                synthesis_id=synthesis_id,
+                correlation_id=None,
+                transcript=message.text,
+                response="",
+                status="needs_repetition" if low_confidence else "ignored_echo",
+            )
+            dump_structured_file(existing_path, asdict(result))
+            self.events.emit(
+                "voice.conversation.transcription_rejected" if low_confidence else "voice.conversation.echo_ignored",
+                "voice",
+                {
+                    "voice_session_id": listening.session_id,
+                    "recording_id": recording_id,
+                    "transcript_id": message.transcript_id,
+                },
+            )
+            return result
         if self.chat is None:
             self.transition_session(session_id, "error", error="chat_unavailable")
             raise ValidationError("Chat runtime is unavailable.")
+        retrieval_directive = detect_voice_retrieval_intent(message.text)
+        project_id = self._conversation_project_id(session.conversation_id)
         self.transition_session(session_id, "thinking")
         chat_result = self.chat.submit_turn(
             self._permission_context(),
@@ -923,17 +992,26 @@ class VoiceRuntime:
             conversation_id=session.conversation_id,
             target_agent_id=session.agent_id,
             idempotency_key=idempotency_key,
+            project_id=project_id,
+            retrieval_intent=retrieval_directive,
+            model_provider_id=model_provider_id,
+            model_name=model_name,
         )
         response = str(chat_result.response)
         conversation_id = getattr(chat_result, "conversation_id", None) or session.conversation_id
         user_message_id, assistant_message_id = self._conversation_message_ids(conversation_id)
         utterance = self.queue_utterance(session_id, response)
-        synthesis = self.synthesize_utterance(
-            session_id,
-            utterance.utterance_id,
-            response,
-            message_id=assistant_message_id,
-        )
+        try:
+            synthesis = self.synthesize_utterance(
+                session_id,
+                utterance.utterance_id,
+                response,
+                message_id=assistant_message_id,
+            )
+            turn_status = "completed"
+        except Exception:
+            synthesis = self.get_synthesis(f"synthesis-{utterance.utterance_id}")
+            turn_status = "completed_without_audio"
         speaking = self.transition_session(session_id, "speaking")
         self.transition_session(speaking.session_id, "listening")
         result = VoiceConversationTurnResult(
@@ -948,7 +1026,7 @@ class VoiceRuntime:
             correlation_id=getattr(getattr(chat_result, "message", None), "correlation_id", None),
             transcript=message.text,
             response=response,
-            status="completed",
+            status=turn_status,
         )
         dump_structured_file(existing_path, asdict(result))
         self.events.emit(
@@ -964,6 +1042,16 @@ class VoiceRuntime:
             },
         )
         return result
+
+    def _conversation_project_id(self, conversation_id: str | None) -> str | None:
+        if not conversation_id or self.chat is None or self.chat.conversations is None:
+            return None
+        try:
+            conversation = self.chat.conversations.get_conversation(conversation_id)
+        except Exception:
+            return None
+        value = conversation.metadata.get("project_id")
+        return str(value) if value else None
 
     def synthesize_utterance(
         self,
@@ -1001,25 +1089,59 @@ class VoiceRuntime:
                 updated_at=_now(),
             )
         )
+        settings = self.get_settings()
+        tts_selection = self.resolve_tts_provider()
+        provider_id = (
+            tts_selection.provider_id
+            if tts_selection.state != "unavailable" and tts_selection.provider_id
+            else None
+        )
         try:
             output = self.speech_adapters.synthesize(
                 AudioOutputRequest(
                     session_id=session_id,
                     text=text,
-                    provider_id=self.get_settings().tts_provider_id,
-                    voice_id=self.get_settings().default_tts_voice,
-                    language=self.get_settings().language,
+                    provider_id=provider_id,
+                    voice_id=settings.default_tts_voice,
+                    language=settings.language,
                 )
             )
+            logger.info(
+                "voice_tts_diag:synthesize_returned session_id=%s synthesis_id=%s provider_id=%s audio_base64_chars=%s",
+                session_id,
+                synthesis_id,
+                output.provider_id,
+                len(output.audio_base64 or ""),
+            )
         except Exception as exc:
+            logger.exception(
+                "voice_tts_diag:synthesize_error session_id=%s synthesis_id=%s",
+                session_id,
+                synthesis_id,
+            )
             failed = replace(created, status="failed", error=str(exc), revision=2)
             self._write_synthesis(failed)
             raise
         audio_reference = None
         if output.audio_base64:
             audio_path = self._syntheses_root() / f"{synthesis_id}.wav"
-            audio_path.write_bytes(base64.b64decode(output.audio_base64))
+            audio_bytes = base64.b64decode(output.audio_base64)
+            audio_path.write_bytes(audio_bytes)
             audio_reference = f"voice/syntheses/{audio_path.name}"
+            logger.info(
+                "voice_tts_diag:synthesis_saved session_id=%s synthesis_id=%s path=%s bytes=%s",
+                session_id,
+                synthesis_id,
+                audio_path,
+                len(audio_bytes),
+            )
+        else:
+            logger.warning(
+                "voice_tts_diag:synthesis_empty session_id=%s synthesis_id=%s provider_id=%s",
+                session_id,
+                synthesis_id,
+                output.provider_id,
+            )
         completed = replace(
             created,
             provider_id=output.provider_id,
@@ -1147,11 +1269,30 @@ class VoiceRuntime:
     def read_synthesis_audio_base64(self, synthesis_id: str) -> str | None:
         synthesis = self.get_synthesis(synthesis_id)
         if not synthesis.audio_reference:
+            logger.warning(
+                "voice_tts_diag:synthesis_read_missing_reference synthesis_id=%s status=%s",
+                synthesis_id,
+                synthesis.status,
+            )
             return None
         path = self.data_dir.resolve(synthesis.audio_reference)
         if not path.is_file():
+            logger.error(
+                "voice_tts_diag:synthesis_read_missing_file synthesis_id=%s path=%s",
+                synthesis_id,
+                path,
+            )
             raise ValidationError("Synthesized audio is unavailable.")
-        return base64.b64encode(path.read_bytes()).decode("ascii")
+        audio_bytes = path.read_bytes()
+        audio_base64 = base64.b64encode(audio_bytes).decode("ascii")
+        logger.info(
+            "voice_tts_diag:synthesis_read_success synthesis_id=%s path=%s bytes=%s audio_base64_chars=%s",
+            synthesis_id,
+            path,
+            len(audio_bytes),
+            len(audio_base64),
+        )
+        return audio_base64
 
     def list_syntheses(self, session_id: str | None = None) -> list[VoiceSynthesis]:
         items = [
@@ -1756,6 +1897,11 @@ class VoiceRuntime:
     def _resolve_voice_asset_reference(self, reference: str, pack_root: Path) -> Path:
         if not reference:
             return pack_root / ""
+        if reference == "voice/models/kokoro/voices-v1.0.bin":
+            settings = load_structured_file(self.data_dir.resolve("voice/kokoro-runtime.json"))
+            root = settings.get("root")
+            if isinstance(root, str) and root:
+                return Path(root).resolve() / "models/kokoro/voices-v1.0.bin"
         packaged = resolve_package_resource_reference(reference, "voice")
         if packaged is not None:
             return packaged
@@ -1967,6 +2113,18 @@ class VoiceRuntime:
 
     def _utterance_path(self, utterance_id: str):
         return self._utterances_root() / f"{utterance_id}.yaml"
+
+
+def _is_likely_repeated_transcription_echo(text: str) -> bool:
+    words = re.sub(r"[^\w\s]", " ", text.lower(), flags=re.UNICODE).split()
+    if len(words) < 16:
+        return False
+    trigrams: dict[str, int] = {}
+    for index in range(0, len(words) - 2):
+        key = " ".join(words[index : index + 3])
+        trigrams[key] = trigrams.get(key, 0) + 1
+    repeated_que_ratio = sum(1 for word in words if word in {"que", "é", "e"}) / len(words)
+    return (max(trigrams.values()) if trigrams else 0) >= 4 or repeated_que_ratio > 0.72
 
 
 def _now() -> str:

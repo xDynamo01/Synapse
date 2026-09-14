@@ -32,6 +32,8 @@ const markers = makeMarkers();
 
 export function Presence({ scene, theme = "synapse" }: PresenceProps): React.ReactElement {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const sceneRef = useRef(scene);
+  useEffect(() => { sceneRef.current = scene; }, [scene]);
   const className = useMemo(() => `presence canvas ${scene.state}`, [scene.state]);
 
   useEffect(() => {
@@ -49,6 +51,8 @@ export function Presence({ scene, theme = "synapse" }: PresenceProps): React.Rea
     let width = 0;
     let height = 0;
     let deviceScale = 1;
+    let envelope = 0;
+    let previousTime = 0;
 
     const resize = () => {
       const rect = canvas.getBoundingClientRect();
@@ -68,7 +72,13 @@ export function Presence({ scene, theme = "synapse" }: PresenceProps): React.Rea
       if (!running) {
         return;
       }
-      drawPresence(context, width, height, timestamp / 1000, scene, canvas);
+      const current = sceneRef.current;
+      const elapsed = Math.min(0.1, (timestamp - previousTime) / 1000);
+      previousTime = timestamp;
+      const target = current.state === "speaking" ? current.amplitude : 0;
+      // Fast attack and softer release follow syllables without jumping at each UI update.
+      envelope += (target - envelope) * (1 - Math.exp(-elapsed / (target > envelope ? 0.035 : 0.14)));
+      drawPresence(context, width, height, timestamp / 1000, { ...current, amplitude: envelope }, canvas);
       frame = requestAnimationFrame(render);
     };
     frame = requestAnimationFrame(render);
@@ -78,15 +88,11 @@ export function Presence({ scene, theme = "synapse" }: PresenceProps): React.Rea
       cancelAnimationFrame(frame);
       resizeObserver.disconnect();
     };
-  }, [scene]);
+  }, []);
 
   return (
     <section className={className} aria-label={scene.label} data-theme={theme}>
       <canvas ref={canvasRef} className="presence-canvas" aria-hidden="true" />
-      <div className="presence-identity" aria-hidden="true">
-        <strong>SYNAPSE</strong>
-        <span>• {presenceDisplayStatus(scene.state)} •</span>
-      </div>
       <p className="presence-accessible-state">{scene.label}</p>
     </section>
   );
@@ -103,9 +109,9 @@ function drawPresence(
   const size = Math.min(width, height);
   const centerX = width / 2;
   const centerY = height / 2 - size * 0.035;
-  const radius = size * 0.44;
-  const energy = scene.state === "speaking" ? 1.35 : scene.state === "processing" || scene.state === "listening" ? 1.12 : 0.82;
   const amplitude = Math.max(0, Math.min(scene.amplitude ?? 0, 1));
+  const radius = size * 0.44 * (1 + amplitude * 0.045);
+  const energy = scene.state === "speaking" ? 0.95 + amplitude * 1.1 : scene.state === "processing" || scene.state === "listening" ? 1.12 : 0.82;
   const palette = paletteFromCanvas(canvas);
 
   context.clearRect(0, 0, width, height);
@@ -133,7 +139,7 @@ function drawCore(
   energy: number,
   amplitude: number
 ): void {
-  const breathe = 1 + Math.sin(time * 1.3) * 0.018 + amplitude * 0.025;
+  const breathe = 1 + Math.sin(time * 1.3) * 0.018 + amplitude * 0.65;
   glow(context, centerX, centerY, radius * 0.018, palette.white, 1);
   glow(context, centerX, centerY, radius * 0.05 * breathe, palette.bright, 0.72 * energy);
   glow(context, centerX, centerY, radius * 0.105 * breathe, palette.primary, 0.34 * energy);
@@ -191,7 +197,7 @@ function drawTechnicalRing(
     const angle = (index / tickCount) * Math.PI * 2 + time * 0.17;
     const variance = 0.72 + ((index * 37) % 17) / 56;
     const inner = ringRadius * (0.94 + variance * 0.015);
-    const outer = ringRadius * (1.08 + variance * 0.04 + amplitude * 0.025);
+    const outer = ringRadius * (1.08 + variance * 0.04 + amplitude * (0.15 + variance * 0.28));
     context.beginPath();
     context.strokeStyle = rgba(index % 9 === 0 ? palette.bright : palette.primary, 0.52 * variance * energy);
     context.lineWidth = index % 11 === 0 ? 1.55 : 1.05;
@@ -449,14 +455,4 @@ function mix(a: Rgb, b: Rgb, amount: number): Rgb {
 
 function rgba(color: Rgb, alpha: number): string {
   return `rgba(${color.r}, ${color.g}, ${color.b}, ${Math.max(0, Math.min(alpha, 1))})`;
-}
-
-function presenceDisplayStatus(state: PresenceSceneState["state"]): string {
-  if (state === "speaking") {
-    return "SPEAKING";
-  }
-  if (state === "processing" || state === "listening" || state === "transcribing") {
-    return "PROCESSING";
-  }
-  return "IDLE";
 }

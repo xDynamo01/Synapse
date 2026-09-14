@@ -202,7 +202,9 @@ def test_openapi_surface_remains_at_frozen_baseline() -> None:
     # Slice 4 cancellation, Slice 5 transcription, Slice 6 voice turns and
     # Slice 13 governed attachment staging and Slice 15.7 voice-pack discovery,
     # without generic IPC, visual state or a second conversation engine.
-    assert len(schema["paths"]) == 493
-    assert len(operations) == 546
-    assert len(schema["components"]["schemas"]) == 132
+    # Primary MoM, Synapse Local model status, and Project Knowledge add
+    # canonical, explicitly registered surfaces without generic IPC expansion.
+    assert len(schema["paths"]) == 506
+    assert len(operations) == 561
+    assert len(schema["components"]["schemas"]) == 139
     assert len(operation_ids) == len(set(operation_ids))

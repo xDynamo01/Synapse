@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from synapse.agent_tool_calling.runtime import AgentToolCallingRuntime
+from synapse.bootstrap.adapters.agent_memory_tools import register_agent_memory_tools
 from synapse.bootstrap.adapters.context_fusion import (
     ConversationContextAdapter,
     MemoryContextAdapter,
@@ -135,6 +136,7 @@ class IntegrationFeatureBuilder:
             d.data_dir, d.events, registry=p.tools, permission_bridge=au.tool_permission_bridge
         )
         a.tool_router.bind(tool_runtime)
+        register_agent_memory_tools(tool_runtime, p.memory)
         register_seed_runtime_tools(
             tool_runtime,
             health=health,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import logging
 import os
 import shutil
 import wave
@@ -26,6 +27,8 @@ from synapse.speech_adapters.execution import (
     SpeechExecutionStdin,
 )
 from synapse.speech_adapters.models import SpeechAdapterHealth, SpeechAdapterManifest
+
+logger = logging.getLogger(__name__)
 
 
 class PiperTextToSpeechAdapter:
@@ -105,6 +108,12 @@ class PiperTextToSpeechAdapter:
             raise ValidationError("Piper output artifact path is already occupied.")
         output_path.touch(exist_ok=False)
         started = perf_counter()
+        logger.info(
+            "voice_tts_diag:piper_start session_id=%s voice_id=%s output_path=%s",
+            request.session_id,
+            request.voice_id,
+            output_path,
+        )
         try:
             stdin = SpeechExecutionStdin(
                 reference=f"transient://voice-text/{request.session_id}",
@@ -148,14 +157,31 @@ class PiperTextToSpeechAdapter:
             duration_ms, sample_rate = _wav_metadata(output_path)
             if duration_ms is None:
                 raise ValidationError("Piper produced an invalid WAV output.")
+            audio_base64 = base64.b64encode(audio_bytes).decode("ascii")
+            logger.info(
+                "voice_tts_diag:piper_success session_id=%s wav_bytes=%s audio_base64_chars=%s duration_ms=%s sample_rate=%s",
+                request.session_id,
+                len(audio_bytes),
+                len(audio_base64),
+                duration_ms,
+                sample_rate,
+            )
+        except Exception:
+            logger.exception(
+                "voice_tts_diag:piper_error session_id=%s voice_id=%s output_path=%s",
+                request.session_id,
+                request.voice_id,
+                output_path,
+            )
+            raise
         finally:
             output_path.unlink(missing_ok=True)
 
         return TextToSpeechResult(
             output_ref=f"inline://tts/{request.session_id}",
             provider_id=self._manifest.provider_id,
-            voice_id=request.voice_id or self._voice_id_for_model(model) or model.stem,
-            audio_base64=base64.b64encode(audio_bytes).decode("ascii"),
+            voice_id=self._voice_id_for_model(model) or request.voice_id or model.stem,
+            audio_base64=audio_base64,
             audio_format="audio/wav",
             duration_ms=duration_ms,
             latency_ms=int((perf_counter() - started) * 1000),
@@ -205,6 +231,11 @@ class PiperTextToSpeechAdapter:
             voice_pack_model = self._voice_pack_model(str(configured))
             if voice_pack_model is not None:
                 return voice_pack_model
+            default_voice = self._default_voice_pack_model()
+            if default_voice and str(configured) != default_voice:
+                voice_pack_model = self._voice_pack_model(default_voice)
+                if voice_pack_model is not None:
+                    return voice_pack_model
         if not configured:
             return None
         path = Path(str(configured)).expanduser()
@@ -264,7 +295,8 @@ class PiperTextToSpeechAdapter:
         paths: list[Path] = []
         for root in roots:
             if root.exists():
-                paths.extend(sorted(root.glob("*/voice-pack.json")))
+                paths.extend(path for path in sorted(root.glob("*/voice-pack.json"))
+                             if load_structured_file(path).get("provider") == "piper")
         return tuple(paths)
 
     def _resolve_voice_asset_reference(self, reference: str, pack_root: Path) -> Path:

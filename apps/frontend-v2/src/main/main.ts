@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { BackendSidecarSupervisor } from "./sidecar.js";
 
 app.setName("Synapse");
+app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
 
 const currentFile = fileURLToPath(import.meta.url);
 const currentDir = path.dirname(currentFile);

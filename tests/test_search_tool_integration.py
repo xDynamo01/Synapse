@@ -86,6 +86,12 @@ def _result() -> tuple[object, DeduplicatedSearchViewV1]:
                     "title": "Source title",
                     "content": "Provider supplied snippet",
                     "publishedDate": "2026-08-11T10:00:00Z",
+                },
+                {
+                    "url": "https://example.com/second",
+                    "title": "Second title",
+                    "content": "Second provider snippet",
+                    "publishedDate": "2026-08-10T10:00:00Z",
                 }
             ]
         },
@@ -169,8 +175,9 @@ def test_normalized_tool_projection_keeps_snippet_distinct_from_content_and_evid
         SearchConsumerExecution(SearchConsumerStatus.RESULTS, result, view)  # type: ignore[arg-type]
     )
     output = SearchToolConsumer(execution).search(
-        "researcher", "agent", {"query": "one query"}
+        "researcher", "agent", {"query": "one query", "result_limit": 1}
     )
+    assert len(output["results"]) == 1  # type: ignore[arg-type]
     item = output["results"][0]  # type: ignore[index]
     assert item["provider_snippet"] == "Provider supplied snippet"
     assert item["retrieved_content"] is None
