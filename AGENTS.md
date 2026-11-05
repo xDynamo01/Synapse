@@ -48,6 +48,18 @@ estado preexistente do worktree.
 O backend global permanece **NOT READY**. Conclusão local de um bounded context não
 torna o backend pronto. Não ative production wiring sem tarefa explícita.
 
+## Skills de engenharia
+
+- O catálogo e as adaptações aprovadas ficam em
+  [docs/engineering/codex-skills.md](docs/engineering/codex-skills.md).
+- Skills em `.agents/skills/` orientam o Codex; skills do runtime em
+  `backend/synapse/skills/` são capacidades governadas do produto e não se
+  substituem mutuamente.
+- Skill externa não concede permissão adicional, não substitui o fluxo
+  **RFC -> Plan -> Mission** e nunca autoriza por si só dependência, commit,
+  branch, tag, push, produção ou mudança de contrato.
+- Em conflito, prevalecem este arquivo, o `AGENTS.md` mais próximo e `.agent/`.
+
 ## Políticas especializadas
 
 - [Autonomia baseada em risco](.agent/AUTONOMY.md)
