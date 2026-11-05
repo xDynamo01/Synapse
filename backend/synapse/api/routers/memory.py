@@ -12,6 +12,11 @@ router = APIRouter()
 
 
 class MemoryCreatePayload(BaseModel):
+    workspace_id: str | None = None
+    kind: str = "fact"
+    verified: bool = False
+    supersedes: str | None = None
+    expected_revision: int | None = None
     scope: str
     owner_id: str
     source: str = "api"
@@ -137,6 +142,17 @@ def create_memory(
                 context_from(runtime, x_actor_id, x_actor_type, x_device_id), **payload.model_dump()
             )
         )
+    except Exception as exc:
+        raise api_error(exc) from exc
+
+
+@router.get("/memory/index")
+def memory_index(request: Request, x_actor_id: str | None = Header(default=None),
+                 x_actor_type: str | None = Header(default=None),
+                 x_device_id: str | None = Header(default=None)) -> list[dict[str, object]]:
+    runtime = runtime_from(request)
+    try:
+        return runtime.memory.discover(context_from(runtime, x_actor_id, x_actor_type, x_device_id))
     except Exception as exc:
         raise api_error(exc) from exc
 

@@ -4,6 +4,9 @@ import { createRoot } from "react-dom/client";
 import { MoMSettings } from "./MoMSettings";
 import { createPresencePublicationGate } from "./presencePublication";
 import { MoMToggle } from "./MoMToggle";
+import { SwarmConfirmationCard } from "./SwarmConfirmationCard";
+import type { SwarmConfirmationAction } from "./SwarmConfirmationCard";
+import { WorkspacePanel } from "./WorkspacePanel";
 import {
   applyActivityEvent,
   applyActivitySnapshot,
@@ -34,6 +37,7 @@ import {
 } from "../shared/commandDiscovery";
 import { openActivityStream, SynapseClientError, SynapseFrontendClient } from "../shared/frontendClient";
 import { derivePresenceState } from "../shared/presenceAdapter";
+import type { PresenceSceneState } from "../shared/presenceAdapter";
 import {
   effectiveReducedMotion,
   loadFrontendSettingsPreferences,
@@ -41,7 +45,9 @@ import {
   saveFrontendSettingsPreferences
 } from "../shared/settingsPreferences";
 import type { FrontendSettingsPreferences, FrontendThemePreference } from "../shared/settingsPreferences";
+import { pendingSwarmConfirmation } from "../shared/swarmInteraction";
 import { assetsForTheme } from "../shared/themeAssets";
+import { applyTheme } from "../shared/themeEngine";
 import {
   conversationModeCapturesMicrophone,
   conversationModeStatusLabel,
@@ -74,6 +80,7 @@ import type {
   ProjectKnowledgeDocumentRecord,
   ProjectKnowledgeDocumentsResult,
   SettingsSnapshot,
+  SwarmInteractionRequest,
   ProviderModelOption,
   PrimaryAgentSummary,
   TextStreamEvent,
@@ -87,6 +94,7 @@ import type {
   VoiceTranscriptionRequest
 } from "../shared/types";
 import "./styles.css";
+import "./themeEngine.css";
 
 const workspaceId = "default";
 const historyPageSize = 50;
@@ -95,10 +103,9 @@ const conversationModeListenWindowMs = 6200;
 const conversationModeRestartDelayMs = 850;
 const conversationModePostSpeechCooldownMs = 2200;
 const conversationModeMaxCaptureMs = 12_000;
+const conversationLogFadeDelayMs = 8_000;
 const Presence = lazy(() => import("./Presence").then((module) => ({ default: module.Presence })));
-const ActivityConstellation = lazy(() =>
-  import("./ActivityConstellation").then((module) => ({ default: module.ActivityConstellation }))
-);
+const SynapseCoreAtmosphere = lazy(() => import("./SynapseCoreAtmosphere").then((module) => ({ default: module.SynapseCoreAtmosphere })));
 
 type ShellIconVisualKey = "constellation" | "history" | "settings" | "notificationsIdle" | "notificationsActive";
 
@@ -119,7 +126,7 @@ function shellIconStyle(key: ShellIconVisualKey): CSSProperties {
   } as CSSProperties;
 }
 
-type SettingsSection = "personalization" | "voice" | "models" | "mom" | "themes" | "insight";
+type SettingsSection = "personalization" | "voice" | "models" | "swarm" | "insight";
 type LibrarySection = "history" | "files";
 
 interface AppState {
@@ -171,6 +178,22 @@ interface AppState {
   projectFiles: ProjectKnowledgeDocumentsResult | null;
   projectFilesError: string | null;
   projectFilesBusyDocumentId: string | null;
+  workspaceOpen: boolean;
+  workspaceStatus: "idle" | "loading" | "ready" | "error";
+  workspaceProjects: import("../shared/types").ProjectManifestSummary[];
+  workspaceSwarms: Array<Record<string, unknown>>;
+  workspaceError: string | null;
+  workspaceShowProjects: boolean;
+  workspaceDemoActive: boolean;
+  workspaceCommandOutput: Array<{ input: string; output: string }>;
+  selectedSwarmId: string | null;
+  swarmDetail: Record<string, unknown> | null;
+  swarmTrace: Record<string, unknown> | null;
+  swarmAgents: Array<Record<string, unknown>>;
+  swarmTools: Record<string, string[]>;
+  swarmResult: Record<string, unknown> | null;
+  swarmConfirmation: SwarmInteractionRequest | null;
+  swarmConfirmationBusy: boolean;
   error: string | null;
 }
 
@@ -340,6 +363,22 @@ function App(): React.ReactElement {
     projectFiles: null,
     projectFilesError: null,
     projectFilesBusyDocumentId: null,
+    workspaceOpen: false,
+    workspaceStatus: "idle",
+    workspaceProjects: [],
+    workspaceSwarms: [],
+    workspaceError: null,
+    workspaceShowProjects: false,
+    workspaceDemoActive: false,
+    workspaceCommandOutput: [],
+    selectedSwarmId: null,
+    swarmDetail: null,
+    swarmTrace: null,
+    swarmAgents: [],
+    swarmTools: {},
+    swarmResult: null,
+    swarmConfirmation: null,
+    swarmConfirmationBusy: false,
     error: null
   });
 
@@ -361,8 +400,8 @@ function App(): React.ReactElement {
   }, []);
 
   useEffect(() => {
-    document.documentElement.dataset.theme = state.frontendSettings.theme;
-  }, [state.frontendSettings.theme]);
+    applyTheme(document.documentElement, state.frontendSettings.theme, state.reducedMotion, state.focused);
+  }, [state.frontendSettings.theme, state.reducedMotion, state.focused]);
 
   useEffect(() => {
     const update = (): void => {
@@ -605,10 +644,15 @@ function Workspace({
   );
 
   const sendMessage = useCallback(
-    async (content: string, attachments: ConversationAttachment[] = []) => {
+    async (
+      content: string,
+      attachments: ConversationAttachment[] = [],
+      surface: "conversation" | "workspace" = "conversation"
+    ) => {
       if (!state.conversation) {
         return;
       }
+      const workspaceSurface = surface === "workspace";
       const conversationId = state.conversation.conversation_id;
       const abort = new AbortController();
       const idempotencyKey = crypto.randomUUID();
@@ -620,26 +664,38 @@ function Workspace({
         role: "user",
         status: "completed",
         payload: { body: content, role: "user" },
-        attachments
+        attachments,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
       };
-      setState((current) => ({
-        ...current,
-        backendState: "ready",
-        activeTurnKey: idempotencyKey,
-        ...toReactConversationState(beginTurn(
-          {
-            status: current.conversationStatus,
-            messages: current.messages,
-            partialAssistant: current.streamText,
-            error: current.conversationError,
-            lastDraft: current.lastDraft
-          },
-          optimistic,
-          content
-        )),
-        error: null
-      }));
+      if (workspaceSurface) {
+        setState((current) => ({
+          ...current,
+          workspaceOpen: true,
+          workspaceError: null,
+          workspaceCommandOutput: [...current.workspaceCommandOutput, { input: content, output: "" }].slice(-100)
+        }));
+      } else {
+        setState((current) => ({
+          ...current,
+          backendState: "ready",
+          activeTurnKey: idempotencyKey,
+          ...toReactConversationState(beginTurn(
+            {
+              status: current.conversationStatus,
+              messages: current.messages,
+              partialAssistant: current.streamText,
+              error: current.conversationError,
+              lastDraft: current.lastDraft
+            },
+            optimistic,
+            content
+          )),
+          error: null
+        }));
+      }
       let completed = false;
+      let startedSwarmId: string | null = null;
       try {
         await client.streamTextTurn(
           conversationId,
@@ -657,6 +713,33 @@ function Workspace({
             }
             if (event.type === "generation_completed") {
               completed = true;
+            }
+            if (event.type === "swarm_started") {
+              startedSwarmId = event.data?.request.swarm_id ?? null;
+            }
+            if (workspaceSurface) {
+              setState((current) => {
+                const outputIndex = current.workspaceCommandOutput.length - 1;
+                if (outputIndex < 0) return current;
+                const entry = current.workspaceCommandOutput[outputIndex];
+                const output = event.type === "chunk_received"
+                  ? `${entry.output}${event.content ?? ""}`
+                  : event.type === "generation_failed"
+                    ? `${entry.output}\n[erro] ${event.error?.message ?? "Falha na execução."}`
+                    : entry.output;
+                return {
+                  ...current,
+                  workspaceCommandOutput: current.workspaceCommandOutput.map((item, index) =>
+                    index === outputIndex ? { ...item, output } : item
+                  ),
+                  swarmConfirmation: event.type === "confirmation_required"
+                    ? event.data?.request ?? current.swarmConfirmation
+                    : event.type === "swarm_started" ? null : current.swarmConfirmation,
+                  swarmConfirmationBusy: false,
+                  workspaceStatus: event.type === "swarm_started" ? "idle" : current.workspaceStatus
+                };
+              });
+              return;
             }
             setState((current) => {
               if (current.conversation?.conversation_id !== conversationId) {
@@ -680,12 +763,28 @@ function Workspace({
                 conversationError: next.error,
                 activeTurnKey: next.status === "completed" || next.status === "cancelled" || next.status === "failed" ? null : current.activeTurnKey,
                 backendState: next.status === "failed" ? "error" : current.backendState,
-                error: next.error?.message ?? current.error
+                error: next.error?.message ?? current.error,
+                swarmConfirmation: event.type === "confirmation_required"
+                  ? event.data?.request ?? current.swarmConfirmation
+                  : event.type === "swarm_started" ? null : current.swarmConfirmation,
+                swarmConfirmationBusy: false,
+                workspaceOpen: event.type === "swarm_started" ? true : current.workspaceOpen,
+                workspaceStatus: event.type === "swarm_started" ? "idle" : current.workspaceStatus
               };
             });
           },
           abort.signal
         );
+        if (workspaceSurface) {
+          if (startedSwarmId) {
+            setState((current) => ({
+              ...current,
+              workspaceOpen: true,
+              selectedSwarmId: startedSwarmId
+            }));
+          }
+          return;
+        }
         const history = await client.history(conversationId, {
           workspace_id: workspaceId,
           project_id: state.bootstrap?.project_id ?? null,
@@ -713,12 +812,38 @@ function Workspace({
               { completed }
             )),
             activeTurnKey: null,
+            swarmConfirmation: pendingSwarmConfirmation(history.messages),
+            swarmConfirmationBusy: false,
             backendState: history.degraded.length > 0 ? "degraded" : "ready"
           };
         });
         await refreshConversationIndex();
+        if (startedSwarmId) {
+          setState((current) => ({
+            ...current,
+            workspaceOpen: true,
+            selectedSwarmId: startedSwarmId
+          }));
+        }
       } catch (error) {
         abort.abort();
+        if (workspaceSurface) {
+          setState((current) => {
+            const outputIndex = current.workspaceCommandOutput.length - 1;
+            if (outputIndex < 0) return current;
+            const entry = current.workspaceCommandOutput[outputIndex];
+            return {
+              ...current,
+              workspaceCommandOutput: current.workspaceCommandOutput.map((item, index) =>
+                index === outputIndex
+                  ? { ...item, output: `${entry.output}\n[erro] ${readableError(error)}` }
+                  : item
+              ),
+              workspaceError: null
+            };
+          });
+          return;
+        }
         setState((current) => {
           const next = interruptedStream(
             {
@@ -778,6 +903,83 @@ function Workspace({
     },
     [client, setState, state.bootstrap?.project_id]
   );
+
+  const loadWorkspace = useCallback(async () => {
+    setState((current) => ({
+      ...current,
+      workspaceStatus: "loading",
+      workspaceError: null,
+      workspaceDemoActive: false,
+      swarmDetail: null,
+      swarmTrace: null,
+      swarmAgents: [],
+      swarmResult: null
+    }));
+    try {
+      const [projects, swarms] = await Promise.all([client.projects(), client.swarms()]);
+      setState((current) => ({
+        ...current,
+        workspaceProjects: projects.projects,
+        workspaceSwarms: swarms,
+        workspaceStatus: "ready",
+        workspaceError: null
+      }));
+    } catch (error) {
+      setState((current) => ({ ...current, workspaceStatus: "error", workspaceError: readableError(error) }));
+    }
+  }, [client, setState]);
+
+  useEffect(() => {
+    if (state.workspaceOpen && state.workspaceStatus === "idle") {
+      void loadWorkspace();
+    }
+  }, [loadWorkspace, state.workspaceOpen, state.workspaceStatus]);
+
+  const selectWorkspaceSwarm = useCallback(async (swarmId: string) => {
+    setState((current) => ({ ...current, selectedSwarmId: swarmId, swarmDetail: null, swarmTrace: null, swarmResult: null, workspaceError: null }));
+    try {
+      const [detail, trace, members] = await Promise.all([client.swarm(swarmId), client.swarmTrace(swarmId), client.swarmMembers(swarmId)]);
+      const memberIds = Array.isArray(members.member_agent_ids) ? members.member_agent_ids.map(String) : [];
+      const agents = await Promise.all(memberIds.map((id) => client.agentProfile(id).catch(() => ({ agent_id: id }))));
+      const tools = Object.fromEntries(await Promise.all(memberIds.map(async (id) => {
+        const catalog = await client.agentTools(id).catch(() => ({}));
+        const items = Array.isArray(catalog.tools) ? catalog.tools.map(String) : Array.isArray(catalog.available_tools) ? catalog.available_tools.map(String) : [];
+        return [id, items] as const;
+      })));
+      let result: Record<string, unknown> | null = null;
+      if (["completed", "failed", "cancelled"].includes(String(detail.status))) {
+        result = await client.swarmResult(swarmId).catch(() => null);
+      }
+      setState((current) => ({ ...current, selectedSwarmId: swarmId, swarmDetail: detail, swarmTrace: trace, swarmResult: result, swarmAgents: agents, swarmTools: tools }));
+    } catch (error) {
+      setState((current) => ({ ...current, workspaceError: readableError(error) }));
+    }
+  }, [client, setState]);
+
+  useEffect(() => {
+    if (!state.workspaceOpen || state.workspaceDemoActive || state.workspaceStatus !== "ready" || state.selectedSwarmId) return;
+    const running = state.workspaceSwarms.find((swarm) => ["running", "paused"].includes(String(swarm.status)));
+    if (running?.swarm_id) void selectWorkspaceSwarm(String(running.swarm_id));
+  }, [selectWorkspaceSwarm, state.selectedSwarmId, state.workspaceDemoActive, state.workspaceOpen, state.workspaceStatus, state.workspaceSwarms]);
+
+  useEffect(() => {
+    if (!state.workspaceOpen || state.workspaceDemoActive || state.workspaceStatus !== "ready" || !state.selectedSwarmId || state.swarmDetail) return;
+    void selectWorkspaceSwarm(state.selectedSwarmId);
+  }, [selectWorkspaceSwarm, state.selectedSwarmId, state.swarmDetail, state.workspaceDemoActive, state.workspaceOpen, state.workspaceStatus]);
+
+  useEffect(() => {
+    if (!state.workspaceOpen || state.workspaceDemoActive || !state.selectedSwarmId) return;
+    const swarmId = state.selectedSwarmId;
+    const timer = window.setInterval(() => {
+      void Promise.all([client.swarm(swarmId), client.swarmTrace(swarmId)]).then(async ([detail, trace]) => {
+        const result = ["completed", "failed", "cancelled"].includes(String(detail.status))
+          ? await client.swarmResult(swarmId).catch(() => null)
+          : null;
+        setState((current) => current.selectedSwarmId === swarmId ? ({ ...current, swarmDetail: detail, swarmTrace: trace, swarmResult: result }) : current);
+      }).catch(() => undefined);
+    }, 2200);
+    return () => window.clearInterval(timer);
+  }, [client, setState, state.selectedSwarmId, state.workspaceDemoActive, state.workspaceOpen]);
 
   const stageAttachment = useCallback(
     async (file: { filename: string; mime_type: string; size: number; content_base64: string }) => {
@@ -884,7 +1086,9 @@ function Workspace({
         streamText: "",
         activeTurnKey: null,
         messages: [],
-        summary: null
+        summary: null,
+        swarmConfirmation: null,
+        swarmConfirmationBusy: false
       }));
       const opened = await client.openConversation({
         workspace_id: workspaceId,
@@ -902,6 +1106,8 @@ function Workspace({
         conversationError: null,
         streamText: "",
         activeTurnKey: null,
+        swarmConfirmation: null,
+        swarmConfirmationBusy: false,
         backendState: opened.degraded.length > 0 ? "degraded" : "ready"
       }));
       await refreshConversationIndex();
@@ -939,6 +1145,8 @@ function Workspace({
           streamText: "",
           activeTurnKey: null,
           historyPanelOpen: false,
+          swarmConfirmation: pendingSwarmConfirmation(opened.messages),
+          swarmConfirmationBusy: false,
           backendState: opened.degraded.length > 0 ? "degraded" : "ready"
         }));
       } catch (error) {
@@ -1139,6 +1347,8 @@ function Workspace({
             history.messages,
             { completed: true }
           )),
+          swarmConfirmation: pendingSwarmConfirmation(history.messages),
+          swarmConfirmationBusy: false,
           backendState: history.degraded.length > 0 ? "degraded" : "ready"
         }));
       } catch (error) {
@@ -1159,6 +1369,45 @@ function Workspace({
       }
     },
     [client, setState, state.bootstrap?.project_id, state.bootstrap?.session_id, state.conversation]
+  );
+
+  const resolveSwarmConfirmation = useCallback(
+    async (action: SwarmConfirmationAction) => {
+      const pending = state.swarmConfirmation;
+      if (!pending || state.swarmConfirmationBusy) {
+        return;
+      }
+      setState((current) => ({
+        ...current,
+        swarmConfirmationBusy: true,
+        workspaceError: null,
+        error: null
+      }));
+      try {
+        const result = await client.resolveSwarmConfirmation(pending.request_id, action, {
+          workspace_id: workspaceId,
+          project_id: state.bootstrap?.project_id ?? null,
+          session_id: state.bootstrap?.session_id ?? null
+        });
+        setState((current) => ({
+          ...current,
+          swarmConfirmation: null,
+          swarmConfirmationBusy: false,
+          workspaceOpen: action === "cancel" ? current.workspaceOpen : true,
+          selectedSwarmId: result.request.swarm_id ?? current.selectedSwarmId,
+          workspaceStatus: action === "cancel" ? current.workspaceStatus : "idle"
+        }));
+        await recoverConversation();
+      } catch (error) {
+        setState((current) => ({
+          ...current,
+          swarmConfirmationBusy: false,
+          workspaceError: readableError(error),
+          error: readableError(error)
+        }));
+      }
+    },
+    [client, recoverConversation, setState, state.bootstrap?.project_id, state.bootstrap?.session_id, state.swarmConfirmation, state.swarmConfirmationBusy]
   );
 
   const presencePublicationRef = useRef(createPresencePublicationGate());
@@ -1250,7 +1499,7 @@ function Workspace({
         if (!current) {
           const preferences = saveFrontendSettingsPreferences({
             reducedMotion: changes.reducedMotion,
-            theme: changes.theme
+            theme: "synapse"
           });
           setState((stateAfterSave) => ({
             ...stateAfterSave,
@@ -1295,7 +1544,7 @@ function Workspace({
         await client.updateVoiceSettings(voicePayload);
         const preferences = saveFrontendSettingsPreferences({
           reducedMotion: changes.reducedMotion,
-          theme: changes.theme
+          theme: "synapse"
         });
         const snapshot = await client.settingsSnapshot(current.personalization?.agent_id);
         const bootstrap = await client.bootstrap();
@@ -1334,7 +1583,7 @@ function Workspace({
         ...current,
         frontendSettings: {
           reducedMotion: preferences.reducedMotion,
-          theme: normalizeTheme(preferences.theme)
+          theme: "synapse"
         },
         reducedMotion: effectiveReducedMotion(preferences.reducedMotion, current.systemReducedMotion)
       }));
@@ -1366,6 +1615,9 @@ function Workspace({
         return { status: "failed", message: resolution.message };
       }
       const command = commandName(resolution.command);
+      if (command === "ajuda") {
+        return { status: "completed", message: "Comandos: /ajuda · /projetos · /project <id> · /project.files · /settings · /insight · /activity" };
+      }
       if (command === "activity") {
         setState((current) => ({
           ...current,
@@ -1399,6 +1651,11 @@ function Workspace({
         }));
         void loadProjectFiles();
         return { status: "completed", message: "Library opened on Project Files without running retrieval." };
+      }
+      if (command === "projects") {
+        setState((current) => ({ ...current, workspaceOpen: true, workspaceShowProjects: true }));
+        if (state.workspaceStatus !== "ready") void loadWorkspace();
+        return { status: "completed", message: "Projects listed in Workspace." };
       }
       if (command === "project") {
         const projectId = resolution.args.project_id;
@@ -1434,13 +1691,42 @@ function Workspace({
       loadInsight,
       loadProjectFiles,
       loadSettings,
+      loadWorkspace,
       setState,
       state.bootstrap?.session_id,
       state.commands,
       state.insightReport,
-      state.settingsSnapshot
+      state.settingsSnapshot,
+      state.workspaceStatus
     ]
   );
+
+  const launchSwarmDemo = useCallback(() => {
+    const names = ["Artemis", "Orion", "Nyx", "Gaia", "Helios", "Echo"];
+    const demoAgents = names.slice(1).map((name, index) => ({
+      agent_id: `demo-agent-${index + 2}`,
+      display_name: name,
+      preferred_model: "modelo simulado"
+    }));
+    const events = demoAgents.flatMap((agent, index) => [
+      { agent_id: agent.agent_id, event_type: "task.started", timestamp: new Date().toISOString(), status: "running" },
+      { agent_id: agent.agent_id, event_type: ["research.started", "analysis.started", "validation.started", "tests.started", "documentation.started"][index], timestamp: new Date().toISOString(), status: "running" }
+    ]);
+    setState((current) => ({
+      ...current,
+      settingsOpen: false,
+      workspaceOpen: true,
+      workspaceDemoActive: true,
+      workspaceSwarms: [{ swarm_id: "demo-swarm", mission_id: "workspace-demo", status: "running", strategy: "simulação" }],
+      selectedSwarmId: "demo-swarm",
+      swarmDetail: { swarm_id: "demo-swarm", status: "running", member_agent_ids: demoAgents.map((agent) => agent.agent_id) },
+      swarmAgents: demoAgents,
+      swarmTrace: { events },
+      swarmResult: null,
+      workspaceStatus: "ready",
+      workspaceError: null
+    }));
+  }, [setState]);
 
   const reindexProjectFile = useCallback(
     async (documentId: string) => {
@@ -1717,11 +2003,49 @@ function Workspace({
     <Frame
       settingsClient={client}
       state={state}
+      presenceScene={presenceScene}
       activeVisual={state.activeVisual}
       onToggleActivity={() => setState((current) => ({
         ...current,
         activeVisual: current.activeVisual === "activity" ? "presence" : "activity"
       }))}
+      onToggleWorkspace={() => {
+        setState((current) => ({ ...current, workspaceOpen: !current.workspaceOpen }));
+        if (!state.workspaceOpen) void loadWorkspace();
+      }}
+      onCloseWorkspace={() => setState((current) => ({ ...current, workspaceOpen: false }))}
+      onRefreshWorkspace={() => void loadWorkspace()}
+      onSelectWorkspaceProject={(projectId) => void executeCommand(`/project ${projectId}`)}
+      onOpenWorkspaceFiles={() => {
+        setState((current) => ({ ...current, historyPanelOpen: true, librarySection: "files", projectFilesOpen: true }));
+        void loadProjectFiles();
+      }}
+      onSubmitWork={(request) => void sendMessage(request, [], "workspace")}
+      onResolveSwarmConfirmation={(action) => void resolveSwarmConfirmation(action)}
+      onExecuteWorkspaceCommand={async (request) => {
+        const result = await executeCommand(request);
+        setState((current) => ({
+          ...current,
+          workspaceCommandOutput: [...current.workspaceCommandOutput, { input: request, output: result.message ?? result.status }].slice(-100)
+        }));
+        return result;
+      }}
+      onLaunchSwarmDemo={launchSwarmDemo}
+      onSwarmAction={async (swarmId, action) => {
+        try {
+          await client.swarmAction(swarmId, action);
+          await loadWorkspace();
+        } catch (error) {
+          setState((current) => ({ ...current, workspaceError: readableError(error) }));
+        }
+      }}
+      selectedSwarmId={state.selectedSwarmId}
+      swarmDetail={state.swarmDetail}
+      swarmTrace={state.swarmTrace}
+      onSelectSwarm={(swarmId) => void selectWorkspaceSwarm(swarmId)}
+      swarmAgents={state.swarmAgents}
+      swarmTools={state.swarmTools}
+      swarmResult={state.swarmResult}
       onRefreshInsight={() => void loadInsight()}
       onToggleSettings={toggleSettings}
       onToggleHistory={() => {
@@ -1772,19 +2096,11 @@ function Workspace({
       onLoadOlderHistory={() => void loadOlderHistory()}
       onRecoverConversation={() => void recoverConversation()}
       main={
-        <main className="main-area" aria-label="Main area">
+        <main className={`main-area ${state.logMinimized ? "log-closed" : "log-open"}`} aria-label="Main area">
           <div className={`visual-stage ${state.activeVisual} ${state.logMinimized ? "log-closed" : "log-open"}`}>
             <VisualErrorBoundary surface={state.activeVisual}>
               <Suspense fallback={<VisualLoadingFallback label={`Loading ${state.activeVisual}`} />}>
-                {state.activeVisual === "activity" ? (
-                  <ActivityConstellation
-                    scene={activityScene}
-                    theme={state.frontendSettings.theme}
-                    onSelectNode={(nodeId) => setState((current) => ({ ...current, selectedActivityNodeId: nodeId }))}
-                  />
-                ) : (
-                  <Presence scene={presenceScene} theme={state.frontendSettings.theme} />
-                )}
+                <Presence scene={presenceScene} theme={state.frontendSettings.theme} reducedMotion={state.reducedMotion} focused={state.focused} />
               </Suspense>
             </VisualErrorBoundary>
           </div>
@@ -1818,9 +2134,27 @@ function Workspace({
 function Frame({
   settingsClient,
   state,
+  presenceScene,
   main,
   activeVisual,
   onToggleActivity,
+  onToggleWorkspace,
+  onCloseWorkspace,
+  onRefreshWorkspace,
+  onSelectWorkspaceProject,
+  onOpenWorkspaceFiles,
+  onSubmitWork,
+  onResolveSwarmConfirmation,
+  onExecuteWorkspaceCommand,
+  onLaunchSwarmDemo,
+  onSwarmAction,
+  selectedSwarmId,
+  swarmDetail,
+  swarmTrace,
+  onSelectSwarm,
+  swarmAgents,
+  swarmTools,
+  swarmResult,
   onRefreshInsight,
   onToggleSettings,
   onToggleHistory = () => undefined,
@@ -1851,9 +2185,27 @@ function Frame({
 }: {
   settingsClient?: SynapseFrontendClient;
   state: AppState;
+    presenceScene?: PresenceSceneState;
   main: React.ReactNode;
   activeVisual: "presence" | "activity";
   onToggleActivity: () => void;
+  onToggleWorkspace: () => void;
+  onCloseWorkspace: () => void;
+  onRefreshWorkspace: () => void;
+  onSelectWorkspaceProject: (projectId: string) => void;
+  onOpenWorkspaceFiles: () => void;
+  onSubmitWork: (request: string) => void;
+  onResolveSwarmConfirmation: (action: SwarmConfirmationAction) => void;
+  onExecuteWorkspaceCommand: (request: string) => Promise<{ status: string; message?: string }>;
+  onLaunchSwarmDemo: () => void;
+  onSwarmAction: (swarmId: string, action: "start" | "pause" | "resume" | "cancel") => void;
+  selectedSwarmId: string | null;
+  swarmDetail: Record<string, unknown> | null;
+  swarmTrace: Record<string, unknown> | null;
+  onSelectSwarm: (swarmId: string) => void;
+  swarmAgents: Array<Record<string, unknown>>;
+  swarmTools: Record<string, string[]>;
+  swarmResult: Record<string, unknown> | null;
   onRefreshInsight: () => void;
   onToggleSettings: () => void;
   onToggleHistory?: () => void;
@@ -1882,6 +2234,15 @@ function Frame({
   onLoadOlderHistory: () => void;
   onRecoverConversation: () => void;
 }): React.ReactElement {
+  const resolvedPresenceScene = presenceScene ?? derivePresenceState({
+    backendState: state.backendState,
+    conversationStatus: state.conversationStatus,
+    manualVoiceState: state.manualVoiceState,
+    conversationModeState: state.conversationModeState,
+    audioAmplitude: state.presenceAmplitude,
+    reducedMotion: state.reducedMotion,
+    focused: state.focused
+  });
   const shellIcons = assetsForTheme(state.frontendSettings.theme);
   return (
     <div className={`app-shell ${state.logMinimized ? "log-minimized" : ""}`}>
@@ -1894,18 +2255,16 @@ function Frame({
       />
       <aside className="side-rail" aria-label="Primary navigation">
         <button
-          className={`shell-nav-button ${activeVisual === "activity" ? "active" : ""}`}
-          title={activeVisual === "activity" ? "Show Presence" : "Show Activity/Constellation"}
-          aria-pressed={activeVisual === "activity"}
-          onClick={onToggleActivity}
+          className={`shell-nav-button workspace-button ${state.workspaceOpen ? "active" : ""}`}
+          title={state.workspaceOpen ? "Fechar Workspace" : "Abrir Workspace"}
+          aria-pressed={state.workspaceOpen}
+          onClick={onToggleWorkspace}
         >
-          <span className="shell-nav-icon-frame" aria-hidden="true">
-            <img
-              className="shell-nav-icon shell-nav-icon--activity"
-              src={shellIcons.navigation.constellation}
-              alt=""
-              style={shellIconStyle("constellation")}
-            />
+          <span className="shell-nav-icon-frame workspace-nav-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" role="img">
+              <rect x="3.5" y="4.5" width="17" height="15" rx="2" />
+              <path d="M3.5 8.5h17M7 12l2 2-2 2M11.5 16H17" />
+            </svg>
           </span>
         </button>
         <button
@@ -1939,7 +2298,20 @@ function Frame({
           </span>
         </button>
       </aside>
-      <section className="center-surface">{main}</section>
+      <section className="center-surface">
+        {state.frontendSettings.theme === "synapse" ? (
+          <Suspense fallback={null}>
+            <SynapseCoreAtmosphere
+              active
+              reducedMotion={state.reducedMotion}
+              focused={state.focused}
+              state={resolvedPresenceScene.state}
+              amplitude={resolvedPresenceScene.amplitude}
+            />
+          </Suspense>
+        ) : null}
+        {main}
+      </section>
       <ConversationLog
         conversationId={state.conversation?.conversation_id ?? null}
         messages={state.messages}
@@ -1953,6 +2325,10 @@ function Frame({
         onLoadOlder={onLoadOlderHistory}
         onRecover={onRecoverConversation}
         onNewConversation={onNewConversation}
+        primaryAgentName={state.bootstrap?.primary_agent?.name ?? "Synapse"}
+        swarmConfirmation={state.swarmConfirmation}
+        swarmConfirmationBusy={state.swarmConfirmationBusy}
+        onResolveSwarmConfirmation={onResolveSwarmConfirmation}
       />
       {state.historyPanelOpen ? (
         <LibraryPanel
@@ -1977,6 +2353,39 @@ function Frame({
           onRemove={onRemoveProjectFile}
         />
       ) : null}
+      {state.workspaceOpen ? (
+        <WorkspacePanel
+          projects={state.workspaceProjects}
+          showProjects={state.workspaceShowProjects}
+          swarms={state.workspaceSwarms}
+          activeProjectId={state.bootstrap?.project_id ?? null}
+          loading={state.workspaceStatus === "loading"}
+          error={state.workspaceError}
+          onClose={onCloseWorkspace}
+          onRefresh={onRefreshWorkspace}
+          onSelectProject={onSelectWorkspaceProject}
+          onOpenFiles={onOpenWorkspaceFiles}
+          onSwarmAction={onSwarmAction}
+          selectedSwarmId={selectedSwarmId}
+          swarmDetail={swarmDetail}
+          swarmTrace={swarmTrace}
+          onSelectSwarm={onSelectSwarm}
+          swarmAgents={swarmAgents}
+          swarmTools={swarmTools}
+          swarmResult={swarmResult}
+          demoActive={state.workspaceDemoActive}
+          onSubmitWork={onSubmitWork}
+          onExecuteCommand={onExecuteWorkspaceCommand}
+          commandOutput={state.workspaceCommandOutput}
+          agentName={state.bootstrap?.primary_agent?.name ?? "Primary Agent"}
+          primaryAgentId={state.bootstrap?.primary_agent?.agent_id ?? null}
+          modelName={primaryModelOption(state.bootstrap?.provider_model_options ?? [])?.model_id ?? ""}
+          swarmConfirmation={state.swarmConfirmation}
+          swarmConfirmationBusy={state.swarmConfirmationBusy}
+          onResolveSwarmConfirmation={onResolveSwarmConfirmation}
+          commands={state.commands.length > 0 ? state.commands : buildCommandRegistry([])}
+        />
+      ) : null}
       {state.settingsOpen ? (
         <SettingsPanel
           client={settingsClient}
@@ -1995,6 +2404,7 @@ function Frame({
           onRefreshInsight={onRefreshInsight}
           onSave={onSaveSettings}
           onPreviewFrontendSettings={onPreviewFrontendSettings}
+          onLaunchSwarmDemo={onLaunchSwarmDemo}
         />
       ) : null}
       {state.notificationsOpen ? (
@@ -2561,28 +2971,14 @@ function sectionLabel(section: SettingsSection): string {
       return "Voice";
     case "models":
       return "Models";
-    case "mom":
-      return "MoM";
-    case "themes":
-      return "Themes";
+    case "swarm":
+      return "Swarm";
     case "insight":
       return "Insight";
   }
 }
 
-const settingsSections: SettingsSection[] = ["personalization", "voice", "models", "mom", "themes", "insight"];
-
-const themeOptions: Array<{
-  id: FrontendThemePreference;
-  label: string;
-  swatches: [string, string, string, string, string];
-}> = [
-  { id: "synapse", label: "Synapse", swatches: ["#03090d", "#081921", "#8ee5ed", "#54fff4", "#d9fbff"] },
-  { id: "violet", label: "Violet", swatches: ["#090713", "#171029", "#a890ff", "#c084fc", "#ece7ff"] },
-  { id: "amber", label: "Amber", swatches: ["#100a03", "#241606", "#f5b45c", "#ffd166", "#fff1cf"] },
-  { id: "blue", label: "Blue", swatches: ["#030a14", "#071a2d", "#75b7ff", "#38bdf8", "#e0f2fe"] },
-  { id: "neutral", label: "Neutral", swatches: ["#080b0d", "#151a1d", "#8fa4aa", "#c7d2d8", "#f0f6f7"] }
-];
+const settingsSections: SettingsSection[] = ["personalization", "voice", "models", "swarm", "insight"];
 
 interface ThemedSelectOption {
   value: string;
@@ -2606,7 +3002,8 @@ function SettingsPanel({
   onRefresh,
   onRefreshInsight,
   onSave,
-  onPreviewFrontendSettings
+  onPreviewFrontendSettings,
+  onLaunchSwarmDemo
 }: {
   client?: SynapseFrontendClient;
   status: AppState["settingsStatus"];
@@ -2624,9 +3021,16 @@ function SettingsPanel({
   onRefreshInsight: () => void;
   onSave: (changes: SettingsChanges) => void;
   onPreviewFrontendSettings: (preferences: FrontendSettingsPreferences) => void;
+  onLaunchSwarmDemo: () => void;
 }): React.ReactElement {
   const initial = settingsChangesFromSnapshot(snapshot, frontendSettings);
   const [draft, setDraft] = useState<SettingsChanges>(initial);
+  const [modelImportStatus, setModelImportStatus] = useState<string | null>(null);
+  const [voiceCloneStatus, setVoiceCloneStatus] = useState<string | null>(null);
+  const [cloneName, setCloneName] = useState("");
+  const [cloneFile, setCloneFile] = useState<File | null>(null);
+  const [cloneBusy, setCloneBusy] = useState(false);
+  const [voiceSearch, setVoiceSearch] = useState("");
   const [localError, setLocalError] = useState<string | null>(null);
   const [previewId, setPreviewId] = useState<string | null>(null);
   const [previewPlaying, setPreviewPlaying] = useState(false);
@@ -2653,19 +3057,22 @@ function SettingsPanel({
   }, []);
   useEffect(() => stopPreview, [activeSection, stopPreview]);
 
-  async function preview(voiceId: string): Promise<void> {
-    const wasPlaying = previewId === voiceId;
+  async function preview(voiceId: string, providerId?: string): Promise<void> {
+    const previewKey = `${providerId}:${voiceId}`;
+    const wasPlaying = previewId === previewKey;
     stopPreview();
     if (wasPlaying || !client) return;
     const controller = new AbortController();
     previewRequest.current = controller;
-    setPreviewId(voiceId);
+    setPreviewId(previewKey);
     setLocalError(null);
     try {
+      const voice = snapshot?.voice.voices.find((item) => item.voice_id === voiceId && (!providerId || item.provider === providerId));
+      const language = voice?.locale || (voice?.language !== "Auto" ? voice?.language : null) || draft.language;
       const result = await client.previewVoice(
         `Eu sou ${draft.agentName.trim() || primaryAgent?.name || "Synapse"}.`,
-        voiceId, snapshot?.voice.voices.find((voice) => voice.voice_id === voiceId)?.provider || draft.ttsProvider,
-        "pt-BR", controller.signal
+        voiceId, providerId || voice?.provider || draft.ttsProvider,
+        language, controller.signal
       );
       if (controller.signal.aborted) return;
       previewUrl.current = audioBlobUrl(result.audio_base64, result.audio_format || "audio/wav");
@@ -2692,7 +3099,7 @@ function SettingsPanel({
   const sttProviders = snapshot?.voice.providers.filter((item) => item.adapter_type === "stt") ?? [];
   const ttsProviders = snapshot?.voice.providers.filter((item) => item.adapter_type === "tts") ?? [];
   const ttsVoices = snapshot?.voice.voices ?? [];
-  const canSave = (Boolean(snapshot) || activeSection === "themes") && status !== "loading" && status !== "saving";
+  const canSave = Boolean(snapshot) && status !== "loading" && status !== "saving";
 
   function update<K extends keyof SettingsChanges>(key: K, value: SettingsChanges[K]): void {
     let next = { ...draft, [key]: value };
@@ -2721,7 +3128,6 @@ function SettingsPanel({
 
   function submit(event: FormEvent): void {
     event.preventDefault();
-    if (activeSection === "mom") return;
     try {
       onSave(draft);
     } catch (validationError) {
@@ -2762,8 +3168,6 @@ function SettingsPanel({
         ))}
       </nav>
       <form className="settings-content" onSubmit={submit}>
-        {activeSection === "mom" ? <MoMSettings client={client} snapshot={snapshot}
-          primaryId={primaryAgent?.agent_id} workspaceId={workspaceId} Select={ThemedSelect} /> : null}
         {status === "loading" ? <p className="settings-state">Loading real settings from backend contracts…</p> : null}
         {(error || localError) && activeSection !== "insight" ? (
           <p className="settings-state error">{localError ?? error}</p>
@@ -2782,6 +3186,15 @@ function SettingsPanel({
                 onChange={(event) => update("personality", event.target.value)}
                 placeholder="For example: Speak Brazilian Portuguese. Be curious, direct and friendly. Avoid emojis unless I ask." />
             </label>
+            <ThemedSelect
+              label="Reduced motion"
+              value={draft.reducedMotion}
+              onChange={(value) => update("reducedMotion", value === "reduce" ? "reduce" : "system")}
+              options={[
+                { value: "system", label: "System preference" },
+                { value: "reduce", label: "Reduce motion" }
+              ]}
+            />
             <p className="muted">Saved changes apply to future replies. Your conversations stay here.</p>
           </section>
           ) : null}
@@ -2789,6 +3202,24 @@ function SettingsPanel({
           {activeSection === "models" && snapshot ? (
           <section className="settings-card" aria-label="Settings Models">
             <h3>Models</h3>
+            <label>
+              Importar modelo local
+              <input type="file" accept=".gguf,.ggml,.bin,.safetensors" disabled={!client}
+                onChange={async (event) => {
+                  const file = event.target.files?.[0];
+                  if (!file || !client) return;
+                  setModelImportStatus("Importando modelo…");
+                  try {
+                    const result = await client.importLocalModel(file);
+                    setModelImportStatus(`${result.filename} importado. Atualize o catálogo para usar o modelo.`);
+                  } catch (cause) {
+                    setModelImportStatus(cause instanceof Error ? cause.message : "Falha ao importar o modelo.");
+                  } finally {
+                    event.target.value = "";
+                  }
+                }} />
+            </label>
+            {modelImportStatus ? <p className="muted" role="status">{modelImportStatus}</p> : null}
             <div className="provider-facts" aria-label="Detected model providers">
               {snapshot.models.providers.map((provider) => {
                 const setting = snapshot.models.provider_settings.find((item) => item.provider_id === provider.provider_id);
@@ -2818,13 +3249,13 @@ function SettingsPanel({
                 }))
               ]}
             />
-            <ThemedSelect label="Modelo padrão" value={draft.defaultModel}
+            <ThemedSelect label="Modelo" value={draft.defaultModel}
               onChange={(value) => update("defaultModel", value)}
               options={[{ value: "", label: "Não configurado" }, ...snapshot.models.catalog
                 .filter((model) => model.provider === draft.defaultProvider && model.chat_usable)
                 .map((model) => ({ value: model.name, label: `${model.name} · ${model.status}`,
                   disabled: model.status === "unavailable" }))]} />
-            <p className="muted">O generalista atende o uso normal. Ative o MoM no chat para permitir especialistas configurados na aba MoM.</p>
+            <p className="muted">O generalista atende conversas sem rota específica. Configure os especialistas na aba MoM; o roteamento permanece disponível.</p>
             <label>
               Provider enabled
               <input type="checkbox" checked={draft.providerEnabled} onChange={(event) => update("providerEnabled", event.target.checked)} disabled={!draft.defaultProvider} />
@@ -2834,6 +3265,10 @@ function SettingsPanel({
               <input value={draft.providerEndpoint} onChange={(event) => update("providerEndpoint", event.target.value)} placeholder={providerSetting?.endpoint ?? "backend-owned endpoint"} disabled={!draft.defaultProvider} />
             </label>
             <p className="muted">Owner: backend Model Hub and Provider Settings. Secrets are never displayed; API keys remain backend-owned.</p>
+            <div className="settings-subsection" aria-label="Mixture of Models settings">
+              <MoMSettings client={client} snapshot={snapshot}
+                primaryId={primaryAgent?.agent_id} workspaceId={workspaceId} Select={ThemedSelect} />
+            </div>
           </section>
           ) : null}
           {activeSection === "models" && !snapshot ? (
@@ -2845,88 +3280,71 @@ function SettingsPanel({
 
           {activeSection === "voice" && snapshot ? (
           <section className="settings-card" aria-label="Settings Voice">
-            <h3>Voice</h3>
-            <label>
-              Voice enabled
-              <input type="checkbox" checked={draft.voiceEnabled} onChange={(event) => update("voiceEnabled", event.target.checked)} />
-            </label>
-            <ThemedSelect
-              label="STT provider"
-              value={draft.sttProvider}
-              onChange={(value) => update("sttProvider", value)}
-              options={[
-                { value: "", label: "Backend default" },
-                ...sttProviders.map((provider) => ({
-                  value: provider.provider_id,
-                  label: `${provider.provider_id} · ${provider.status}`
-                }))
-              ]}
-            />
-            <label>
-              STT model
-              <input value={draft.sttModel} onChange={(event) => update("sttModel", event.target.value)} />
-            </label>
-            <label>
-              Language
-              <input value={draft.language} onChange={(event) => update("language", event.target.value)} />
-            </label>
-            <ThemedSelect
-              label="TTS provider"
-              value={draft.ttsProvider}
-              onChange={(value) => update("ttsProvider", value)}
-              options={[
-                { value: "", label: "Backend default" },
-                ...ttsProviders.map((provider) => ({
-                  value: provider.provider_id,
-                  label: `${provider.provider_id} · ${provider.status}`
-                }))
-              ]}
-            />
-            <ThemedSelect
-              label="Voice"
-              value={draft.defaultTtsVoice}
-              onChange={(value) => update("defaultTtsVoice", value)}
-              options={[
-                { value: "", label: "Backend default" },
-                ...ttsVoices.map((voice) => ({
-                  value: voice.voice_id,
-                  label: `${voice.display_name} · ${voice.locale || voice.language} · ${voice.status}`,
-                  disabled: !voice.usable
-                }))
-              ]}
-            />
-            <div className="voice-pack-grid" aria-label="Default Voice Pack voices">
-              {ttsVoices.map((voice) => (
-                <article
-                  key={voice.voice_id}
-                  className={`voice-choice ${draft.defaultTtsVoice === voice.voice_id ? "selected" : ""}`}
-                >
-                  <strong>{voice.display_name}</strong>
-                  <span>{String(voice.voice_profile.gender ?? "voice")} · {voice.locale || voice.language}</span>
-                  <div className="voice-card-actions">
-                    <button type="button" disabled={!voice.usable || !client} onClick={() => void preview(voice.voice_id)}
-                      aria-label={`${previewId === voice.voice_id ? "Stop" : "Preview"} ${voice.display_name}`}>
-                      {previewId === voice.voice_id ? previewPlaying ? "■ Stop" : "■ Preparing…" : "▷ Preview"}
-                    </button>
-                    <button type="button" disabled={!voice.usable} aria-pressed={draft.defaultTtsVoice === voice.voice_id}
-                      onClick={() => update("defaultTtsVoice", voice.voice_id)}>
-                      {draft.defaultTtsVoice === voice.voice_id ? "Selected" : "Select"}
-                    </button>
-                  </div>
-                  <div className={`voice-wave ${previewId === voice.voice_id && previewPlaying ? "playing" : ""}`} aria-hidden="true">
-                    {[8, 18, 12, 28, 20, 10, 24, 32, 14, 22, 12, 26].map((height, index) => <i key={index} style={{ height, animationDelay: `${index * 65}ms` }} />)}
-                  </div>
-                  {!voice.usable ? <small>{voice.reason ?? "Unavailable"}</small> : null}
-                </article>
-              ))}
+            <div className="voice-library-heading">
+              <h3>Voices <small>{ttsVoices.length}</small></h3>
+              <label className="voice-enabled">Ativar voz
+                <input type="checkbox" checked={draft.voiceEnabled} onChange={(event) => update("voiceEnabled", event.target.checked)} />
+              </label>
             </div>
-            <p className="muted">Preview: “Eu sou {draft.agentName.trim() || primaryAgent?.name || "Synapse"}.”</p>
-            {snapshot.voice.packs.length === 0 ? (
-              <p className="muted">No governed voice pack is installed.</p>
-            ) : null}
-            {snapshot.voice.packs.some((pack) => pack.status !== "ready") ? (
-              <p className="muted">One or more voice packs are incomplete; unavailable voices remain disabled.</p>
-            ) : null}
+            <input aria-label="Buscar vozes" placeholder="Buscar voz, idioma ou provedor" value={voiceSearch} onChange={(event) => setVoiceSearch(event.target.value)} />
+            <div className="voice-pack-grid voice-library" aria-label="Default Voice Pack voices">
+              {ttsVoices.filter((voice) => `${voice.display_name} ${voice.locale} ${voice.language} ${voice.provider}`.toLowerCase().includes(voiceSearch.toLowerCase())).map((voice) => {
+                const selected = draft.defaultTtsVoice === voice.voice_id && draft.ttsProvider === voice.provider;
+                const previewing = previewId === `${voice.provider}:${voice.voice_id}`;
+                const provider = ttsProviders.find((item) => item.provider_id === voice.provider);
+                const usable = voice.usable && provider?.status === "available";
+                return <article key={`${voice.provider}:${voice.voice_id}`} className={`voice-choice ${selected ? "selected" : ""}`}>
+                  <button type="button" className="voice-card-select" disabled={!usable} aria-pressed={selected}
+                    aria-label={`Selecionar ${voice.display_name}`} onClick={() => {
+                      setDraft((current) => ({ ...current, defaultTtsVoice: voice.voice_id, ttsProvider: voice.provider,
+                        language: voice.locale || (voice.language !== "Auto" ? voice.language : "") || current.language }));
+                      void preview(voice.voice_id, voice.provider);
+                    }}>
+                    <small>{selected ? "SELECIONADA" : usable ? "DISPONÍVEL" : "INDISPONÍVEL"}</small>
+                    <strong>{voice.display_name}</strong>
+                    <span>{voice.provider} · {voice.locale || voice.language}</span>
+                  </button>
+                  <div className="voice-card-actions">
+                    <button type="button" disabled={!usable || !client} onClick={() => void preview(voice.voice_id, voice.provider)}>
+                      {previewing ? previewPlaying ? "Parar" : "Preparando…" : "Ouvir"}
+                    </button>
+                    <small>{selected ? "Salvar para aplicar" : !usable ? voice.reason || "Provedor indisponível" : "Clique para selecionar"}</small>
+                  </div>
+                </article>;
+              })}
+            </div>
+            {ttsVoices.length === 0 ? <p className="muted">Nenhuma voz encontrada. Atualize o catálogo.</p> : null}
+            <div className="settings-subsection voice-clone-compact" aria-label="VoiceStudio clone">
+              <div className="voice-library-heading"><h4>Criar voz</h4><small>VoiceStudio</small></div>
+              <div className="voice-clone-fields">
+                <input aria-label="Nome da voz" placeholder="Nome da voz" maxLength={80} value={cloneName} disabled={cloneBusy} onChange={(event) => setCloneName(event.target.value)} />
+                <input aria-label="Áudio de referência" type="file" accept="audio/*" disabled={cloneBusy} onChange={(event) => { setCloneFile(event.target.files?.[0] ?? null); setVoiceCloneStatus(null); }} />
+                <button type="button" disabled={!client || cloneBusy || !cloneName.trim() || !cloneFile || !ttsProviders.some((item) => item.provider_id === "voicestudio" && item.status === "available")}
+                  onClick={async () => {
+                    if (!client || !cloneFile || cloneBusy) return;
+                    setCloneBusy(true); setVoiceCloneStatus("Criando voz…");
+                    try {
+                      if (cloneFile.size > 20 * 1024 * 1024) throw new Error("Escolha um áudio de até 20 MB.");
+                      const audioBase64 = await new Promise<string>((resolve, reject) => {
+                        const reader = new FileReader();
+                        reader.onerror = () => reject(new Error("Não foi possível ler o áudio."));
+                        reader.onload = () => resolve(String(reader.result));
+                        reader.readAsDataURL(cloneFile);
+                      });
+                      await client.createVoiceStudioProfile({ name: cloneName.trim(), audio_base64: audioBase64, filename: cloneFile.name, language: draft.language, ref_text: "" });
+                      setVoiceCloneStatus("Voz criada. Atualize a biblioteca para selecioná-la.");
+                    } catch (cause) { setVoiceCloneStatus(readableError(cause)); }
+                    finally { setCloneBusy(false); }
+                  }}>{cloneBusy ? "Criando…" : "Criar voz"}</button>
+              </div>
+              <small>{ttsProviders.some((item) => item.provider_id === "voicestudio" && item.status === "available") ? "Use um áudio seu ou autorizado." : "Abra o VoiceStudio e atualize para criar uma voz."}</small>
+              {voiceCloneStatus ? <p role="status">{voiceCloneStatus}</p> : null}
+            </div>
+            <details className="voice-audio-options"><summary>Áudio e entrada</summary>
+            <ThemedSelect label="Reconhecimento de fala" value={draft.sttProvider} onChange={(value) => update("sttProvider", value)} options={sttProviders.map((provider) => ({ value: provider.provider_id, label: `${provider.provider_id} · ${provider.status}` }))} />
+            <label>Modelo de reconhecimento<input value={draft.sttModel} onChange={(event) => update("sttModel", event.target.value)} /></label>
+            <label>Idioma<input value={draft.language} onChange={(event) => update("language", event.target.value)} /></label>
+            <h4>Advanced</h4>
             <ThemedSelect
               label="Preferred voice gender"
               value={draft.preferredVoiceGender}
@@ -2946,7 +3364,7 @@ function SettingsPanel({
               Store raw audio
               <input type="checkbox" checked={draft.storeRawAudio} onChange={(event) => update("storeRawAudio", event.target.checked)} />
             </label>
-            <p className="muted">Owner: backend Voice settings. This does not declare full-duplex or provider-level interruption.</p>
+            </details>
           </section>
           ) : null}
           {activeSection === "voice" && !snapshot ? (
@@ -2956,38 +3374,15 @@ function SettingsPanel({
           </section>
           ) : null}
 
-          {activeSection === "themes" ? (
-          <section className="settings-card" aria-label="Settings Themes">
-            <h3>Themes</h3>
-            <ThemedSelect
-              label="Reduced motion"
-              value={draft.reducedMotion}
-              onChange={(value) => update("reducedMotion", value === "reduce" ? "reduce" : "system")}
-              options={[
-                { value: "system", label: "System preference" },
-                { value: "reduce", label: "Reduce motion" }
-              ]}
-            />
-            <div className="theme-grid" aria-label="Theme samples">
-              {themeOptions.map((theme) => (
-                <button
-                  key={theme.id}
-                  type="button"
-                  className={`theme-sample ${draft.theme === theme.id ? "selected" : ""}`}
-                  aria-pressed={draft.theme === theme.id}
-                  onClick={() => update("theme", theme.id)}
-                >
-                  <span className="theme-preview" style={{ background: theme.swatches[0], borderColor: theme.swatches[2] }}>
-                    <i style={{ background: theme.swatches[3] }} />
-                    <b style={{ background: theme.swatches[1], borderColor: theme.swatches[2] }} />
-                    <em style={{ background: theme.swatches[4] }} />
-                    <small style={{ background: theme.swatches[2] }} />
-                  </span>
-                  <span>{theme.label}</span>
-                </button>
-              ))}
+          {activeSection === "swarm" ? (
+          <section className="settings-card" aria-label="Settings Swarm">
+            <h3>Swarm</h3>
+            <p className="muted">Visualize a execução coordenada de agentes em janelas independentes. O teste abaixo é local e não usa modelos ou arquivos reais.</p>
+            {client ? <SwarmConfiguration client={client} /> : null}
+            <div className="settings-demo-card">
+              <div><strong>Swarm visual demo</strong><p className="muted">Cria agentes simulados para validar o comportamento visual do workspace.</p></div>
+              <button type="button" onClick={onLaunchSwarmDemo}>Abrir demonstração</button>
             </div>
-            <p className="muted">Owner: frontend preference. Theme applies immediately using existing CSS tokens and is stored under the governed Frontend V2 settings preference key.</p>
           </section>
           ) : null}
 
@@ -3009,14 +3404,79 @@ function SettingsPanel({
           </section>
           ) : null}
 
-          {activeSection !== "mom" ? <footer className="settings-footer">
+          <footer className="settings-footer">
             <span>Only real settings with active owners are shown.</span>
             <button type="submit" disabled={!canSave}>{status === "saving" ? "Saving…" : "Save"}</button>
-          </footer> : null}
+          </footer>
         </form>
       </div>
     </section>
   );
+}
+
+function SwarmConfiguration({ client }: { client: SynapseFrontendClient }): React.ReactElement {
+  const [missions, setMissions] = useState<Array<Record<string, unknown>>>([]);
+  const [agents, setAgents] = useState<Array<Record<string, unknown>>>([]);
+  const [missionId, setMissionId] = useState("");
+  const [strategy, setStrategy] = useState("sequential");
+  const [leader, setLeader] = useState("");
+  const [members, setMembers] = useState<string[]>([]);
+  const [status, setStatus] = useState("idle");
+  const [error, setError] = useState<string | null>(null);
+  const [created, setCreated] = useState<Record<string, unknown> | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    setStatus("loading");
+    Promise.all([client.missions(), client.agents()]).then(([missionItems, agentItems]) => {
+      if (!active) return;
+      setMissions(missionItems);
+      setAgents(agentItems);
+      setStatus("ready");
+    }).catch((reason) => {
+      if (!active) return;
+      setStatus("error");
+      setError(readableError(reason));
+    });
+    return () => { active = false; };
+  }, [client]);
+
+  async function create(): Promise<void> {
+    if (!missionId || members.length === 0) {
+      setError("Selecione uma missão e pelo menos um agente membro.");
+      return;
+    }
+    setStatus("saving");
+    setError(null);
+    try {
+      const result = await client.createSwarm({ mission_id: missionId, strategy, leader_agent_id: leader || null, member_agent_ids: members });
+      setCreated(result);
+      setStatus("ready");
+    } catch (reason) {
+      setError(readableError(reason));
+      setStatus("error");
+    }
+  }
+
+  return <div className="swarm-config" aria-label="Real Swarm configuration">
+    <h4>Configuração real</h4>
+    <p className="muted">A execução exige uma missão existente com plano ativo. O Swarm não cria modelos automaticamente.</p>
+    {status === "loading" ? <p className="muted">Carregando missões e agentes…</p> : null}
+    <ThemedSelect label="Missão" value={missionId} onChange={setMissionId}
+      options={[{ value: "", label: missions.length ? "Selecione uma missão" : "Nenhuma missão disponível" }, ...missions.map((item) => ({ value: String(item.mission_id ?? item.id ?? ""), label: String(item.title ?? item.mission_id ?? item.id ?? "Missão") }))]} />
+    <ThemedSelect label="Estratégia" value={strategy} onChange={setStrategy}
+      options={["leader_worker", "parallel", "pipeline", "review_loop"].map((value) => ({ value, label: value }))} />
+    <ThemedSelect label="Líder (opcional)" value={leader} onChange={setLeader}
+      options={[{ value: "", label: "Sem líder definido" }, ...agents.map((item) => ({ value: String(item.agent_id ?? item.id ?? ""), label: String(item.display_name ?? item.name ?? item.agent_id ?? item.id ?? "Agente") }))]} />
+    <label className="swarm-members-label">Agentes membros
+      <select multiple value={members} onChange={(event) => setMembers(Array.from(event.target.selectedOptions, (option) => option.value))}>
+        {agents.map((item) => { const id = String(item.agent_id ?? item.id ?? ""); return <option key={id} value={id}>{String(item.display_name ?? item.name ?? id)}</option>; })}
+      </select>
+    </label>
+    {error ? <p className="settings-state error">{error}</p> : null}
+    <button type="button" onClick={() => void create()} disabled={status === "loading" || status === "saving" || !missionId || members.length === 0}>Criar Swarm real</button>
+    {created ? <p className="muted">Swarm criado: {String(created.swarm_id ?? "identificador recebido")}</p> : null}
+  </div>;
 }
 
 function ThemedSelect({
@@ -3251,7 +3711,11 @@ function ConversationLog({
   onToggle,
   onLoadOlder,
   onRecover,
-  onNewConversation
+  onNewConversation,
+  primaryAgentName,
+  swarmConfirmation,
+  swarmConfirmationBusy,
+  onResolveSwarmConfirmation
 }: {
   conversationId: string | null;
   messages: ConversationMessage[];
@@ -3265,9 +3729,46 @@ function ConversationLog({
   onLoadOlder: () => void;
   onRecover: () => void;
   onNewConversation: () => void;
+  primaryAgentName: string;
+  swarmConfirmation: SwarmInteractionRequest | null;
+  swarmConfirmationBusy: boolean;
+  onResolveSwarmConfirmation: (action: SwarmConfirmationAction) => void;
 }): React.ReactElement {
   const listRef = useRef<HTMLDivElement | null>(null);
   const autoScrollRef = useRef(true);
+  const fadeTimerRef = useRef<number | null>(null);
+  const [faded, setFaded] = useState(false);
+
+  const clearFadeTimer = useCallback(() => {
+    if (fadeTimerRef.current !== null) {
+      window.clearTimeout(fadeTimerRef.current);
+      fadeTimerRef.current = null;
+    }
+  }, []);
+
+  const scheduleFade = useCallback(() => {
+    clearFadeTimer();
+    if (minimized || (!messages.length && !streamText && !runtimeError && !swarmConfirmation && !summary?.summary)) {
+      setFaded(false);
+      return;
+    }
+    fadeTimerRef.current = window.setTimeout(() => {
+      setFaded(true);
+      fadeTimerRef.current = null;
+    }, conversationLogFadeDelayMs);
+  }, [clearFadeTimer, messages.length, minimized, runtimeError, streamText, summary?.summary, swarmConfirmation]);
+
+  useEffect(() => () => clearFadeTimer(), [clearFadeTimer]);
+
+  useEffect(() => {
+    setFaded(false);
+    scheduleFade();
+  }, [messages.length, runtimeStatus, runtimeError, scheduleFade, streamText, summary?.summary, swarmConfirmation]);
+
+  function revealMessages(): void {
+    clearFadeTimer();
+    setFaded(false);
+  }
 
   useEffect(() => {
     const list = listRef.current;
@@ -3288,7 +3789,7 @@ function ConversationLog({
   if (minimized) {
     return (
       <button type="button" className="log-reopen" onClick={onToggle}
-        aria-label="Reopen Conversation Log" title="Abrir conversa">
+        aria-label="Mostrar mensagens" title="Mostrar mensagens">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
           strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
           <path d="M5 4h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H9l-6 3V6a2 2 0 0 1 2-2Z" />
@@ -3298,11 +3799,17 @@ function ConversationLog({
     );
   }
   return (
-    <aside className="conversation-log" aria-label="Conversation Log" data-conversation-id={conversationId ?? ""}>
+    <aside
+      className={`conversation-log ${faded ? "is-faded" : ""}`}
+      aria-label="Conversation Log"
+      data-conversation-id={conversationId ?? ""}
+      onMouseEnter={revealMessages}
+      onMouseLeave={scheduleFade}
+    >
       <div className="log-header">
         <div className="log-actions">
           <button className="log-new-chat-button" onClick={onNewConversation} aria-label="New Chat" title="New Chat">+</button>
-          <button onClick={onToggle} aria-label="Minimize Conversation Log">›</button>
+          <button onClick={onToggle} aria-label="Ocultar mensagens" title="Ocultar mensagens">›</button>
         </div>
       </div>
       <div className="message-list" ref={listRef} onScroll={rememberScrollPosition}>
@@ -3320,14 +3827,23 @@ function ConversationLog({
         {messages.length === 0 && !streamText ? <p className="empty-log">No conversation yet.</p> : null}
         {messages.map((message) => (
           <article key={message.message_id} className={`message ${message.role}`}>
+            <span className="message-sender">{message.role === "user" ? "Você" : primaryAgentName}</span>
             <p>{message.payload.body ?? ""}</p>
             <MessageAttachments attachments={message.attachments ?? message.payload.attachments} />
           </article>
         ))}
         {streamText ? (
           <article className="message assistant streaming">
+            <span className="message-sender">{primaryAgentName}</span>
             <p>{streamText}</p>
           </article>
+        ) : null}
+        {swarmConfirmation ? (
+          <SwarmConfirmationCard
+            request={swarmConfirmation}
+            busy={swarmConfirmationBusy}
+            onResolve={onResolveSwarmConfirmation}
+          />
         ) : null}
         {runtimeError ? (
           <article className="message error">
@@ -4460,7 +4976,7 @@ function settingsChangesFromSnapshot(
     vadEnabled: voice?.vad_enabled ?? true,
     storeRawAudio: voice?.store_raw_audio ?? false,
     reducedMotion: frontendSettings.reducedMotion,
-    theme: normalizeTheme(frontendSettings.theme)
+    theme: "synapse"
   };
 }
 

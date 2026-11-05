@@ -47,7 +47,7 @@ class ModelsHealthContributor:
         except Exception:
             plugin_unavailable = plugin_missing = 0
         lmstudio = self._lmstudio_health()
-        model_hub = self.model_hub.summary() if self.model_hub else {}
+        model_hub = self.model_hub.health_snapshot() if self.model_hub else {}
         local_policy = (
             self.chat.load_local_chat_policy()
             if self.chat

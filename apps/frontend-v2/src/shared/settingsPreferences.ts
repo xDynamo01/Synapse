@@ -1,5 +1,7 @@
+import { resolveTheme } from "./themeEngine.js";
+import type { ThemeId } from "./themeEngine.js";
 export type ReducedMotionPreference = "system" | "reduce";
-export type FrontendThemePreference = "synapse" | "violet" | "amber" | "blue" | "neutral";
+export type FrontendThemePreference = ThemeId;
 
 export interface FrontendSettingsPreferences {
   reducedMotion: ReducedMotionPreference;
@@ -47,7 +49,5 @@ export function effectiveReducedMotion(preference: ReducedMotionPreference, syst
 }
 
 export function normalizeTheme(value: unknown): FrontendThemePreference {
-  return value === "violet" || value === "amber" || value === "blue" || value === "neutral" || value === "synapse"
-    ? value
-    : "synapse";
+  return resolveTheme("synapse").id;
 }

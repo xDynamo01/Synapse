@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import builtins
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -106,6 +106,7 @@ class EphemeralAgentRuntime:
         workers: Any | None = None,
         attempts: Any | None = None,
         skill_leases: SkillLeasePort | None = None,
+        authorized_tools: Callable[[str], builtins.list[str]] | None = None,
     ) -> None:
         self.data_dir = data_dir
         self.events = events
@@ -116,6 +117,7 @@ class EphemeralAgentRuntime:
         self.workers = workers
         self.attempts = attempts
         self.skill_leases = skill_leases
+        self.authorized_tools = authorized_tools
         self.instances = FileCollection(
             collection_id="ephemeral_agent_instances",
             root=data_dir.resolve("ephemeral_agents/instances"),
@@ -286,6 +288,9 @@ class EphemeralAgentRuntime:
             expected_revision=current.revision,
         )
 
+    def wait(self, ephemeral_agent_id: str) -> EphemeralAgentInstance:
+        return self._transition(self.get(ephemeral_agent_id), EphemeralAgentState.WAITING)
+
     def complete(
         self,
         ephemeral_agent_id: str,
@@ -364,6 +369,8 @@ class EphemeralAgentRuntime:
         if current.worker_id and self.workers:
             try:
                 self.workers.set_workload(current.worker_id, 0.0, None, None)
+                if self.workers.get(current.worker_id).agent_id == ephemeral_agent_id:
+                    self.workers.disable(current.worker_id)
             except Exception as exc:
                 self.events.emit(
                     "ephemeral_agent.cleanup_failed",
@@ -538,9 +545,12 @@ class EphemeralAgentRuntime:
             raise EphemeralAgentLimitExceeded("parent child-agent limit reached")
 
     def _select_model(self, spec: EphemeralAgentSpec) -> dict[str, Any]:
+        req = spec.preferred_model_requirements
+        if req.get("provider") and req.get("model"):
+            return {"provider": req["provider"], "model": req["model"],
+                    "status": "selected", "reason": "explicit_mission_route"}
         if not self.model_capability:
             return {"status": "deferred", "reason": "model_router_selection_required"}
-        req = spec.preferred_model_requirements
         recommendation = self.model_capability.recommend_route(
             str(req.get("capability", "swarm")),
             req.get("provider"),
@@ -558,6 +568,9 @@ class EphemeralAgentRuntime:
 
     def _tool_scope(self, spec: EphemeralAgentSpec) -> builtins.list[str]:
         requested = set(spec.allowed_tools) - set(spec.denied_tools)
+        if self.authorized_tools is not None:
+            ceiling = set(self.authorized_tools(spec.parent_agent_id))
+            return sorted((requested if spec.allowed_tools else ceiling) & ceiling - set(spec.denied_tools))
         if not self.identities:
             return sorted(requested)
         parent = self.identities.load_identity(spec.parent_agent_id)

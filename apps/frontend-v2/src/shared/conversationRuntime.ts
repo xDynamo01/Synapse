@@ -43,6 +43,9 @@ export function applyStreamEvent(
   snapshot: ConversationRuntimeSnapshot,
   event: TextStreamEvent
 ): ConversationRuntimeSnapshot {
+  if (event.type === "confirmation_required" || event.type === "swarm_started") {
+    return { ...snapshot, status: "streaming", error: null };
+  }
   if (event.type === "turn_started" || event.type === "generation_started") {
     return { ...snapshot, status: "streaming", error: null };
   }

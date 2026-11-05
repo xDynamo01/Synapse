@@ -13,6 +13,16 @@ from synapse.system_insight.models import (
 
 MODEL_TASKS = ("chat", "swarm", "coding", "vision", "speech", "reasoning", "embedding")
 
+# Small offline knowledge base used when a model is not installed yet. These
+# are envelopes, not claims that the model is present; the provider/runtime
+# status and measured hardware decide whether each entry is usable.
+MODEL_PROFILES = (
+    ("Qwen3 4B Instruct Q4_K_M", "lmstudio", 5.5, 3.5, ("chat", "reasoning", "coding")),
+    ("Qwen2.5-Coder 3B Q4_K_M", "ollama", 4.5, 2.5, ("chat", "coding")),
+    ("Llama 3.2 3B Instruct Q4", "synapse_local", 4.0, 2.5, ("chat", "reasoning")),
+    ("Phi-3.5-mini Instruct", "lmstudio", 3.5, 2.0, ("chat", "coding")),
+)
+
 
 class ModelCapabilityRuntime:
     def __init__(self, model_hub: Any, hardware: Any):
@@ -27,7 +37,9 @@ class ModelCapabilityRuntime:
         ]
         return ModelCapabilityReport(
             checked_at=datetime.now(UTC).isoformat(),
-            available_models=len(models),
+            available_models=sum(
+                1 for model in models if not bool(model.metadata.get("profile_only"))
+            ),
             online_providers=sum(1 for provider in providers if provider.active),
             providers=[_provider_view(provider) for provider in providers],
             recommendations=recommendations,
@@ -47,7 +59,11 @@ class ModelCapabilityRuntime:
         if models is None or providers is None:
             models, providers, _ = self._catalog()
         online = {provider.provider_id for provider in providers if provider.active}
-        candidates = [entry for entry in models if entry.status != "unavailable"]
+        candidates = [
+            entry
+            for entry in models
+            if entry.status != "unavailable" and _recommendable_model(entry)
+        ]
         ranked = sorted(
             candidates,
             key=lambda entry: self._score(
@@ -61,7 +77,59 @@ class ModelCapabilityRuntime:
             reverse=True,
         )
         fitting = [entry for entry in ranked if self._fits(entry, hardware, online)]
+        real_candidates = [
+            entry for entry in ranked if not bool(entry.metadata.get("profile_only"))
+        ]
+        real_fitting = [entry for entry in fitting if not bool(entry.metadata.get("profile_only"))]
+        if real_fitting:
+            fitting = real_fitting
         if not fitting:
+            known_online = [
+                entry for entry in (real_candidates or ranked) if entry.provider in online
+            ]
+            if known_online:
+                selected = min(
+                    known_online,
+                    key=lambda entry: (
+                        0
+                        if (
+                            task in _capabilities(entry)
+                            or (task == "chat" and entry.chat_usable)
+                        )
+                        else 1,
+                        entry.estimated_ram_gb or float("inf"),
+                        entry.estimated_vram_gb or float("inf"),
+                        entry.id,
+                    ),
+                )
+                return ModelRecommendation(
+                    task=task,
+                    model_id=selected.id,
+                    provider_id=selected.provider,
+                    status="limited",
+                    reason=(
+                        "Registered model exists, but measured free resources are "
+                        "currently below the recommended execution envelope."
+                    ),
+                    estimated_ram_gb=selected.estimated_ram_gb,
+                    estimated_vram_gb=selected.estimated_vram_gb,
+                    evidence=self._hardware_evidence(hardware),
+                )
+            if ranked:
+                selected = ranked[0]
+                return ModelRecommendation(
+                    task=task,
+                    model_id=selected.id,
+                    provider_id=selected.provider,
+                    status="unavailable",
+                    reason=(
+                        "The model fits the measured hardware envelope, but its provider "
+                        "is not configured or currently available."
+                    ),
+                    estimated_ram_gb=selected.estimated_ram_gb,
+                    estimated_vram_gb=selected.estimated_vram_gb,
+                    evidence=self._hardware_evidence(hardware),
+                )
             return ModelRecommendation(
                 task=task,
                 model_id=None,
@@ -121,6 +189,25 @@ class ModelCapabilityRuntime:
             limitations.append("no_registered_models")
         if not providers:
             limitations.append("no_provider_status_snapshot")
+        known = {(item.provider, item.name.casefold()) for item in models}
+        for name, provider, ram, vram, capabilities in MODEL_PROFILES:
+            if (provider, name.casefold()) in known:
+                continue
+            models.append(
+                ModelCatalogEntry(
+                    id=f"profile:{provider}:{name.lower().replace(' ', '-')}",
+                    name=name,
+                    provider=provider,
+                    runtime=provider,
+                    origin="Synapse Insight model requirements",
+                    type="chat",
+                    availability_state="profile-only",
+                    chat_usable=True,
+                    estimated_ram_gb=ram,
+                    estimated_vram_gb=vram,
+                    metadata={"capabilities": list(capabilities), "profile_only": True},
+                )
+            )
         return models, providers, limitations
 
     def _fits(
@@ -154,15 +241,27 @@ class ModelCapabilityRuntime:
         online: set[str],
         preferred_model: str | None,
         preferred_provider: str | None,
-    ) -> tuple[int, int, float, float]:
+    ) -> tuple[int, int, int, float, float]:
         capabilities = _capabilities(entry)
         task_match = int(task in capabilities or (task == "chat" and entry.chat_usable))
-        preferred = int(entry.id == preferred_model and entry.provider == preferred_provider)
+        preferred_tokens = {
+            entry.id.casefold(),
+            entry.name.casefold(),
+            f"{entry.provider}/{entry.name}".casefold(),
+            f"{entry.provider}:{entry.name}".casefold(),
+        }
+        normalized_preferred = preferred_model.casefold() if preferred_model else None
+        preferred = int(
+            normalized_preferred is not None
+            and normalized_preferred in preferred_tokens
+            and (preferred_provider is None or entry.provider == preferred_provider)
+        )
         fit = int(self._fits(entry, hardware, online))
         # Prefer the most capable fitting model; pressure changes naturally move
         # selection to a smaller registered model when the larger one no longer fits.
         size = entry.estimated_ram_gb or 0.0
-        return fit, task_match, preferred, size
+        installed = int(not bool(entry.metadata.get("profile_only")))
+        return fit, task_match, preferred, installed, size
 
     @staticmethod
     def _hardware_evidence(hardware: HardwareSnapshot) -> list[Evidence]:
@@ -204,6 +303,18 @@ def _capabilities(entry: ModelCatalogEntry) -> set[str]:
     if entry.type in MODEL_TASKS:
         capabilities.add(entry.type)
     return capabilities
+
+
+def _recommendable_model(entry: ModelCatalogEntry) -> bool:
+    path = str(entry.metadata.get("path") or "") if isinstance(entry.metadata, dict) else ""
+    identity = "/".join([entry.id, entry.name, path]).replace("\\", "/").lower()
+    if any(segment.startswith("mmproj") for segment in identity.split("/")):
+        return False
+    if entry.chat_usable:
+        return True
+    if entry.type in {"chat", "gguf", "ggml", "bin"}:
+        return True
+    return bool(_capabilities(entry))
 
 
 def _provider_view(provider: ModelProviderInfo) -> dict[str, Any]:

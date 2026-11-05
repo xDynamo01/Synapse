@@ -205,8 +205,8 @@ def test_search_sqlite_persistence_is_metadata_only_and_adapter_owned() -> None:
 def test_search_adapter_edge_is_unidirectional_and_creates_no_scc() -> None:
     runtime = _runtime_context_graph()
     source = context_graph()
-    assert len(runtime) == 306  # Primary MoM: api -> mom -> core.
-    assert len(source) == 341  # Primary MoM adds the same two source edges.
+    assert len(runtime) == 313  # Includes the acyclic JEV decision -> core dependency.
+    assert len(source) == 352
     expected = {
         ("search_adapters", "search"),
         ("search_integrations", "intelligence_boundary"),
@@ -231,8 +231,8 @@ def test_search_adapter_edge_is_unidirectional_and_creates_no_scc() -> None:
 def test_search_domain_has_no_outgoing_edges_or_scc_membership() -> None:
     runtime = _runtime_context_graph()
     source = context_graph()
-    assert len(runtime) == 306  # Primary MoM: api -> mom -> core.
-    assert len(source) == 341  # Primary MoM adds the same two source edges.
+    assert len(runtime) == 313  # Includes the acyclic JEV decision -> core dependency.
+    assert len(source) == 352
     assert not {edge for edge in runtime if edge[0] == "search"}
     assert not {edge for edge in source if edge[0] == "search"}
     assert all("search" not in members for members, _ in cyclic_components(runtime))

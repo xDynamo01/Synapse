@@ -76,7 +76,10 @@ class ResourcePressureRuntime:
         )
 
     def assess_capacity(self, workload: str) -> CapacityDecision:
-        pressure = self.inspect()
+        storage = None
+        if workload in {"ephemeral_agent", "ephemeral_swarm"}:
+            storage = self.disk.inspect_path(self.data_dir.resolve("."))
+        pressure = self.inspect(storage=storage)
         # "high" is advisory; only measured critical saturation removes capacity.
         # This prevents a transient busy sample from flapping operational runtimes.
         sufficient = pressure.overall_level != "critical"

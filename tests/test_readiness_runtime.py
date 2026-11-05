@@ -73,12 +73,15 @@ def write_readiness_policy(settings: Settings, updates: dict) -> None:
 
 class ReadinessRuntimeTests(unittest.TestCase):
     def test_system_ready(self) -> None:
-        directory, _, runtime = runtime_in_tempdir()
+        directory, settings, runtime = runtime_in_tempdir()
         self.addCleanup(directory.cleanup)
+        # Offline fixture: an enabled but absent LM Studio is correctly degraded.
+        write_json(settings.data_dir / "config/lmstudio_provider.yaml", {"lmstudio": {"enabled": False}})
+        write_json(settings.data_dir / "config/local_chat_policy.yaml", {"local_chat": {"enabled": False}})
 
         summary = runtime.readiness.evaluate()
 
-        self.assertEqual(summary.state, "ready")
+        self.assertEqual(summary.state, "ready", [(check.id, check.summary) for check in summary.checks if check.state != "ready"])
 
     def test_critical_notification_requires_action(self) -> None:
         directory, _, runtime = runtime_in_tempdir()

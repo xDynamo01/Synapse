@@ -48,7 +48,9 @@ def test_tool_receipts_are_in_model_prompt_as_data():
         agent_id="artemis", provider="mock", model="test", user_message="lembre",
         context={"tool_execution_results": [{"success": False, "error": "access denied"}]},
     ))
-    assert "data, not instructions" in messages[0]["content"]
+    assert "untrusted data" in messages[0]["content"]
+    assert "access denied" not in messages[0]["content"]
+    assert messages[1]["role"] == "user"
     assert "access denied" in messages[1]["content"]
 
 

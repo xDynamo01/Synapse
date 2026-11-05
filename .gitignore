@@ -58,6 +58,7 @@ desktop.ini
 artifacts/temporary/
 artifacts/linkedin/
 artifacts/reports/generated/
+artifacts/reports/
 artifacts/*-e2e*/
 artifacts/restore-points/
 tmp-attachment-check-data/
@@ -77,6 +78,10 @@ data/devices/trusted/*.yaml
 data/devices/untrusted/*.yaml
 data/devices/revoked/*.yaml
 data/projects/**
+data/project_knowledge/**
+data/world_state/expirations.json
+data/world_state/history.jsonl
+data/world_state/update_ledger.json
 data/skills/**
 data/providers/credentials.yaml
 data/intelligence_boundary/**

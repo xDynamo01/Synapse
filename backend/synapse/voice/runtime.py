@@ -543,7 +543,30 @@ class VoiceRuntime:
 
     def list_tts_voices(self) -> list[VoicePackEntry]:
         voices = [voice for pack in self.list_voice_packs() for voice in pack.voices]
+        if self.speech_adapters is not None:
+            for raw in self.speech_adapters.list_tts_voices():
+                voice_id = str(raw.get("id") or raw.get("voice_id") or raw.get("profile_id") or "").strip()
+                if not voice_id:
+                    continue
+                voices.append(VoicePackEntry(
+                    voice_id=voice_id,
+                    display_name=str(raw.get("name") or raw.get("display_name") or voice_id),
+                    language=str(raw.get("language") or "Auto"),
+                    locale=str(raw.get("language") or ""),
+                    voice_profile={"gender": raw.get("gender") or "custom", "source": "voicestudio"},
+                    provider="voicestudio", engine="voicestudio", asset_reference="external://voicestudio",
+                    version="local", checksum="", license="user-provided", provenance="VoiceStudio local profile",
+                    usable=True, status="ready", metadata=raw,
+                ))
         return sorted(voices, key=lambda item: (item.locale, item.display_name, item.voice_id))
+
+    def create_voicestudio_profile(self, *, name: str, audio: bytes, filename: str, language: str, ref_text: str = "") -> dict[str, Any]:
+        if self.speech_adapters is None:
+            raise ValidationError("Speech runtime is unavailable.")
+        adapter = self.speech_adapters.get_runtime_adapter("voicestudio_tts_adapter")
+        if adapter is None or not hasattr(adapter, "create_profile"):
+            raise ValidationError("VoiceStudio adapter is unavailable.")
+        return adapter.create_profile(name=name, audio=audio, filename=filename, language=language, ref_text=ref_text)
 
     def test_microphone(self, device_id: str) -> dict[str, Any]:
         device = self._get_device(device_id)
@@ -911,6 +934,7 @@ class VoiceRuntime:
         idempotency_key: str,
         model_provider_id: str | None = None,
         model_name: str | None = None,
+        manual_model_selection: bool | None = None,
     ) -> VoiceConversationTurnResult:
         session = self.get_session(session_id)
         if session.status == "recording":
@@ -996,6 +1020,7 @@ class VoiceRuntime:
             retrieval_intent=retrieval_directive,
             model_provider_id=model_provider_id,
             model_name=model_name,
+            manual_model_selection=manual_model_selection,
         )
         response = str(chat_result.response)
         conversation_id = getattr(chat_result, "conversation_id", None) or session.conversation_id

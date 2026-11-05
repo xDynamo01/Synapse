@@ -49,7 +49,11 @@ class VoiceHealthContributor:
                     resolver()
                 except Exception:
                     audio += 1
-        active_voice = int(self.voice.diagnostics()["active_sessions"]) if self.voice else 0
+        # Aggregate persisted sessions without probing devices or importing audio engines.
+        active_voice = sum(
+            item.status not in {"closed", "cancelled", "error", "failed"}
+            for item in self.voice.list_sessions()
+        ) if self.voice else 0
         return HealthContribution(
             components=(
                 component(6, "voice", self.voice, ["audio", "speech_adapters"]),

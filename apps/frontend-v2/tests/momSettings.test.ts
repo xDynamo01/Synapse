@@ -32,8 +32,8 @@ describe("Primary MoM settings", () => {
     })).rejects.toThrow();
   });
 
-  it("offers four specialists separately from the default generalist", () => {
-    expect(momOperations.map((operation) => operation.id)).toEqual(["coding", "reasoning", "review", "summary"]);
+  it("offers conversation and four specialists independently of resource policy", () => {
+    expect(momOperations.map((operation) => operation.id)).toEqual(["conversation", "coding", "reasoning", "review", "summary"]);
     const snapshot = { models: { catalog: [
       { name: "same", provider: "a", chat_usable: true, status: "available" },
       { name: "same", provider: "b", chat_usable: true, status: "available" },

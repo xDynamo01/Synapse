@@ -25,8 +25,8 @@ describe("minimal secure desktop shell", () => {
     const renderer = read("src/renderer/main.tsx");
     const button = renderer.split('className="log-reopen"')[1].split("</button>")[0];
     expect(button).toContain('onClick={onToggle}');
-    expect(button).toContain('aria-label="Reopen Conversation Log"');
-    expect(button).toContain('title="Abrir conversa"');
+    expect(button).toContain('aria-label="Mostrar mensagens"');
+    expect(button).toContain('title="Mostrar mensagens"');
     expect(button).toContain("<svg");
     expect(button).toContain('aria-hidden="true"');
     expect(button).not.toMatch(/>\s*Log\s*</);
@@ -65,21 +65,39 @@ describe("minimal secure desktop shell", () => {
     expect(feedback).toContain("max-height:");
     expect(feedback).toContain("overflow-y: auto");
   });
-  it("shares the atmospheric background across both visual modes without changing the settings surface", () => {
+  it("uses bounded theme backgrounds while preserving quiet settings surfaces", () => {
     const css = read("src/renderer/styles.css");
-    expect(css).toContain('url("../../assets/media/synapse-nebula-background.png")');
-    expect(css).toContain("--scene-filter");
+    const engine = read("src/renderer/themeEngine.css");
+    expect(css).not.toContain('url("../../assets/media/synapse-nebula-background.png")');
     expect(css).toContain(".center-surface::before");
-    expect(css).toContain("background-blend-mode: screen, normal, luminosity, normal");
-    expect(css).toContain("filter: var(--scene-filter)");
+    expect(engine).toContain("prefers-reduced-motion: reduce");
+    expect(engine).toContain("radial-gradient(ellipse at 0% 0%, #000");
+    expect(engine).toContain("color-mix(in srgb, var(--app-bg-deep) 88%, #000)");
+    expect(engine).toContain("linear-gradient(90deg, var(--shell-gradient-start)");
+    expect(engine).toContain("linear-gradient(180deg, var(--rail-gradient-start)");
     expect(css).toContain(".settings-panel.settings-conservative {");
     expect(css).toContain("background: #22252b;");
+  });
+  it("uses the supplied workshop image with deterministic monitor effects", () => {
+    const renderer = read("src/renderer/main.tsx");
+    const atmosphere = read("src/renderer/SynapseCoreAtmosphere.tsx");
+    const presence = read("src/renderer/Presence.tsx");
+    const engine = read("src/renderer/themeEngine.css");
+
+    expect(atmosphere).toContain("synapse-inventor-workshop.jpg");
+    expect(atmosphere).toContain("workshopScreens");
+    expect(atmosphere).toContain("drawWorkshopScreenEffects");
+    expect(engine).toContain("synapse-core-atmosphere-image");
+    expect(engine).toContain("pointer-events: none");
+    expect(engine).toContain("opacity: 1;");
+    expect(read("src/renderer/styles.css")).toContain("width: min(450px, 42vw, calc(100% - 36px), calc(100vh - 290px));");
+    expect(presence).toContain("1.22");
   });
   it("places the brain toggle inside the composer control row", () => {
     const renderer = read("src/renderer/main.tsx");
     const toggle = read("src/renderer/MoMToggle.tsx");
     expect(toggle).toContain('className="brain-icon"');
-    expect(toggle).toContain("aria-pressed={configuration?.enabled ?? false}");
+    expect(toggle).toContain('aria-pressed={configuration?.resource_policy === "ECONOMICAL"}');
     expect(renderer.indexOf('<MoMToggle client=')).toBeGreaterThan(renderer.indexOf('onChange={(event) => changeText(event.target.value)}'));
     const modes = read("src/renderer/styles.css").match(/\.composer-modes\s*\{([^}]+)\}/)?.[1];
     expect(modes).not.toContain("position: absolute");
@@ -95,11 +113,11 @@ describe("minimal secure desktop shell", () => {
     expect(renderer).toContain("conversation-log");
     expect(renderer).toContain("lazy(() => import(\"./Presence\")");
     expect(renderer).toContain("lazy(() =>");
-    expect(renderer).toContain("import(\"./ActivityConstellation\")");
+    expect(renderer).toContain("WorkspacePanel");
     expect(renderer).toContain("VisualErrorBoundary");
     expect(renderer).toContain("Suspense fallback");
-    expect(renderer).toContain("<Presence scene={presenceScene} theme={state.frontendSettings.theme} />");
-    expect(renderer).toContain("<ActivityConstellation");
+    expect(renderer).toContain("<Presence scene={presenceScene} theme={state.frontendSettings.theme} reducedMotion={state.reducedMotion} focused={state.focused} />");
+    expect(renderer).not.toContain("<ActivityConstellation");
     expect(renderer).not.toContain("Presence placeholder");
     expect(renderer).toContain("composer");
     expect(css).toContain("grid-template-columns: 54px minmax(0, 1fr)");
@@ -108,17 +126,19 @@ describe("minimal secure desktop shell", () => {
     expect(css).toContain("border-radius: 999px");
   });
 
-  it("renders Conversation Log as an elevated internal panel, not a rigid sidebar", () => {
+  it("renders Conversation Log as floating solid bubbles over the workspace", () => {
     const css = read("src/renderer/styles.css");
 
     expect(css).toContain(".conversation-log");
-    expect(css.match(/\.conversation-log\s*\{[^}]*z-index:\s*9;/s)?.[0]).toBeTruthy();
+    expect(css.match(/\.conversation-log\s*\{[^}]*z-index:\s*21;/s)?.[0]).toBeTruthy();
     expect(css).toContain("position: absolute");
-    expect(css).toContain("right: clamp(18px, 3vw, 36px)");
-    expect(css).toContain("bottom: clamp(96px, 14vh, 126px)");
-    expect(css).toContain("border-radius: 22px");
-    expect(css).toContain("box-shadow:");
-    expect(css).not.toContain("border-left: 1px solid rgba(142, 229, 237, 0.12)");
+    expect(css).toContain("right: 0");
+    expect(css).toContain("bottom: 0");
+    expect(css).toContain("background: transparent");
+    expect(css).toContain(".conversation-log.is-faded");
+    expect(css).toContain("background: #0a2029");
+    expect(css).toContain("background: #123a43");
+    expect(css).toContain("mask-image: linear-gradient");
     expect(css).not.toContain("grid-template-columns: 54px minmax(0, 1fr) 330px");
   });
 
@@ -202,26 +222,35 @@ describe("minimal secure desktop shell", () => {
     expect(renderer).toContain("setText(\"\")");
   });
 
-  it("keeps the elevated panel responsive and clear of the composer", () => {
+  it("keeps the attached panel responsive and shifts the composer with Presence", () => {
     const css = read("src/renderer/styles.css");
 
-    expect(css).toContain("top: clamp(62px, 8vh, 86px)");
+    expect(css).toContain("top: 54px");
     expect(css).toContain("max-width: calc(100vw - 96px)");
     expect(css).toContain("@media (max-width: 920px)");
-    expect(css).toContain("bottom: 112px");
+    expect(css).toContain(".main-area.log-open .composer");
     expect(css).toContain("width: min(500px, calc(100vw - 104px))");
   });
 
   it("keeps only out-of-scope controls disabled instead of fake-operational", () => {
     const renderer = read("src/renderer/main.tsx");
 
-    expect(renderer).toContain("Show Activity/Constellation");
-    expect(renderer).toContain('aria-pressed={activeVisual === "activity"}');
+    expect(renderer).toContain("workspace-button");
+    expect(renderer).toContain('aria-pressed={state.workspaceOpen}');
     expect(renderer).not.toContain("Open Insight");
     expect(renderer).toContain("Open Settings");
     expect(renderer).not.toContain("Settings unavailable in this slice");
     expect(renderer).toContain("Record voice for transcription");
     expect(renderer).toContain("Start Conversation Mode");
+  });
+
+  it("keeps Workspace CLI responses in the terminal surface", () => {
+    const renderer = read("src/renderer/main.tsx");
+
+    expect(renderer).toContain('onSubmitWork={(request) => void sendMessage(request, [], "workspace")}');
+    expect(renderer).toContain("workspaceCommandOutput: [...current.workspaceCommandOutput");
+    expect(renderer).toContain("if (workspaceSurface)");
+    expect(renderer).toContain("workspaceCommandOutput: current.workspaceCommandOutput.map");
   });
 
   it("keeps Insight inside Settings instead of a separate sidebar panel", () => {
@@ -269,7 +298,6 @@ describe("minimal secure desktop shell", () => {
     expect(renderer).toContain('role="dialog"');
     expect(renderer).toContain('aria-modal="false"');
     expect(renderer).toContain("Voice");
-    expect(renderer).toContain("Themes");
     expect(renderer).toContain("Models");
     expect(renderer).toContain("Insight");
     expect(renderer).not.toContain("Settings General");
@@ -304,8 +332,7 @@ describe("minimal secure desktop shell", () => {
     expect(css).toContain(".settings-body");
     expect(css).toContain(".settings-content");
     expect(css).toContain("grid-template-columns: 184px minmax(0, 1fr)");
-    expect(renderer).toContain("themeOptions");
-    expect(renderer).toContain("theme-sample");
+    expect(renderer).toContain("SynapseCoreAtmosphere");
     expect(renderer).toContain("provider-facts");
     expect(renderer).toContain("voice-pack-grid");
     expect(renderer).toContain('aria-label="Default Voice Pack voices"');
@@ -413,7 +440,7 @@ describe("minimal secure desktop shell", () => {
     expect(renderer).not.toContain('from "./Presence"');
     expect(renderer).not.toContain('from "./ActivityConstellation"');
     expect(renderer).toContain("const Presence = lazy");
-    expect(renderer).toContain("const ActivityConstellation = lazy");
+    expect(renderer).not.toContain("const ActivityConstellation = lazy");
     expect(renderer).toContain("VisualErrorBoundary");
     expect(renderer).toContain("Suspense");
     expect(presence).not.toContain('from "pixi.js"');
@@ -489,7 +516,10 @@ describe("minimal secure desktop shell", () => {
     expect(main).toContain("window.maximize()");
     expect(main).toContain('ipcMain.handle("synapse:window:is-maximized", (event)');
     expect(main).toContain('ipcMain.handle("synapse:window:close", (event)');
-    expect(main).toContain("BrowserWindow.fromWebContents(event.sender)?.close()");
+    expect(main).toContain("BrowserWindow.fromWebContents(event.sender)?.hide()");
+    expect(main).toContain("new Tray(image)");
+    expect(main).toContain('label: "Abrir Synapse"');
+    expect(main).toContain('label: "Sair"');
     expect(main).toContain('window.on("maximize"');
     expect(main).toContain('window.on("unmaximize"');
     expect(main).toContain("synapse:window:maximized-changed");
@@ -635,11 +665,11 @@ describe("minimal secure desktop shell", () => {
     expect(renderer).toContain("iconVisualOffsets");
     expect(renderer).toContain('type ShellIconVisualKey = "constellation" | "history" | "settings" | "notificationsIdle" | "notificationsActive"');
     expect(renderer).toContain("shellIconStyle");
-    expect(renderer).toContain("src={shellIcons.navigation.constellation}");
+    expect(renderer).toContain("workspace-button");
     expect(renderer).toContain("src={shellIcons.navigation.history}");
     expect(renderer).toContain("src={shellIcons.navigation.settings}");
     expect(renderer).toContain("shell-nav-icon-frame");
-    expect(renderer).toContain("shell-nav-icon shell-nav-icon--activity");
+    expect(renderer).not.toContain("shell-nav-icon shell-nav-icon--activity");
     expect(renderer).toContain("shell-nav-icon shell-nav-icon--history");
     expect(renderer).toContain("shell-nav-icon shell-nav-icon--settings");
     expect(renderer).toContain("shell-nav-icon shell-nav-icon--notifications");
@@ -661,12 +691,17 @@ describe("minimal secure desktop shell", () => {
     expect(css).toContain("transform: translate(var(--shell-icon-x, 0), var(--shell-icon-y, 0)) scale(var(--shell-icon-scale, 1))");
   });
 
-  it("keeps installer and root launcher automation out of the frontend package", () => {
+  it("keeps the root launcher synchronized with the current frontend build", () => {
     const packageJson = read("package.json");
+    const launcher = read("scripts/build-root-launcher.ps1");
 
+    expect(packageJson).toContain("build:root-exe");
+    expect(launcher).toContain("apps\\frontend-v2");
+    expect(launcher).toContain("dist\\main\\main\\main.js");
+    expect(launcher).toContain("Synapse.exe");
+    expect(launcher).toContain("electron.exe");
     expect(packageJson).not.toContain("package:win");
     expect(packageJson).not.toContain("release:artifacts");
-    expect(packageJson).not.toContain("build:root-exe");
     expect(packageJson).not.toContain("electron-builder");
     expect(packageJson).not.toContain("nsis");
     expect(packageJson).not.toContain("Synapse-Setup");

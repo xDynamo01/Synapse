@@ -93,7 +93,7 @@ def test_chat_missing_route_never_falls_back_and_worker_is_unchanged(setup):
     assert "mom" not in worker.model
 
 
-def test_disabling_mom_during_inference_only_changes_next_turn(setup):
+def test_legacy_enabled_flag_does_not_disable_permanent_chat_routing(setup):
     settings, runtime = setup
     context = runtime.context()
     runtime.mom.configure(context, "default", True, routes(), 0)
@@ -104,15 +104,13 @@ def test_disabling_mom_during_inference_only_changes_next_turn(setup):
         return original(request)
 
     with patch.object(runtime.models, "generate_request", side_effect=disable_and_generate):
-        result = runtime.chat.submit_turn(context, content="Escreva código Python", target_agent_id="artemis",
-                                         model_provider_id="mock", model_name="generalist")
+        result = runtime.chat.submit_turn(context, content="Escreva código Python", target_agent_id="artemis")
     assert result.model["model"] == "code-model"
     restarted = create_runtime(settings)
     assert not restarted.mom.get_configuration(context).enabled
-    result = restarted.chat.submit_turn(context, content="Escreva código Python", target_agent_id="artemis",
-                                        model_provider_id="mock", model_name="generalist")
-    assert result.model["model"] == "generalist"
-    assert "mom" not in result.model
+    result = restarted.chat.submit_turn(context, content="Escreva código Python", target_agent_id="artemis")
+    assert result.model["model"] == "code-model"
+    assert result.model["mom"]["operation"] == "coding"
 
 
 def test_frontend_turn_and_stream_use_saved_mom_routes_after_restart(tmp_path):
@@ -126,6 +124,10 @@ def test_frontend_turn_and_stream_use_saved_mom_routes_after_restart(tmp_path):
     turn = client.post(f"/api/frontend/conversations/{conversation_id}/turns", json={
         "content": "Escreva um script Python", "workspace_id": "default",
         "model_provider_id": "obsolete", "model_name": "obsolete",
+    })
+    assert turn.status_code == 404, turn.text  # Explicit manual selection is never silently replaced.
+    turn = client.post(f"/api/frontend/conversations/{conversation_id}/turns", json={
+        "content": "Escreva um script Python", "workspace_id": "default",
     })
     assert turn.status_code == 200, turn.text
     assert turn.json()["result"]["model"]["model"] == "code-model"
@@ -159,7 +161,7 @@ def test_frontend_uses_saved_generalist_with_mom_on_and_off(tmp_path):
             restarted.mom.configure(restarted.context(), "default", False, routes(), 1)
         turn = client.post(f"/api/frontend/conversations/{conversation_id}/turns", json={"content": message})
         assert turn.status_code == 200, turn.text
-        assert turn.json()["result"]["model"]["model"] == "generalist"
+        assert turn.json()["result"]["model"]["model"] == ("generalist" if message == "Oi" else "code-model")
 
 
 def test_primary_routes_by_operation_and_retains_identity_after_restart(setup):
@@ -183,7 +185,9 @@ def test_primary_routes_by_operation_and_retains_identity_after_restart(setup):
         request = call.args[0]
         assert request.agent_id == "artemis"
         assert request.tools == []
-        assert "Não use emojis" in build_chat_messages(request)[0]["content"]
+        messages = build_chat_messages(request)
+        assert "Não use emojis" not in messages[0]["content"]
+        assert "Não use emojis" in messages[-1]["content"]
     assert asdict(restarted.agents.get("artemis")) == primary_before
     assert asdict(restarted.agents.get("researcher")) == worker_before
 

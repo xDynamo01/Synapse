@@ -310,7 +310,7 @@ def test_project_knowledge_context_uses_selected_evidence_budget(tmp_path: Path)
     assert memory.calls == [
         (
             "alpha",
-            ["system", "user", "agent", "conversation", "session", "task", "mission", "knowledge"],
+            ["system", "user", "agent", "conversation", "session", "task", "mission", "workspace", "episodic", "working", "knowledge"],
             5,
             {"tags": ["project_knowledge", "project:project-a"]},
         )

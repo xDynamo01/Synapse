@@ -19,6 +19,7 @@ import type {
   ModelProviderInfo,
   MoMConfiguration,
   MoMConfigurationUpdate,
+  ExecutionResources,
   NotificationRecord,
   OperationalFact,
   ProviderSetting,
@@ -28,6 +29,7 @@ import type {
   ProjectManifestSummary,
   ProjectActivitySnapshot,
   SettingsSnapshot,
+  SwarmConfirmationResult,
   TextStreamEvent,
   TextTurnRequest,
   TextTurnResult,
@@ -72,6 +74,10 @@ export class SynapseFrontendClient {
 
   async momConfiguration(workspaceId: string): Promise<MoMConfiguration> {
     return this.get<MoMConfiguration>(`/api/primary/mom/configuration?workspace_id=${encodeURIComponent(workspaceId)}`);
+  }
+
+  async executionResources(workspaceId: string): Promise<ExecutionResources> {
+    return this.get<ExecutionResources>(`/api/primary/mom/resources?workspace_id=${encodeURIComponent(workspaceId)}`);
   }
 
   async saveMoMConfiguration(payload: MoMConfigurationUpdate): Promise<MoMConfiguration> {
@@ -252,6 +258,58 @@ export class SynapseFrontendClient {
     return this.get<ProjectListResult>("/api/projects");
   }
 
+  async missions(): Promise<Array<Record<string, unknown>>> {
+    return this.get<Array<Record<string, unknown>>>('/api/missions');
+  }
+
+  async agents(): Promise<Array<Record<string, unknown>>> {
+    return this.get<Array<Record<string, unknown>>>('/api/agents');
+  }
+
+  async createSwarm(payload: { mission_id: string; strategy: string; leader_agent_id?: string | null; member_agent_ids: string[] }): Promise<Record<string, unknown>> {
+    return this.post<Record<string, unknown>>('/api/swarms', payload);
+  }
+
+  async resolveSwarmConfirmation(requestId: string, action: "accept_recommended" | "keep_requested" | "cancel", scope: { workspace_id: string; project_id?: string | null; session_id?: string | null }): Promise<SwarmConfirmationResult> {
+    return this.post<SwarmConfirmationResult>(`/api/frontend/swarm/confirmations/${encodeURIComponent(requestId)}`, { action, ...scope });
+  }
+
+  async swarms(): Promise<Array<Record<string, unknown>>> {
+    return this.get<Array<Record<string, unknown>>>("/api/swarms");
+  }
+
+  async swarm(swarmId: string): Promise<Record<string, unknown>> {
+    return this.get<Record<string, unknown>>(`/api/swarms/${encodeURIComponent(swarmId)}`);
+  }
+
+  async swarmAction(swarmId: string, action: "start" | "pause" | "resume" | "cancel"): Promise<Record<string, unknown>> {
+    return this.post<Record<string, unknown>>(`/api/swarms/${encodeURIComponent(swarmId)}/${action}`, {});
+  }
+
+  async swarmTrace(swarmId: string): Promise<Record<string, unknown>> {
+    return this.get<Record<string, unknown>>(`/api/swarms/${encodeURIComponent(swarmId)}/trace`);
+  }
+
+  async swarmResult(swarmId: string): Promise<Record<string, unknown>> {
+    return this.get<Record<string, unknown>>(`/api/swarms/${encodeURIComponent(swarmId)}/result`);
+  }
+
+  async swarmMembers(swarmId: string): Promise<Record<string, unknown>> {
+    return this.get<Record<string, unknown>>(`/api/swarms/${encodeURIComponent(swarmId)}/members`);
+  }
+
+  async agentProfile(agentId: string): Promise<Record<string, unknown>> {
+    return this.get<Record<string, unknown>>(`/api/agents/${encodeURIComponent(agentId)}`);
+  }
+
+  async projectContext(projectId: string): Promise<Record<string, unknown>> {
+    return this.get<Record<string, unknown>>(`/api/projects/${encodeURIComponent(projectId)}/context`);
+  }
+
+  async agentTools(agentId: string): Promise<Record<string, unknown>> {
+    return this.get<Record<string, unknown>>(`/api/agents/${encodeURIComponent(agentId)}/tools`);
+  }
+
   async project(projectId: string): Promise<ProjectManifestSummary> {
     return this.get<ProjectManifestSummary>(`/api/projects/${encodeURIComponent(projectId)}`);
   }
@@ -409,6 +467,15 @@ export class SynapseFrontendClient {
     return this.get<ModelCatalogEntry[]>("/api/models/catalog");
   }
 
+  async importLocalModel(file: File): Promise<{ provider: string; path: string; filename: string; size_bytes: number }> {
+    const response = await fetch(this.url("/api/models/import"), {
+      method: "POST", headers: { "Content-Type": "application/octet-stream", "X-Model-Filename": file.name },
+      body: await file.arrayBuffer()
+    });
+    if (!response.ok) throw await this.errorFrom(response);
+    return await response.json() as { provider: string; path: string; filename: string; size_bytes: number };
+  }
+
   async modelProviders(): Promise<ModelProviderInfo[]> {
     return this.get<ModelProviderInfo[]>("/api/models/providers");
   }
@@ -448,6 +515,12 @@ export class SynapseFrontendClient {
 
   async ttsVoices(): Promise<VoicePackEntry[]> {
     return this.get<VoicePackEntry[]>("/api/voice/voices");
+  }
+
+  async createVoiceStudioProfile(payload: {
+    name: string; audio_base64: string; filename: string; language: string; ref_text: string;
+  }): Promise<{ profile: Record<string, unknown>; voices: VoicePackEntry[] }> {
+    return this.post<{ profile: Record<string, unknown>; voices: VoicePackEntry[] }>("/api/voice/voicestudio/profiles", payload);
   }
 
   async notifications(): Promise<NotificationRecord[]> {

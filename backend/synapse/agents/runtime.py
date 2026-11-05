@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from synapse.agent_tool_calling.runtime import AgentToolCallingRuntime
     from synapse.tool_discovery.models import AgentToolCatalog
     from synapse.tool_discovery.runtime import ToolDiscoveryRuntime
-from synapse.tools.calls import ToolCallPlan, ToolCallResult
+from synapse.tools.calls import ToolCallPlan, ToolCallRequest, ToolCallResult
 from synapse.tools.router import ToolRouter
 
 
@@ -70,6 +70,9 @@ class AgentRuntime:
         model_provider_override: str | None = None,
         model_override: str | None = None,
         model_request: ModelRequest | None = None,
+        allowed_tool_names: frozenset[str] | None = None,
+        max_tool_rounds: int = 1,
+        previous_tool_receipts: list[dict[str, Any]] | None = None,
     ) -> AgentRunResult:
         try:
             self._set_presence(
@@ -92,6 +95,32 @@ class AgentRuntime:
                     for tool in allowed_tools
                     if self.tool_router.tools.get_tool(tool["name"]).enabled
                 ]
+                known_names = {str(tool.get("name")) for tool in allowed_tools}
+                definitions = (
+                    self.tool_router.tools.registry.list_registered_tools()
+                    if agent.role.strip().lower() == "primary_agent"
+                    else self.tool_router.tools.list_tools()
+                )
+                for definition in definitions:
+                    required_permissions = {
+                        *definition.permissions_required,
+                        *( [definition.required_permission] if definition.required_permission else [] ),
+                    }
+                    if (
+                        definition.enabled
+                        and definition.tool_id not in known_names
+                        and definition.tool_id not in policy.forbidden_tools
+                        and required_permissions.issubset(set(policy.allowed_permissions))
+                    ):
+                        allowed_tools.append(
+                            {
+                                "name": definition.tool_id,
+                                "description": definition.description,
+                                "parameters": definition.input_schema,
+                            }
+                        )
+            if allowed_tool_names is not None:
+                allowed_tools = [tool for tool in allowed_tools if tool["name"] in allowed_tool_names]
             self.event_bus.emit(
                 "agent.run.started",
                 context.actor_id,
@@ -102,19 +131,28 @@ class AgentRuntime:
                     "policy": policy.to_dict(),
                 },
             )
+            previous_tool_results = [
+                ToolCallResult(**{**receipt, "request": ToolCallRequest(**receipt["request"])})
+                for receipt in previous_tool_receipts or []
+            ]
+            initial_context = loaded_context.to_dict()
+            if previous_tool_results:
+                initial_context["tool_execution_results"] = [asdict(item) for item in previous_tool_results]
             model_response = self.models.generate_request(
-                replace(model_request, tools=allowed_tools)
+                replace(model_request, tools=allowed_tools, context=initial_context)
             ) if model_request is not None else self.models.generate(
                 agent=agent,
                 user_message=user_message,
-                context=loaded_context.to_dict(),
+                context=initial_context,
                 tools=allowed_tools,
                 provider_override=model_provider_override,
                 model_override=model_override,
             )
-            tool_results: list[ToolCallResult] = []
+            tool_results: list[ToolCallResult] = list(previous_tool_results or [])
             final_response = model_response.content
-            if model_response.tool_calls:
+            for round_index in range(max(1, min(max_tool_rounds, 8))):
+                if not model_response.tool_calls:
+                    break
                 self._set_presence(
                     agent_id,
                     "working",
@@ -161,31 +199,40 @@ class AgentRuntime:
                     else:
                         allowed_calls.append(call)
                 plan = ToolCallPlan(calls=allowed_calls)
-                tool_results = self.tool_router.execute_plan(
+                round_results = self.tool_router.execute_plan(
                     tool_context,
                     plan,
-                    allowed_permissions=agent.permissions,
+                    allowed_permissions=policy.allowed_permissions,
                     session_id=session_id,
                     project_id=project_id,
                     original_message_id=original_message_id,
                     policy=policy,
                 )
-                tool_results = [*blocked_results, *tool_results]
+                tool_results.extend([*blocked_results, *round_results])
                 final_response = self._response_after_tools(model_response, tool_results)
+                if any(item.status == "awaiting_approval" for item in tool_results):
+                    break
+                if max_tool_rounds > 1 and any(not item.success for item in tool_results):
+                    break
                 if all(item.status != "awaiting_approval" for item in tool_results):
                     result_context = loaded_context.to_dict()
                     result_context["tool_execution_results"] = [asdict(item) for item in tool_results]
+                    next_tools = allowed_tools if round_index + 1 < min(max_tool_rounds, 8) else []
                     followup = self.models.generate_request(
-                        replace(model_request, context=result_context, tools=[])
+                        replace(model_request, context=result_context, tools=next_tools)
                     ) if model_request is not None else self.models.generate(
                         agent=agent, user_message=user_message, context=result_context,
-                        tools=[], provider_override=model_provider_override,
+                        tools=next_tools, provider_override=model_provider_override,
                         model_override=model_override,
                     )
                     if followup.content and not followup.tool_calls:
                         final_response = followup.content
+                    model_response = followup
+            if (max_tool_rounds > 1 and model_response.tool_calls
+                    and not any(item.status == "awaiting_approval" or not item.success for item in tool_results)):
+                raise RuntimeError("Tool execution round limit reached before the agent finished its task.")
             tool_calling_result = None
-            if self.agent_tool_calling:
+            if self.agent_tool_calling and allowed_tool_names is None:
                 tool_calling_result = asdict(
                     self.agent_tool_calling.process_agent_output(
                         agent_id,

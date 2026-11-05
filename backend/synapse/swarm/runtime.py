@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import builtins
 from dataclasses import asdict, replace
+from threading import RLock
 from typing import Any
 
 from synapse.core.data_dir import DataDir
 from synapse.core.events import EventBus
 from synapse.core.serialization import dump_structured_file, load_structured_file
 from synapse.missions.errors import SwarmInvalidStrategy, SwarmNotFound
-from synapse.missions.models import SwarmDescriptor, SwarmStrategy, now_iso
+from synapse.missions.models import SwarmDescriptor, SwarmStrategy, WorkerDescriptor, now_iso
+from synapse.swarm.residency import SwarmResidencyPort
 from synapse.swarm.strategies import STRATEGIES
 
 
@@ -30,6 +32,8 @@ class SwarmRuntime:
         self.workers = workers
         self.ephemeral_agents = ephemeral_agents
         self.workforce_planner = workforce_planner
+        self.residency: SwarmResidencyPort | None = None
+        self.admission_lock = RLock()
 
     def create(
         self,
@@ -63,6 +67,7 @@ class SwarmRuntime:
         items = [
             SwarmDescriptor(**load_structured_file(path))
             for path in self.data_dir.resolve("swarms").glob("*.yaml")
+            if not path.name.endswith(".result.yaml")
         ]
         return sorted(
             (item for item in items if mission_id is None or item.mission_id == mission_id),
@@ -92,25 +97,48 @@ class SwarmRuntime:
         )
 
     def provision_workforce(self, swarm_id: str) -> builtins.list[Any]:
+        with self.admission_lock:
+            try:
+                return self._provision_workforce(swarm_id)
+            except Exception:
+                self._transition(swarm_id, "failed")
+                raise
+
+    def _provision_workforce(self, swarm_id: str) -> builtins.list[Any]:
+        existing = self.get(swarm_id).metadata.get("ephemeral_workforce", [])
+        if existing and self.ephemeral_agents is not None:
+            return [self.ephemeral_agents.get(item) for item in existing]
         workforce = self.get_workforce_plan(swarm_id)
         if workforce.approval_required:
             raise SwarmInvalidStrategy("Dynamic workforce requires approval before provisioning.")
         if not workforce.required:
+            if workforce.strategy == "deferred":
+                raise SwarmInvalidStrategy(f"Swarm workforce deferred: {workforce.reason}")
             return []
         if self.ephemeral_agents is None:
             raise SwarmInvalidStrategy("Ephemeral agent runtime is unavailable.")
         ephemeral_agents = self.ephemeral_agents
-        instances = [
-            ephemeral_agents.create_instance(spec, authority="swarm")
-            for spec in workforce.agents
-        ]
-        available = [
-            worker
-            for worker in self.workers.list()
-            if worker.status in {"idle", "online"} and worker.workload == 0
-        ]
-        for instance, worker in zip(instances, available, strict=False):
-            ephemeral_agents.assign_worker(instance.ephemeral_agent_id, worker.worker_id)
+        instances = []
+        registered = []
+        try:
+            for spec in workforce.agents:
+                instance = ephemeral_agents.create_instance(spec, authority="swarm")
+                instances.append(instance)
+                worker = self.workers.register(WorkerDescriptor(
+                    worker_id=f"swarm-{instance.ephemeral_agent_id.replace(':', '-')}",
+                    agent_id=instance.ephemeral_agent_id, status="idle",
+                    capabilities=list(spec.required_capabilities), tools=list(instance.tool_scope),
+                    metadata={"mission_id": instance.mission_id, "swarm_id": swarm_id},
+                ))
+                registered.append(worker.worker_id)
+                ephemeral_agents.assign_worker(instance.ephemeral_agent_id, worker.worker_id)
+        except Exception:
+            for instance in instances:
+                ephemeral_agents.cancel(instance.ephemeral_agent_id)
+                ephemeral_agents.destroy(instance.ephemeral_agent_id)
+            for worker_id in registered:
+                self.workers.disable(worker_id)
+            raise
         swarm = self.get(swarm_id)
         self._write(
             replace(
@@ -121,6 +149,8 @@ class SwarmRuntime:
                 metadata={
                     **swarm.metadata,
                     "ephemeral_workforce": [item.ephemeral_agent_id for item in instances],
+                    "max_parallelism": min(int(swarm.metadata.get("max_parallelism", 1)),
+                                           workforce.max_concurrency),
                 },
             )
         )
@@ -147,29 +177,76 @@ class SwarmRuntime:
         return [ephemeral_agents.get(item.ephemeral_agent_id) for item in instances]
 
     def start(self, swarm_id: str) -> SwarmDescriptor:
-        swarm = self._transition(swarm_id, "running")
-        self.events.emit("swarm.started", swarm.leader_agent_id or "swarm", asdict(swarm))
-        return swarm
+        with self.admission_lock:
+            current = self.get(swarm_id)
+            if current.status in {"completed", "cancelled", "failed"}:
+                raise SwarmInvalidStrategy("Terminal Swarm cannot be started again.")
+            self._write(replace(current, metadata={**current.metadata, "resource_transition": "PREPARING"}))
+            try:
+                if self.residency is not None:
+                    self.residency.prepare(current)
+            except Exception:
+                self._write(replace(current, metadata={**current.metadata, "resource_transition": "RECOVERY_REQUIRED"}))
+                raise
+            swarm = replace(current, status="running", metadata={**current.metadata, "resource_transition": "STABLE"})
+            self._write(swarm)
+            self.events.emit("swarm.started", swarm.leader_agent_id or "swarm", asdict(swarm))
+            return swarm
 
     def pause(self, swarm_id: str) -> SwarmDescriptor:
-        return self._transition(swarm_id, "paused")
+        with self.admission_lock:
+            return self._transition(swarm_id, "paused")
 
     def resume(self, swarm_id: str) -> SwarmDescriptor:
-        return self._transition(swarm_id, "running")
+        return self.start(swarm_id)
 
     def cancel(self, swarm_id: str) -> SwarmDescriptor:
-        swarm = self._transition(swarm_id, "cancelled")
-        self.events.emit("swarm.cancelled", swarm.leader_agent_id or "swarm", asdict(swarm))
-        return swarm
+        with self.admission_lock:
+            current = self.get(swarm_id)
+            self._write(replace(current, metadata={**current.metadata, "resource_transition": "RELEASING"}))
+            if self.residency is not None:
+                self.residency.release(current)
+            swarm = replace(current, status="cancelled", metadata={**current.metadata, "resource_transition": "STABLE"})
+            self._write(swarm)
+            self.events.emit("swarm.cancelled", swarm.leader_agent_id or "swarm", asdict(swarm))
+            return swarm
 
     def run(self, swarm_id: str) -> dict[str, Any]:
-        swarm = self.start(swarm_id)
+        swarm = self.get(swarm_id)
+        if swarm.status in {"completed", "failed", "cancelled"}:
+            raise SwarmInvalidStrategy("Terminal Swarm cannot be executed again.")
+        mission = self.missions.get_mission(swarm.mission_id)
+        if not mission.plan_id:
+            raise SwarmInvalidStrategy("Swarm mission requires an active plan.")
+        STRATEGIES[swarm.strategy].validate(
+            swarm, self.missions.planner.get_plan(swarm.mission_id, mission.plan_id))
+        try:
+            return self._run(swarm_id)
+        except Exception:
+            self._transition(swarm_id, "failed")
+            self._finish_workforce(swarm_id)
+            if self.residency is not None:
+                self.residency.release(self.get(swarm_id))
+            raise
+
+    def _finish_workforce(self, swarm_id: str) -> None:
+        if self.ephemeral_agents is None:
+            return
+        for agent_id in self.get(swarm_id).metadata.get("ephemeral_workforce", []):
+            instance = self.ephemeral_agents.get(agent_id)
+            if instance.state.value not in {"completed", "failed", "cancelled", "expired", "destroyed"}:
+                self.ephemeral_agents.cancel(agent_id)
+            self.ephemeral_agents.destroy(agent_id)
+
+    def _run(self, swarm_id: str) -> dict[str, Any]:
+        swarm = self.get(swarm_id)
         mission_record = self.missions.get_mission(swarm.mission_id)
         if not mission_record.plan_id:
             raise SwarmInvalidStrategy("Swarm mission requires an active plan.")
         plan = self.missions.planner.get_plan(swarm.mission_id, mission_record.plan_id)
         strategy = STRATEGIES[swarm.strategy]
         strategy.validate(swarm, plan)
+        swarm = self.start(swarm_id)
         prepared = strategy.prepare(swarm, plan)
         self.events.emit("swarm.prepared", swarm.leader_agent_id or "swarm", prepared)
         mission = strategy.dispatch(swarm, plan, self.missions)
@@ -181,6 +258,8 @@ class SwarmRuntime:
             self.data_dir.resolve(f"swarms/{swarm_id}.result.yaml"), asdict(consolidated)
         )
         status = "completed" if mission.status == "completed" else mission.status
+        if status != "completed" and any(task.status == "waiting_approval" for task in current_plan.tasks):
+            status = "waiting_approval"
         if (
             swarm.strategy == SwarmStrategy.REVIEW_LOOP
             and mission.status == "completed"
@@ -189,6 +268,10 @@ class SwarmRuntime:
         ):
             status = self._continue_review_loop(swarm, mission_record, current_plan, evaluation)
         self._transition(swarm_id, status)
+        if status in {"completed", "failed", "cancelled"} and self.residency is not None:
+            self.residency.release(self.get(swarm_id))
+        if status in {"completed", "failed", "cancelled"}:
+            self._finish_workforce(swarm_id)
         self.events.emit(
             f"swarm.{status}",
             swarm.leader_agent_id or "swarm",

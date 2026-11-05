@@ -154,6 +154,14 @@ class VoiceCleanupPayload(BaseModel):
     dry_run: bool = False
 
 
+class VoiceStudioProfilePayload(BaseModel):
+    name: str
+    audio_base64: str
+    filename: str = "reference.wav"
+    language: str = "pt-BR"
+    ref_text: str = ""
+
+
 class SpeechPipelineSessionCreatePayload(BaseModel):
     audio_session_id: str
     voice_session_id: str | None = None
@@ -452,6 +460,20 @@ def list_tts_voices(request: Request) -> list[dict[str, Any]]:
     runtime = runtime_from(request)
     try:
         return [asdict(item) for item in runtime.voice.list_tts_voices()]
+    except Exception as exc:
+        raise api_error(exc) from exc
+
+
+@router.post("/voice/voicestudio/profiles")
+def create_voicestudio_profile(payload: VoiceStudioProfilePayload, request: Request) -> dict[str, Any]:
+    runtime = runtime_from(request)
+    try:
+        audio = base64.b64decode(payload.audio_base64.split(",", 1)[-1], validate=True)
+        result = runtime.voice.create_voicestudio_profile(
+            name=payload.name, audio=audio, filename=payload.filename,
+            language=payload.language, ref_text=payload.ref_text,
+        )
+        return {"profile": result, "voices": [asdict(item) for item in runtime.voice.list_tts_voices()]}
     except Exception as exc:
         raise api_error(exc) from exc
 

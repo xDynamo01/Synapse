@@ -1,10 +1,14 @@
 import { useEffect, useMemo, useRef } from "react";
 import type { PresenceSceneState } from "../shared/presenceAdapter.js";
 import type { FrontendThemePreference } from "../shared/settingsPreferences.js";
+import { resolveTheme, themeMotion } from "../shared/themeEngine";
+import type { ThemePack } from "../shared/themeEngine";
 
 interface PresenceProps {
   scene: PresenceSceneState;
   theme?: FrontendThemePreference;
+  reducedMotion?: boolean;
+  focused?: boolean;
 }
 
 interface Particle {
@@ -30,10 +34,12 @@ const particles = makeParticles(340);
 const externalParticles = makeExternalParticles(74);
 const markers = makeMarkers();
 
-export function Presence({ scene, theme = "synapse" }: PresenceProps): React.ReactElement {
+export function Presence({ scene, theme = "synapse", reducedMotion = false, focused = true }: PresenceProps): React.ReactElement {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const sceneRef = useRef(scene);
   useEffect(() => { sceneRef.current = scene; }, [scene]);
+  const presentationRef = useRef({ pack: resolveTheme(theme), reducedMotion, focused });
+  useEffect(() => { presentationRef.current = { pack: resolveTheme(theme), reducedMotion, focused }; }, [theme, reducedMotion, focused]);
   const className = useMemo(() => `presence canvas ${scene.state}`, [scene.state]);
 
   useEffect(() => {
@@ -53,6 +59,8 @@ export function Presence({ scene, theme = "synapse" }: PresenceProps): React.Rea
     let deviceScale = 1;
     let envelope = 0;
     let previousTime = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let motionTime = 0;
 
     const resize = () => {
       const rect = canvas.getBoundingClientRect();
@@ -69,23 +77,35 @@ export function Presence({ scene, theme = "synapse" }: PresenceProps): React.Rea
     resize();
 
     const render = (timestamp: number) => {
-      if (!running) {
+      if (!running || document.hidden) {
         return;
       }
       const current = sceneRef.current;
+      const presentation = presentationRef.current;
+      const motion = themeMotion(presentation.reducedMotion, presentation.focused, document.hidden);
       const elapsed = Math.min(0.1, (timestamp - previousTime) / 1000);
       previousTime = timestamp;
       const target = current.state === "speaking" ? current.amplitude : 0;
       // Fast attack and softer release follow syllables without jumping at each UI update.
       envelope += (target - envelope) * (1 - Math.exp(-elapsed / (target > envelope ? 0.035 : 0.14)));
-      drawPresence(context, width, height, timestamp / 1000, { ...current, amplitude: envelope }, canvas);
-      frame = requestAnimationFrame(render);
+      if (motion.animate) motionTime += elapsed * presentation.pack.presence.speed;
+      drawPresence(context, width, height, motionTime, { ...current, amplitude: envelope }, presentation.pack);
+      timer = setTimeout(() => { frame = requestAnimationFrame(render); }, 1000 / motion.fps);
     };
+    const visibility = () => {
+      clearTimeout(timer);
+      cancelAnimationFrame(frame);
+      previousTime = performance.now();
+      if (!document.hidden) frame = requestAnimationFrame(render);
+    };
+    document.addEventListener("visibilitychange", visibility);
     frame = requestAnimationFrame(render);
 
     return () => {
       running = false;
       cancelAnimationFrame(frame);
+      clearTimeout(timer);
+      document.removeEventListener("visibilitychange", visibility);
       resizeObserver.disconnect();
     };
   }, []);
@@ -104,15 +124,15 @@ function drawPresence(
   height: number,
   time: number,
   scene: PresenceSceneState,
-  canvas: HTMLCanvasElement
+  pack: ThemePack
 ): void {
   const size = Math.min(width, height);
   const centerX = width / 2;
   const centerY = height / 2 - size * 0.035;
   const amplitude = Math.max(0, Math.min(scene.amplitude ?? 0, 1));
   const radius = size * 0.44 * (1 + amplitude * 0.045);
-  const energy = scene.state === "speaking" ? 0.95 + amplitude * 1.1 : scene.state === "processing" || scene.state === "listening" ? 1.12 : 0.82;
-  const palette = paletteFromCanvas(canvas);
+  const energy = scene.state === "speaking" ? 1.0 + amplitude * 1.1 : scene.state === "processing" || scene.state === "listening" ? 1.22 : 0.92;
+  const palette = paletteFromTheme(pack);
 
   context.clearRect(0, 0, width, height);
   context.globalCompositeOperation = "lighter";
@@ -129,13 +149,167 @@ function drawPresence(
   context.globalCompositeOperation = "source-over";
 }
 
+const nexusNodes = [
+  [-0.54, -0.68], [-0.22, -0.82], [0.13, -0.72], [0.48, -0.58],
+  [-0.68, -0.28], [-0.34, -0.33], [0, -0.42], [0.31, -0.27], [0.66, -0.18],
+  [-0.52, 0.08], [-0.21, 0.02], [0, 0], [0.25, 0.1], [0.55, 0.18],
+  [-0.61, 0.42], [-0.28, 0.34], [0.06, 0.46], [0.36, 0.38], [0.68, 0.51],
+  [-0.36, 0.72], [-0.02, 0.82], [0.31, 0.69]
+] as const;
+
+const nexusEdges = [
+  [0, 1], [1, 2], [2, 3], [0, 5], [1, 6], [2, 6], [2, 7], [3, 7],
+  [4, 5], [5, 6], [6, 7], [7, 8], [4, 9], [5, 10], [6, 11], [7, 12], [8, 13],
+  [9, 10], [10, 11], [11, 12], [12, 13], [9, 14], [10, 15], [11, 16], [12, 17], [13, 18],
+  [14, 15], [15, 16], [16, 17], [17, 18], [15, 19], [16, 20], [17, 21], [19, 20], [20, 21]
+] as const;
+
+function drawHolographicNexus(
+  context: CanvasRenderingContext2D,
+  centerX: number,
+  centerY: number,
+  radius: number,
+  time: number,
+  palette: ReturnType<typeof paletteFromTheme>,
+  energy: number,
+  amplitude: number
+): void {
+  const width = radius * 0.72;
+  const height = radius * 0.94;
+  const breathe = 1 + Math.sin(time * 0.62) * 0.018 + amplitude * 0.1;
+  const activeLift = energy > 1 ? Math.sin(time * 1.4) * radius * 0.012 : 0;
+
+  glow(context, centerX, centerY, radius * 0.58, palette.primary, 0.15 * energy);
+  for (let column = -3; column <= 3; column += 1) {
+    const x = centerX + column * radius * 0.09;
+    const phase = time * (0.19 + Math.abs(column) * 0.012) + column * 0.8;
+    const top = centerY - height * (0.72 + Math.sin(phase) * 0.08);
+    const bottom = centerY + height * (0.7 + Math.cos(phase) * 0.07);
+    const gradient = context.createLinearGradient(0, top, 0, bottom);
+    gradient.addColorStop(0, rgba(palette.primary, 0));
+    gradient.addColorStop(0.42, rgba(column === 2 ? palette.signal : palette.primary, (0.08 + amplitude * 0.08) * energy));
+    gradient.addColorStop(1, rgba(palette.primary, 0));
+    context.strokeStyle = gradient;
+    context.lineWidth = column === 0 ? 1.4 : 0.65;
+    context.shadowColor = rgba(palette.primary, 0.34);
+    context.shadowBlur = column === 0 ? 12 : 5;
+    context.beginPath();
+    context.moveTo(x, top);
+    context.lineTo(centerX + column * radius * 0.025, centerY);
+    context.lineTo(x + column * radius * 0.018, bottom);
+    context.stroke();
+  }
+
+  for (let arm = 0; arm < 8; arm += 1) {
+    const side = arm % 2 === 0 ? -1 : 1;
+    const lane = Math.floor(arm / 2);
+    const endX = centerX + side * radius * (0.58 + lane * 0.11);
+    const endY = centerY + (lane - 1.5) * radius * 0.28;
+    const controlX = centerX + side * radius * (0.22 + lane * 0.05);
+    const controlY = centerY + (lane - 1.5) * radius * 0.08;
+    const signal = arm === 1 || arm === 6;
+    context.strokeStyle = rgba(signal ? palette.signal : palette.primary, (signal ? 0.32 : 0.2) * energy);
+    context.lineWidth = signal ? 1.25 : 0.8;
+    context.shadowColor = rgba(signal ? palette.signal : palette.primary, 0.4);
+    context.shadowBlur = signal ? 9 : 5;
+    context.beginPath();
+    context.moveTo(centerX, centerY);
+    context.quadraticCurveTo(controlX, controlY, endX, endY);
+    context.stroke();
+    const travel = (time * (0.08 + lane * 0.012) + arm * 0.137) % 1;
+    const inverse = 1 - travel;
+    const pulseX = inverse * inverse * centerX + 2 * inverse * travel * controlX + travel * travel * endX;
+    const pulseY = inverse * inverse * centerY + 2 * inverse * travel * controlY + travel * travel * endY;
+    dot(context, pulseX, pulseY, signal ? 1.8 : 1.15, signal ? palette.signal : palette.bright, 0.75, signal ? 10 : 6);
+  }
+
+  context.save();
+  context.translate(centerX, centerY + activeLift);
+  context.scale(breathe, breathe);
+  for (const [from, to] of nexusEdges) {
+    const a = nexusNodes[from];
+    const b = nexusNodes[to];
+    const depthPulse = 0.5 + Math.sin(time * 0.48 + from * 0.72 + to * 0.19) * 0.5;
+    const edgeColor = (from + to) % 7 === 0 ? palette.white : palette.primary;
+    context.strokeStyle = rgba(edgeColor, (0.24 + depthPulse * 0.3) * energy);
+    context.lineWidth = depthPulse > 0.78 ? 1.05 : 0.65;
+    context.shadowColor = rgba(edgeColor, 0.3);
+    context.shadowBlur = depthPulse > 0.78 ? 7 : 3;
+    context.beginPath();
+    context.moveTo(a[0] * width, a[1] * height);
+    context.lineTo(b[0] * width, b[1] * height);
+    context.stroke();
+  }
+  nexusNodes.forEach((node, index) => {
+    const signal = index === 3 || index === 12 || index === 19;
+    const pulse = 0.52 + Math.sin(time * (0.72 + (index % 5) * 0.04) + index) * 0.4;
+    const color = signal ? palette.signal : index === 11 ? palette.white : palette.bright;
+    const size = index === 11 ? 3.8 + amplitude * 4.5 : signal ? 2.05 : 0.85 + pulse * 0.7;
+    dot(context, node[0] * width, node[1] * height, size, color, (0.62 + pulse * 0.46) * energy, signal || index === 11 ? 16 : 7);
+  });
+  context.restore();
+
+  drawCore(context, centerX, centerY + activeLift, radius * 0.86, time, palette, energy, amplitude);
+}
+
+function drawHudReticle(
+  context: CanvasRenderingContext2D,
+  centerX: number,
+  centerY: number,
+  radius: number,
+  time: number,
+  palette: ReturnType<typeof paletteFromTheme>,
+  energy: number,
+  amplitude: number
+): void {
+  const bracketRadius = radius * (0.77 + amplitude * 0.035);
+  const bracketLength = radius * 0.075;
+  const rotation = time * 0.055;
+  context.save();
+  context.translate(centerX, centerY);
+  context.rotate(rotation);
+  context.strokeStyle = rgba(palette.primary, 0.46 * energy);
+  context.lineWidth = 1.05;
+  for (let index = 0; index < 4; index += 1) {
+    context.save();
+    context.rotate(index * Math.PI / 2);
+    context.beginPath();
+    context.moveTo(bracketRadius - bracketLength, -radius * 0.035);
+    context.lineTo(bracketRadius, -radius * 0.035);
+    context.lineTo(bracketRadius, radius * 0.035);
+    context.lineTo(bracketRadius - bracketLength, radius * 0.035);
+    context.stroke();
+    context.restore();
+  }
+  context.restore();
+
+  const signalAngle = -0.72 - time * 0.085;
+  const signalRadius = radius * 0.89;
+  ring(context, centerX, centerY, signalRadius, signalAngle, signalAngle + Math.PI * 0.105, palette.signal, 0.7 * energy, 1.35);
+  const signalX = centerX + Math.cos(signalAngle + Math.PI * 0.0525) * signalRadius;
+  const signalY = centerY + Math.sin(signalAngle + Math.PI * 0.0525) * signalRadius;
+  dot(context, signalX, signalY, 2.25 + amplitude * 2.2, palette.signal, 0.82 * energy, 10);
+
+  for (let index = 0; index < 18; index += 1) {
+    const angle = (index / 18) * Math.PI * 2 - time * 0.035;
+    const inner = radius * (index % 3 === 0 ? 0.685 : 0.7);
+    const outer = radius * 0.72;
+    context.beginPath();
+    context.strokeStyle = rgba(index % 6 === 0 ? palette.signal : palette.primary, index % 6 === 0 ? 0.48 : 0.24);
+    context.lineWidth = index % 6 === 0 ? 1.2 : 0.65;
+    context.moveTo(Math.cos(angle) * inner + centerX, Math.sin(angle) * inner + centerY);
+    context.lineTo(Math.cos(angle) * outer + centerX, Math.sin(angle) * outer + centerY);
+    context.stroke();
+  }
+}
+
 function drawCore(
   context: CanvasRenderingContext2D,
   centerX: number,
   centerY: number,
   radius: number,
   time: number,
-  palette: ReturnType<typeof paletteFromCanvas>,
+  palette: ReturnType<typeof paletteFromTheme>,
   energy: number,
   amplitude: number
 ): void {
@@ -152,7 +326,7 @@ function drawInternalField(
   centerY: number,
   radius: number,
   time: number,
-  palette: ReturnType<typeof paletteFromCanvas>,
+  palette: ReturnType<typeof paletteFromTheme>,
   energy: number,
   amplitude: number
 ): void {
@@ -185,7 +359,7 @@ function drawTechnicalRing(
   centerY: number,
   ringRadius: number,
   time: number,
-  palette: ReturnType<typeof paletteFromCanvas>,
+  palette: ReturnType<typeof paletteFromTheme>,
   energy: number,
   amplitude: number
 ): void {
@@ -218,7 +392,7 @@ function drawOuterOrbits(
   centerY: number,
   radius: number,
   time: number,
-  palette: ReturnType<typeof paletteFromCanvas>,
+  palette: ReturnType<typeof paletteFromTheme>,
   energy: number
 ): void {
   const arcs = [
@@ -253,7 +427,7 @@ function drawExternalParticles(
   centerY: number,
   radius: number,
   time: number,
-  palette: ReturnType<typeof paletteFromCanvas>
+  palette: ReturnType<typeof paletteFromTheme>
 ): void {
   for (const particle of externalParticles) {
     const angle = particle.angle + time * particle.speed;
@@ -270,7 +444,7 @@ function drawSynapseFires(
   centerY: number,
   radius: number,
   time: number,
-  palette: ReturnType<typeof paletteFromCanvas>,
+  palette: ReturnType<typeof paletteFromTheme>,
   energy: number
 ): void {
   const fires = [
@@ -300,7 +474,7 @@ function drawMarkers(
   centerY: number,
   radius: number,
   time: number,
-  palette: ReturnType<typeof paletteFromCanvas>
+  palette: ReturnType<typeof paletteFromTheme>
 ): void {
   for (const marker of markers) {
     const angle = marker.angle + time * marker.speed;
@@ -427,22 +601,18 @@ interface Rgb {
   b: number;
 }
 
-function paletteFromCanvas(canvas: HTMLCanvasElement): { primary: Rgb; bright: Rgb; white: Rgb } {
-  const styles = getComputedStyle(canvas);
-  const primary = parseColor(styles.color) ?? { r: 0, g: 245, b: 230 };
+function paletteFromTheme(pack: ThemePack): { primary: Rgb; bright: Rgb; white: Rgb; signal: Rgb } {
+  const primary = parseColor(pack.colors.accent);
   return {
     primary,
     bright: mix(primary, { r: 217, g: 251, b: 255 }, 0.36),
-    white: { r: 244, g: 255, b: 255 }
+    white: { r: 244, g: 255, b: 255 },
+    signal: parseColor(pack.colors.signal)
   };
 }
 
-function parseColor(value: string): Rgb | null {
-  const match = value.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
-  if (!match) {
-    return null;
-  }
-  return { r: Number(match[1]), g: Number(match[2]), b: Number(match[3]) };
+function parseColor(value: string): Rgb {
+  return { r: parseInt(value.slice(1, 3), 16), g: parseInt(value.slice(3, 5), 16), b: parseInt(value.slice(5, 7), 16) };
 }
 
 function mix(a: Rgb, b: Rgb, amount: number): Rgb {

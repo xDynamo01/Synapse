@@ -67,7 +67,11 @@ class ToolDiscoveryRuntime:
                     metadata={"source": "tool_discovery"},
                 ),
             )
-            for definition in self.tools.list_tools()
+            for definition in (
+                self.tools.registry.list_registered_tools()
+                if caller_type == "agent"
+                else self.tools.list_tools()
+            )
         ]
         available = sum(view.available for view in views)
         approval_required = sum(view.requires_approval for view in views)

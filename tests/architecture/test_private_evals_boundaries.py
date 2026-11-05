@@ -959,6 +959,6 @@ def test_run_finalization_has_no_future_or_external_behavior() -> None:
 
 def test_private_evals_introduces_no_bounded_context_cycle() -> None:
     graph = _runtime_context_graph()
-    assert len(graph) == 306  # Primary MoM: api -> mom -> core.
+    assert len(graph) == 313  # Includes the acyclic JEV decision -> core dependency.
     components = cyclic_components(graph)
     assert all("private_evals" not in members for members, _ in components)

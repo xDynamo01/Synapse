@@ -59,6 +59,10 @@ def new_runtime(path: Path, adapter: ControlledExecutionAdapter | None = None):
 
 def register_workers(runtime, count: int) -> None:
     for index in range(count):
+        runtime.data_dir.ensure_file(f"agents/agent-{index}/CONFIG.yaml", json.dumps({
+            "id": f"agent-{index}", "name": f"Agent {index}", "role": "worker",
+            "preferred_model": "mock/deterministic",
+        }))
         runtime.worker_registry.register(
             WorkerDescriptor(
                 worker_id=f"worker-{index}",
@@ -170,6 +174,10 @@ def test_review_loop_preserves_rejection_and_second_approval() -> None:
     with tempfile.TemporaryDirectory() as directory:
         adapter = ControlledExecutionAdapter(reviews=[False, True])
         runtime = new_runtime(Path(directory) / "data", adapter)
+        for name in ("producer", "reviewer"):
+            runtime.data_dir.ensure_file(f"agents/{name}/CONFIG.yaml", json.dumps({
+                "id": name, "name": name, "role": "worker", "preferred_model": "mock/deterministic",
+            }))
         runtime.worker_registry.register(WorkerDescriptor("producer-worker", "producer", "idle", ["produce"]))
         runtime.worker_registry.register(WorkerDescriptor("reviewer-worker", "reviewer", "idle", ["review"]))
         mission, _ = plan_mission(

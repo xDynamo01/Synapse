@@ -81,14 +81,17 @@ PACKAGE_MODULES = {
     ),
     "speech_adapters": (
         "__init__.py",
+        "chattts_tts.py",
         "execution.py",
         "faster_whisper.py",
         "interfaces.py",
+        "kokoro_tts.py",
         "local_analysis.py",
         "models.py",
         "piper_tts.py",
         "registry.py",
         "runtime.py",
+        "voicestudio_tts.py",
     ),
     "voice_composition": ("__init__.py", "conversation.py", "runtime.py"),
 }
@@ -320,9 +323,10 @@ def test_frozen_tts_and_visual_external_blocker_classification(tmp_path: Path) -
 def test_frozen_graph_and_tolerated_scc_baseline() -> None:
     runtime = _runtime_context_graph()
     source = context_graph()
-    assert len(runtime) == 313  # Project Knowledge adds document/index lifecycle edges.
+    # Current graph includes the governed Project Knowledge ingestion facade.
+    assert len(runtime) == 313
     assert [(len(members), edges) for members, edges in cyclic_components(runtime)] == [(11, 31)]
-    assert len(source) == 352  # Source graph includes project knowledge ingestion facade.
+    assert len(source) == 352
     assert sorted((len(members), edges) for members, edges in cyclic_components(source)) == [
         (3, 4),
         (24, 80),

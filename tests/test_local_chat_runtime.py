@@ -182,7 +182,8 @@ class LocalChatRuntimeTests(unittest.TestCase):
             request = generate.call_args.args[0]
         self.assertEqual(request.agent_id, "artemis")
         self.assertIn("Seja objetiva", request.context["agent_identity"]["personality"])
-        self.assertIn("Não use emojis", build_chat_messages(request)[0]["content"])
+        self.assertNotIn("Não use emojis", build_chat_messages(request)[0]["content"])
+        self.assertIn("Não use emojis", build_chat_messages(request)[-1]["content"])
 
         restarted = create_runtime(settings)
         mock_lmstudio(restarted)
@@ -190,7 +191,8 @@ class LocalChatRuntimeTests(unittest.TestCase):
             restarted.chat.local_chat(restarted.context(), "Quais são suas funcionalidades?")
             request = generate.call_args.args[0]
         prompt = build_chat_messages(request)[0]["content"]
-        self.assertIn("Não use emojis", prompt)
+        self.assertNotIn("Não use emojis", prompt)
+        self.assertIn("Não use emojis", build_chat_messages(request)[-1]["content"])
         self.assertIn("Your Synapse agent name is Artemis", prompt)
         self.assertIn("list_directory", prompt)
         self.assertTrue(request.tools)
@@ -198,7 +200,7 @@ class LocalChatRuntimeTests(unittest.TestCase):
         self.assertIn("Histórico de conversas", prompt)
         with patch.object(restarted.models, "generate_request", wraps=restarted.models.generate_request) as generate:
             restarted.chat.local_chat(restarted.context(), "oi", agent_id="artemis")
-            self.assertIn("Não use emojis", build_chat_messages(generate.call_args.args[0])[0]["content"])
+            self.assertIn("Não use emojis", build_chat_messages(generate.call_args.args[0])[-1]["content"])
 
         store = restarted.memory
         self.assertIsNotNone(store)
@@ -223,18 +225,19 @@ class LocalChatRuntimeTests(unittest.TestCase):
         self.assertEqual(runtime.memory.response_style(
             runtime.context("artemis", actor_type="agent"), "Não use emojis"), "")
 
-    def test_local_chat_policy_default_disabled(self) -> None:
+    def test_local_chat_policy_default_enabled(self) -> None:
         directory, _, runtime = runtime_in_tempdir()
         self.addCleanup(directory.cleanup)
 
         policy = runtime.chat.load_local_chat_policy()
 
-        self.assertFalse(policy["enabled"])
+        self.assertTrue(policy["enabled"])
         self.assertEqual(policy["provider_id"], "lmstudio_local")
 
     def test_local_chat_command_fails_when_disabled(self) -> None:
-        directory, _, runtime = runtime_in_tempdir()
+        directory, settings, runtime = runtime_in_tempdir()
         self.addCleanup(directory.cleanup)
+        write_json(settings.data_dir / "config/local_chat_policy.yaml", {"local_chat": {"enabled": False}})
 
         result = runtime.commands.execute(runtime.context(), '/local-chat "hello"')
 

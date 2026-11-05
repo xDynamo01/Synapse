@@ -70,7 +70,9 @@ _ID_KEYS = {
     OperationalEntityKind.WORKER: ("worker_id", "agent_id"),
     OperationalEntityKind.SWARM: ("swarm_id",),
     OperationalEntityKind.MISSION: ("mission_id",),
-    OperationalEntityKind.TASK: ("task_id",),
+    # TaskRuntime serializes its stable identifier as ``id``; API command
+    # envelopes and other producers may use the explicit ``task_id`` name.
+    OperationalEntityKind.TASK: ("task_id", "id"),
     OperationalEntityKind.TOOL_EXECUTION: ("call_id", "tool_call_id", "tool"),
     OperationalEntityKind.MEMORY_SOURCE: ("memory_id", "record_id"),
     OperationalEntityKind.CONTEXT_SOURCE: ("context_id", "snapshot_id"),
@@ -194,7 +196,7 @@ def _entity_id(
             return _optional_text(record.payload.get("sender_agent_id"))
         if role == "user":
             return _optional_text(record.payload.get("receiver_agent_id"))
-    if kind is OperationalEntityKind.TASK:
+    if kind is OperationalEntityKind.TASK and record.event_type.startswith("conversation."):
         return _optional_text(record.payload.get("conversation_id"))
     for key in _ID_KEYS[kind]:
         value = _optional_text(record.payload.get(key))

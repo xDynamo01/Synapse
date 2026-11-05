@@ -97,7 +97,10 @@ class ToolDiscoveryRuntimeTests(unittest.TestCase):
         catalog = runtime.tool_discovery.catalog_for_agent("artemis")
         views = {tool.tool_id: tool for tool in catalog.tools}
 
-        self.assertEqual(catalog.total_tools, len(runtime.tool_runtime.list_tools()))
+        self.assertEqual(catalog.total_tools, len(runtime.tool_runtime.registry.list_registered_tools()))
+        self.assertIn("read_file", views)
+        self.assertIn("edit_file", views)
+        self.assertIn("delete_file", views)
         self.assertTrue(views["health.summary"].available)
         self.assertFalse(views["danger.mock"].available)
         self.assertTrue(views["danger.mock"].requires_approval)

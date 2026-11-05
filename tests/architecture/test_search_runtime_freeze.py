@@ -230,8 +230,8 @@ def test_composition_is_local_opt_in_build_only_and_bootstrapped_only_by_adapter
 def test_search_dependency_directions_graph_and_scc_baseline_are_frozen() -> None:
     runtime = _runtime_context_graph()
     source = context_graph()
-    assert len(runtime) == 306  # Primary MoM: api -> mom -> core.
-    assert len(source) == 341  # Primary MoM adds the same two source edges.
+    assert len(runtime) == 313  # Includes the acyclic JEV decision -> core dependency.
+    assert len(source) == 352
     expected = {
         ("search_adapters", "search"),
         ("search_integrations", "intelligence_boundary"),

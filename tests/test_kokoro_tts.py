@@ -47,8 +47,33 @@ def test_dora_output_is_inline_and_temporary(tmp_path):
 
 def test_missing_assets_and_other_voices_are_not_silently_replaced(tmp_path):
     engine = adapter(tmp_path)
-    assert engine.health().status == "unavailable"
-    with pytest.raises(ValidationError, match="only Dora"):
+    assert engine.health().status == "unconfigured"
+    with pytest.raises(ValidationError, match="ready-made feminine"):
         engine.synthesize(AudioOutputRequest(session_id="test", text="Olá", voice_id="synapse-cadu"))
     with pytest.raises(ValidationError, match="unavailable"):
         engine.synthesize(AudioOutputRequest(session_id="test", text="Olá"))
+
+
+def test_ready_feminine_voice_and_language_are_forwarded(tmp_path):
+    engine = adapter(tmp_path)
+    with patch.object(engine, "_verify", return_value=True):
+        result = engine.synthesize(AudioOutputRequest(
+            session_id="test", text="Hello.", voice_id="af_heart", language="en-US"
+        ))
+    assert result.voice_id == "af_heart"
+
+
+def test_feminine_voice_rejects_a_mismatched_language(tmp_path):
+    engine = adapter(tmp_path)
+    with pytest.raises(ValidationError, match="requires language en-US"):
+        engine.synthesize(AudioOutputRequest(
+            session_id="test", text="Hello.", voice_id="af_heart", language="pt-BR"
+        ))
+
+
+def test_partially_installed_kokoro_is_unavailable(tmp_path):
+    engine = adapter(tmp_path)
+    model = engine._paths()[2]
+    model.parent.mkdir(parents=True)
+    model.write_bytes(b"invalid model")
+    assert engine.health().status == "unavailable"

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Tray } from "electron";
 import type { OpenDialogOptions } from "electron";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -27,7 +27,41 @@ const sidecarSupervisor = new BackendSidecarSupervisor({
 });
 
 let mainWindow: BrowserWindow | null = null;
+let tray: Tray | null = null;
 let sidecarStopCompleted = false;
+let isQuitting = false;
+
+function showMainWindow(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    mainWindow = createMainWindow();
+    return;
+  }
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore();
+  }
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+function hideToTray(): void {
+  mainWindow?.hide();
+}
+
+function createTray(): void {
+  if (tray) {
+    return;
+  }
+  const image = nativeImage.createFromPath(iconPath);
+  tray = new Tray(image);
+  tray.setToolTip("Synapse");
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: "Abrir Synapse", click: showMainWindow },
+    { type: "separator" },
+    { label: "Sair", click: () => { isQuitting = true; app.quit(); } }
+  ]));
+  tray.on("click", showMainWindow);
+  tray.on("double-click", showMainWindow);
+}
 
 function createMainWindow(): BrowserWindow {
   const window = new BrowserWindow({
@@ -51,6 +85,12 @@ function createMainWindow(): BrowserWindow {
   });
   window.removeMenu();
   mainWindow = window;
+  window.on("close", (event) => {
+    if (!isQuitting) {
+      event.preventDefault();
+      hideToTray();
+    }
+  });
   if (isDevelopment) {
     void window.loadURL("http://127.0.0.1:5174");
   } else {
@@ -149,7 +189,7 @@ function registerIpc(): void {
     return BrowserWindow.fromWebContents(event.sender)?.isMaximized() ?? false;
   });
   ipcMain.handle("synapse:window:close", (event) => {
-    BrowserWindow.fromWebContents(event.sender)?.close();
+    BrowserWindow.fromWebContents(event.sender)?.hide();
   });
 }
 
@@ -192,6 +232,7 @@ function mimeTypeFor(filename: string): string | null {
 
 void app.whenReady().then(() => {
   registerIpc();
+  createTray();
   void sidecarSupervisor.ensureStarted().catch((error) => {
     console.error("SYNAPSE_SIDECAR_STARTUP_FAILED", error);
   });
@@ -204,9 +245,13 @@ void app.whenReady().then(() => {
 });
 
 app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") {
+  if (process.platform !== "darwin" && isQuitting) {
     app.quit();
   }
+});
+
+app.on("before-quit", () => {
+  isQuitting = true;
 });
 
 app.on("will-quit", (event) => {
@@ -216,6 +261,8 @@ app.on("will-quit", (event) => {
   event.preventDefault();
   void sidecarSupervisor.stop().finally(() => {
     sidecarStopCompleted = true;
+    tray?.destroy();
+    tray = null;
     app.quit();
   });
 });

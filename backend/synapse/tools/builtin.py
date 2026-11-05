@@ -9,6 +9,7 @@ from synapse.core.exceptions import ToolExecutionError, ValidationError
 from synapse.core.permissions import PermissionContext
 from synapse.tasks.runtime import TaskRuntime
 from synapse.tools.base import Tool, ToolRegistry, ToolSpec
+from synapse.tools.filesystem_access import authorized_roots, resolve_tool_path
 from synapse.tools.models import ToolDefinition, ToolExecutionRequest
 from synapse.tools.registry import RuntimeToolRegistry
 from synapse.tools.search import SearchToolPort, UnconfiguredSearchTool
@@ -17,7 +18,7 @@ from synapse.tools.search import SearchToolPort, UnconfiguredSearchTool
 class ReadFileTool:
     spec = ToolSpec(
         name="read_file",
-        description="Read a UTF-8 text file inside DATA_DIR.",
+        description="Read one UTF-8 text file by its absolute path. The path must include the filename. For a folder, use list_directory first.",
         permission="filesystem.read",
         risk_level="low",
     )
@@ -26,14 +27,16 @@ class ReadFileTool:
         self.data_dir = data_dir
 
     def run(self, context: PermissionContext, **kwargs: Any) -> dict[str, Any]:
-        path = self.data_dir.resolve(str(kwargs["path"]))
+        path = resolve_tool_path(self.data_dir, str(kwargs["path"]))
+        if path.is_dir():
+            raise ValidationError("read_file requires a file, not a directory. Use list_directory on this path, then read a file inside it.")
         return {"path": str(path), "content": path.read_text(encoding="utf-8")}
 
 
 class WriteFileTool:
     spec = ToolSpec(
         name="write_file",
-        description="Write or append a UTF-8 text file inside DATA_DIR.",
+        description="Create, replace or append a UTF-8 text file in an authorized directory. Requires approval.",
         permission="filesystem.write",
         risk_level="high",
     )
@@ -42,7 +45,7 @@ class WriteFileTool:
         self.data_dir = data_dir
 
     def run(self, context: PermissionContext, **kwargs: Any) -> dict[str, Any]:
-        path = self.data_dir.resolve(str(kwargs["path"]))
+        path = resolve_tool_path(self.data_dir, str(kwargs["path"]), mutation=True)
         content = str(kwargs.get("content", ""))
         append = bool(kwargs.get("append", False))
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -54,10 +57,53 @@ class WriteFileTool:
         return {"path": str(path), "bytes": len(content.encode("utf-8")), "append": append}
 
 
+class EditFileTool:
+    spec = ToolSpec(name="edit_file", description="Replace one exact text occurrence in an authorized file. Requires approval.",
+                    permission="filesystem.write", risk_level="high")
+
+    def __init__(self, data_dir: DataDir):
+        self.data_dir = data_dir
+
+    def run(self, context: PermissionContext, **kwargs: object) -> dict[str, object]:
+        path = resolve_tool_path(self.data_dir, str(kwargs["path"]), mutation=True)
+        old_text, new_text = str(kwargs["old_text"]), str(kwargs["new_text"])
+        content = path.read_text(encoding="utf-8")
+        if not old_text or content.count(old_text) != 1:
+            raise ValidationError("Edit requires exactly one occurrence of old_text.")
+        path.write_text(content.replace(old_text, new_text, 1), encoding="utf-8")
+        return {"path": str(path), "replacements": 1}
+
+
+class DeleteFileTool:
+    spec = ToolSpec(name="delete_file", description="Delete one regular file in an authorized directory. Requires approval; never deletes directories.",
+                    permission="filesystem.write", risk_level="high")
+
+    def __init__(self, data_dir: DataDir):
+        self.data_dir = data_dir
+
+    def run(self, context: PermissionContext, **kwargs: object) -> dict[str, object]:
+        path = resolve_tool_path(self.data_dir, str(kwargs["path"]), mutation=True)
+        if not path.is_file():
+            raise ValidationError("delete_file requires an existing regular file.")
+        path.unlink()
+        return {"path": str(path), "deleted": True}
+
+
+class ListDisksTool:
+    spec = ToolSpec(name="list_disks", description="List authorized filesystem roots and available disks. Use absolute paths to navigate them.",
+                    permission="filesystem.list", risk_level="low")
+
+    def __init__(self, data_dir: DataDir):
+        self.data_dir = data_dir
+
+    def run(self, context: PermissionContext, **kwargs: object) -> dict[str, object]:
+        return {"roots": [str(root) for root in authorized_roots(self.data_dir)]}
+
+
 class ListDirectoryTool:
     spec = ToolSpec(
         name="list_directory",
-        description="List files and directories inside DATA_DIR.",
+        description="List files and directories in Synapse data or an authorized project directory.",
         permission="filesystem.list",
         risk_level="low",
     )
@@ -66,7 +112,7 @@ class ListDirectoryTool:
         self.data_dir = data_dir
 
     def run(self, context: PermissionContext, **kwargs: Any) -> dict[str, Any]:
-        path = self.data_dir.resolve(str(kwargs.get("path", ".")))
+        path = resolve_tool_path(self.data_dir, str(kwargs.get("path", ".")))
         if not path.is_dir():
             raise ValidationError(f"Not a directory: {path}")
         entries = [
@@ -79,7 +125,7 @@ class ListDirectoryTool:
 class SearchFilesTool:
     spec = ToolSpec(
         name="search_files",
-        description="Search text files inside DATA_DIR by pattern and optional query.",
+        description="Search text files in an authorized directory or disk by pattern and optional query. Accepts absolute paths.",
         permission="filesystem.search",
         risk_level="low",
     )
@@ -88,7 +134,7 @@ class SearchFilesTool:
         self.data_dir = data_dir
 
     def run(self, context: PermissionContext, **kwargs: Any) -> dict[str, Any]:
-        root = self.data_dir.resolve(str(kwargs.get("path", ".")))
+        root = resolve_tool_path(self.data_dir, str(kwargs.get("path", ".")))
         pattern = str(kwargs.get("pattern", "*"))
         query = kwargs.get("query")
         max_results = int(kwargs.get("max_results", 50))
@@ -101,15 +147,19 @@ class SearchFilesTool:
                 break
             if not path.is_file():
                 continue
+            try:
+                path = resolve_tool_path(self.data_dir, str(path))
+            except ValidationError:
+                continue
             if query is None:
-                results.append({"path": str(path.relative_to(self.data_dir.root))})
+                results.append({"path": str(path)})
                 continue
             try:
                 text = path.read_text(encoding="utf-8")
             except UnicodeDecodeError:
                 continue
             if str(query) in text:
-                results.append({"path": str(path.relative_to(self.data_dir.root))})
+                results.append({"path": str(path)})
         return {"results": results}
 
 
@@ -213,6 +263,9 @@ def register_builtin_tools(
 ) -> None:
     registry.register(ReadFileTool(data_dir))
     registry.register(WriteFileTool(data_dir))
+    registry.register(EditFileTool(data_dir))
+    registry.register(DeleteFileTool(data_dir))
+    registry.register(ListDisksTool(data_dir))
     registry.register(ListDirectoryTool(data_dir))
     registry.register(SearchFilesTool(data_dir))
     registry.register(WebSearchTool(search))
@@ -231,6 +284,9 @@ def register_builtin_runtime_tools(
     tools = (
         ReadFileTool(data_dir),
         WriteFileTool(data_dir),
+        EditFileTool(data_dir),
+        DeleteFileTool(data_dir),
+        ListDisksTool(data_dir),
         ListDirectoryTool(data_dir),
         SearchFilesTool(data_dir),
         WebSearchTool(search),
@@ -239,6 +295,10 @@ def register_builtin_runtime_tools(
         UpdateTaskTool(task_runtime),
     )
     schemas = {
+        "list_disks": _schema({}),
+        "edit_file": _schema({"path": {"type": "string"}, "old_text": {"type": "string"},
+                              "new_text": {"type": "string"}}, ["path", "old_text", "new_text"]),
+        "delete_file": _schema({"path": {"type": "string"}}, ["path"]),
         "read_file": _schema({"path": {"type": "string"}}, ["path"]),
         "write_file": _schema(
             {
@@ -306,6 +366,7 @@ def register_builtin_runtime_tools(
                 output_schema={"type": "object"},
                 required_permission=tool.spec.permission,
                 risk_level=tool.spec.risk_level,
+                approval_required=tool.spec.name in {"write_file", "edit_file", "delete_file", "create_task", "update_task", "send_agent_message"},
                 metadata={"legacy_catalog": True},
             ),
             _BuiltinToolAdapter(tool),

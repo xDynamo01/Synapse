@@ -92,14 +92,11 @@ cache, 3D engine or design-system dependency until a later slice proves the need
    `processing`, `speaking`, `interrupted`, `failed`, and `disconnected`,
    including real audio amplitude for microphone/playback states, reduced-motion
    budget, unfocused throttling, resize handling and CSS fallback.
-8. **Activity/Constellation** — project activity snapshot/events/SSE into an organic
-   visual projection with cursor invalid/resync handling.
-   **Slice 8 complete:** the sidebar Activity button now toggles the central
-   surface between Presence and a factual PixiJS constellation backed by the
-   existing Operational Projection snapshot/events/SSE contracts. The frontend
-   adapter owns semantic color mapping, stable asymmetric layout, hover/selection,
-   stale/cross-project rejection, resync/degraded/disconnected states,
-   deterministic aggregation and reduced-motion/fallback behavior.
+8. **Workspace operational surface** — projects, files, CLI work, research and Swarm
+   execution remain the active replacement for the retired Activity/Constellation idea.
+   The former constellation renderer is not part of the current product direction;
+   operational projection contracts may remain as backend infrastructure for Workspace
+   and Swarm consumers.
 9. **Insight** — hardware, provider, diagnostics and model recommendation panel.
    **Slice 9 complete:** the sidebar Insight action opens a responsive elevated
    internal panel over the workspace, backed by the existing System Insight report
@@ -162,6 +159,40 @@ in `docs/legacy/installed-e2e-harness.md`; current Activity, Settings, theme and
 conversation validation must use the real local runtime and normal component/
 integration tests. Installer, root launcher and release artifact generation are
 not active targets.
+
+### Theme Engine — bundled presentation foundation
+
+The [Theme Engine](../frontend/THEME_ENGINE.md) is
+implemented for bundled packs. Existing themes are migrated; full thematic art
+directions are complete for Synapse Core and Cyberpunk. Gothic, animals, aquatic,
+space, minimal, Cozy and pink remain future work. This does not change backend
+readiness.
+
+### Future product stage — Integrated Visual Workspace
+
+Status: **PLANNED / NOT STARTED**
+
+The product backlog reserves a future left-sidebar surface for an integrated visual
+workspace. It is not a redesign of Presence and it is not a replacement for the
+Workspace CLI. The intended direction is a deep, project-scoped creative environment
+where the user can create and edit visual artifacts inside Synapse and ask the Primary
+Agent or a governed Swarm to work on those artifacts in the same project context.
+
+The stage may eventually include:
+
+- a persistent canvas and document model with layers, selections, revisions and export;
+- project-owned image assets and references, with explicit file provenance;
+- generation and region-edit operations through configured local or external models;
+- agent/tool actions that can inspect, transform, review and organize the visual document;
+- asynchronous jobs, progress, cancellation, approvals and recoverable failures;
+- integration with Project Files, Model Hub, Provider Settings, Swarm and existing
+  permission/tool boundaries.
+
+This stage must not begin with a full Photoshop clone. Its first implementation slice
+requires an approved product/architecture plan for the document model, rendering
+boundary, asset custody, model capability contracts and agent authority. No sidebar
+entry, backend route, visual editor, image-generation provider or preload capability is
+authorized by this roadmap entry alone.
 
 ## Completed phase — Deployment Runtime
 

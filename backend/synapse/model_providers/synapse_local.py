@@ -14,9 +14,13 @@ from threading import Condition
 from typing import Any, Iterator
 from urllib import request
 
+import psutil
+from pydantic import BaseModel, ConfigDict, Field
+
 from synapse.core.data_dir import DataDir
 from synapse.core.events import EventBus
-from synapse.core.serialization import load_structured_file
+from synapse.core.execution_policy import ExecutionRegime, ResourcePolicy
+from synapse.core.serialization import dump_json, load_structured_file
 from synapse.models.adapters import OpenAICompatibleAdapter
 from synapse.models.errors import ModelError
 from synapse.models.types import ModelRequest, ModelResponse
@@ -26,6 +30,25 @@ MAX_LOG_BYTES = 256 * 1024
 MAX_LOG_FILES = 5
 MAX_LOG_AGE_SECONDS = 24 * 60 * 60
 ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+
+class _ReservedProcess(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    pid: int = Field(gt=0)
+    created_at: float
+
+
+class _ReservationRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    models: list[str]
+    ram_bytes: int = Field(gt=0)
+    vram_bytes: int = Field(ge=0)
+    processes: list[_ReservedProcess]
+
+
+class _ReservationJournal(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    owners: dict[str, _ReservationRecord] = Field(default_factory=dict)
 
 
 @dataclass
@@ -58,6 +81,14 @@ class SynapseLocalModelAdapter:
         self.max_loaded_models = limit
         self._condition = Condition()
         self._closed = False
+        self.resource_policy = ResourcePolicy.RESPONSIVE
+        self._reservations: dict[str, tuple[str, ...]] = {}
+        self._reservation_bytes: dict[str, tuple[int, int]] = {}
+        self._reservation_path = self.data_dir.resolve("model-residency/reservations.json")
+        self._recovery_pending = (
+            _ReservationJournal.model_validate_json(self._reservation_path.read_text(encoding="utf-8")).owners
+            if self._reservation_path.exists() else {}
+        )
         atexit.register(self.shutdown)
 
     def generate(self, request_payload: ModelRequest) -> ModelResponse:
@@ -78,6 +109,7 @@ class SynapseLocalModelAdapter:
                 "base_url": server.base_url.rstrip("/") + "/v1",
                 "metadata": {
                     **request_payload.metadata,
+                    "context_window": min(4096, int(request_payload.metadata.get("context_window", 4096))),
                     "synapse_local_model_path": str(server.model_path),
                     "synapse_local_server": server.base_url,
                 },
@@ -91,6 +123,7 @@ class SynapseLocalModelAdapter:
             metadata={
                 **result.metadata,
                 "raw_provider": "synapse_local_llama_server",
+                "context_budget": routed.metadata.get("context_budget"),
                 "base_url": server.base_url,
                 "model_path": str(server.model_path),
             },
@@ -131,6 +164,8 @@ class SynapseLocalModelAdapter:
             while True:
                 if self._closed:
                     raise ModelError("provider_unavailable", "Local runtime has shut down.", status_code=503)
+                if self._recovery_pending:
+                    raise ModelError("recovery_required", "Reconcile interrupted Swarm residency before inference.", status_code=409)
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     raise ModelError("generation_timeout", "Timed out waiting for local model capacity.", status_code=504)
@@ -140,7 +175,8 @@ class SynapseLocalModelAdapter:
                 if current is None:
                     if len(self._servers) < self.max_loaded_models:
                         break
-                    idle = next((item for item in self._servers.values() if not item.active), None)
+                    idle = next((item for item in self._servers.values()
+                                 if not item.active and not self._reserved(item.model)), None)
                     if idle is not None:
                         self._stop_server(idle)
                         del self._servers[idle.model]
@@ -159,7 +195,152 @@ class SynapseLocalModelAdapter:
         finally:
             with self._condition:
                 server.active = False
+                if self.resource_policy == ResourcePolicy.ECONOMICAL and not self._reserved(model):
+                    self._stop_server(server)
+                    self._servers.pop(model, None)
                 self._condition.notify_all()
+
+    def _reserved(self, model: str) -> bool:
+        return any(model in models for models in self._reservations.values())
+
+    def owns_reservation(self, owner: str, model: str) -> bool:
+        name = self._resolve_model_path(model).stem
+        with self._condition:
+            return name in self._reservations.get(owner, ()) and not self._recovery_pending
+
+    def recovery_required(self, owner: str) -> bool:
+        with self._condition:
+            return owner in self._recovery_pending
+
+    def set_resource_policy(self, policy: ResourcePolicy) -> None:
+        with self._condition:
+            self.resource_policy = ResourcePolicy(policy)
+            if policy == ResourcePolicy.ECONOMICAL and not self._recovery_pending:
+                for name, server in list(self._servers.items()):
+                    if not server.active and not self._reserved(name):
+                        self._stop_server(server)
+                        del self._servers[name]
+            self._condition.notify_all()
+
+    def reserve_models(self, owner: str, models: tuple[str, ...], *,
+                       ram_bytes: int, vram_bytes: int, available_ram: int,
+                       available_vram: int, timeout_seconds: float = 120) -> None:
+        """All-or-nothing admission, serialized with leases and eviction.
+
+        Resource estimates are supplied by the audited provider profile, never
+        inferred from file size. A failed stop retains its process reference.
+        """
+        if not owner or not models or ram_bytes <= 0 or vram_bytes < 0:
+            raise ModelError("reservation_invalid", "A model resource profile is required.")
+        names = tuple(sorted({self._resolve_model_path(model).stem for model in models}))
+        with self._condition:
+            if self._closed:
+                raise ModelError("provider_unavailable", "Local runtime has shut down.")
+            if self._recovery_pending:
+                raise ModelError("recovery_required", "Reconcile interrupted Swarm residency before activation.")
+            if owner in self._reservations:
+                if self._reservations[owner] != names:
+                    raise ModelError("reservation_conflict", "Reservation owner already has other models.")
+                return
+            protected = {name for name, server in self._servers.items()
+                         if server.active or self._reserved(name)}
+            reserved_ram = sum(value[0] for value in self._reservation_bytes.values())
+            reserved_vram = sum(value[1] for value in self._reservation_bytes.values())
+            if (len(protected | set(names)) > self.max_loaded_models
+                    or ram_bytes + reserved_ram > available_ram
+                    or vram_bytes + reserved_vram > available_vram):
+                raise ModelError("resources_insufficient", "Insufficient reserved RAM/VRAM or model slots.", status_code=409)
+            # Do not steal an in-flight NORMAL lease during a regime transition.
+            if any(server.active for server in self._servers.values()):
+                raise ModelError("transition_deferred", "Wait for active model requests before starting Swarm.", status_code=409)
+            previous = set(self._servers)
+            self._reservations[owner] = names
+            self._reservation_bytes[owner] = (ram_bytes, vram_bytes)
+            self._save_reservations()
+            deadline = time.monotonic() + timeout_seconds
+            try:
+                for name in names:
+                    if name not in self._servers and len(self._servers) >= self.max_loaded_models:
+                        idle = next((item for item in self._servers.values()
+                                     if not item.active and not self._reserved(item.model)), None)
+                        if idle is None:
+                            raise ModelError("resources_insufficient", "No unreserved model slot.")
+                        self._stop_server(idle)
+                        del self._servers[idle.model]
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise ModelError("generation_timeout", "Swarm initialization deadline expired.")
+                    self._ensure_server(name, remaining)
+            except Exception:
+                # Keep reservations if cleanup fails: do not publish a false NORMAL state.
+                for name in set(self._servers) - previous:
+                    server = self._servers[name]
+                    if not server.active:
+                        self._stop_server(server)
+                        del self._servers[name]
+                self._reservations.pop(owner, None)
+                self._reservation_bytes.pop(owner, None)
+                self._save_reservations()
+                self._condition.notify_all()
+                raise
+            self._save_reservations()
+            self._condition.notify_all()
+
+    def release_models(self, owner: str) -> None:
+        with self._condition:
+            if owner in self._recovery_pending:
+                record = self._recovery_pending[owner]
+                if len(record.processes) != len(record.models):
+                    raise ModelError("recovery_required", "Interrupted initialization requires process reconciliation.")
+                for process in record.processes:
+                    try:
+                        actual = psutil.Process(process.pid)
+                        if actual.create_time() == process.created_at and actual.is_running():
+                            raise ModelError("recovery_required", "An interrupted Swarm process is still running.")
+                    except psutil.NoSuchProcess:
+                        pass
+                del self._recovery_pending[owner]
+            names = self._reservations.get(owner, ())
+            if any(self._servers[name].active for name in names if name in self._servers):
+                raise ModelError("transition_deferred", "Swarm models are still busy.", status_code=409)
+            self._reservations.pop(owner, None)
+            self._reservation_bytes.pop(owner, None)
+            self._save_reservations()
+            self.set_resource_policy(self.resource_policy)
+
+    def _save_reservations(self) -> None:
+        owners = dict(self._recovery_pending)
+        for owner, names in self._reservations.items():
+            processes = []
+            for name in names:
+                server = self._servers.get(name)
+                pid = getattr(server.process, "pid", None) if server else None
+                if isinstance(pid, int) and server is not None and server.process.poll() is None:
+                    processes.append(_ReservedProcess(pid=pid, created_at=psutil.Process(pid).create_time()))
+            ram, vram = self._reservation_bytes[owner]
+            owners[owner] = _ReservationRecord(models=list(names), ram_bytes=ram,
+                                                vram_bytes=vram, processes=processes)
+        dump_json(self._reservation_path, _ReservationJournal(owners=owners).model_dump())
+
+    def residency_status(self) -> dict[str, object]:
+        with self._condition:
+            return {
+                "execution_regime": ExecutionRegime.SWARM if self._reservations or self._recovery_pending else ExecutionRegime.NORMAL,
+                "resource_policy": self.resource_policy,
+                "transition_status": "RECOVERY_REQUIRED" if self._recovery_pending else "STABLE",
+                "recovery_owners": list(self._recovery_pending),
+                "models": [{"model": name, "state": "BUSY" if server.active else "READY",
+                            "owners": [owner for owner, models in self._reservations.items() if name in models]}
+                           for name, server in self._servers.items()],
+                "reservations": [{"owner": owner, "models": list(models),
+                                  "ram_bytes": self._reservation_bytes[owner][0],
+                                  "vram_bytes": self._reservation_bytes[owner][1]}
+                                 for owner, models in self._reservations.items()],
+            }
+
+    def has_reservation(self, owner: str) -> bool:
+        with self._condition:
+            return owner in self._reservations or owner in self._recovery_pending
 
     @staticmethod
     def _stop_server(server: _ManagedServer) -> None:
@@ -179,6 +360,14 @@ class SynapseLocalModelAdapter:
             for name, server in list(self._servers.items()):
                 self._stop_server(server)
                 del self._servers[name]
+            if self._reservations and self._reservation_path.exists():
+                self._recovery_pending = _ReservationJournal.model_validate_json(
+                    self._reservation_path.read_text(encoding="utf-8")
+                ).owners
+            self._reservations.clear()
+            self._reservation_bytes.clear()
+            if self._reservation_path.exists():
+                self._save_reservations()
             self._condition.notify_all()
 
     @staticmethod
@@ -270,6 +459,8 @@ class SynapseLocalModelAdapter:
                 log_handle=log_handle,
             )
             self._servers[model] = server
+            if self._reservations:
+                self._save_reservations()
             self._wait_until_ready(server, timeout_seconds)
             self._emit(
                 "synapse_local.server_started",

@@ -4,10 +4,10 @@ from dataclasses import asdict
 from typing import Any
 
 from fastapi import APIRouter, Header, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from synapse.api.common import api_error, context_from, runtime_from
-from synapse.core.exceptions import ValidationError
+from synapse.core.exceptions import PermissionDenied, ValidationError
 
 router = APIRouter()
 
@@ -84,6 +84,27 @@ class MissionPlanPayload(BaseModel):
     tasks: list[dict[str, Any]]
     constraints: dict[str, Any] = Field(default_factory=dict)
     preferred_agents: list[str] = Field(default_factory=list)
+
+
+class PlanReviewPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    plan_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+    expected_revision: int = Field(ge=1)
+
+
+@router.post("/missions/{mission_id}/review-plan")
+def review_mission_plan(mission_id: str, payload: PlanReviewPayload, request: Request,
+                        x_actor_id: str | None = Header(default=None),
+                        x_actor_type: str | None = Header(default=None)) -> dict[str, Any]:
+    runtime = runtime_from(request)
+    try:
+        context = context_from(runtime, x_actor_id, x_actor_type)
+        if context.actor_type != "user":
+            raise PermissionDenied("Only a user may accept a proposed mission plan.")
+        runtime.permissions.require(context, "filesystem.write")
+        return asdict(runtime.missions.accept_plan(mission_id, payload.plan_id, payload.expected_revision))
+    except Exception as exc:
+        raise api_error(exc) from exc
 
 
 class MissionUpdatePayload(BaseModel):

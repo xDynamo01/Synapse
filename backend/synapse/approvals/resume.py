@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from synapse.approvals.manager import ApprovalManager
 from synapse.core.permissions import PermissionContext
 from synapse.policies.effective import EffectivePolicyRuntime
@@ -17,6 +19,8 @@ class ApprovalResumeRuntime:
         self.approvals = approvals
         self.tool_router = tool_router
         self.policies = policies
+        self.after_tool_resume: Callable[[ToolCallResult], None] | None = None
+        self.before_tool_resume: Callable[[str], None] | None = None
 
     def approve_and_resume(
         self,
@@ -43,6 +47,8 @@ class ApprovalResumeRuntime:
                 approval_id=approval_id,
             )
 
+        if self.before_tool_resume is not None:
+            self.before_tool_resume(call.id)
         tool_context = PermissionContext(
             actor_id=approval.agent_id,
             actor_type="agent",
@@ -50,7 +56,7 @@ class ApprovalResumeRuntime:
             autonomy=context.autonomy,
         )
         policy = self.policies.resolve(context, approval.agent_id)
-        return self.tool_router.execute_call(
+        result = self.tool_router.execute_call(
             tool_context,
             call,
             session_id=approval.session_id,
@@ -58,3 +64,6 @@ class ApprovalResumeRuntime:
             project_id=approval.project_id,
             policy=policy,
         )
+        if self.after_tool_resume is not None:
+            self.after_tool_resume(result)
+        return result

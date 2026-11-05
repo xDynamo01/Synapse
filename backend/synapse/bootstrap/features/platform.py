@@ -82,6 +82,19 @@ class PlatformFeatureBuilder:
         )
         capabilities = CapabilityRuntime(capability_registry, policies, events, data_dir)
         register_builtin_runtime_tools(tools, data_dir, communication, tasks)
+        def primary_tool_permissions(agent_id: str) -> set[str]:
+            try:
+                agent = agents.get(agent_id)
+            except Exception:
+                return set()
+            if agent.role.strip().lower() != "primary_agent":
+                return set()
+            granted = {permission for tool in tools.list_registered_tools()
+                       for permission in [*tool.permissions_required,
+                                          *([tool.required_permission] if tool.required_permission else [])]}
+            return granted - {"approvals.approve", "approvals.reject"}
+
+        permissions.agent_permission_resolver = primary_tool_permissions
         value = PlatformFeature(
             agents,
             identities,

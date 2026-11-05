@@ -34,11 +34,16 @@ class BaseStrategy:
         }
 
     def dispatch(self, swarm: SwarmDescriptor, plan: MissionPlan, missions: Any) -> Any:
-        missions.dispatch_ready_tasks(
-            swarm.mission_id,
-            int(swarm.metadata.get("max_parallelism", 1)),
-            execute=True,
-        )
+        # A synchronous run drains ready waves, stopping on approval, pause or no progress.
+        for _ in range(len(plan.tasks) if swarm.metadata.get("drain_ready_tasks") else 1):
+            dispatched = missions.dispatch_ready_tasks(
+                swarm.mission_id,
+                int(swarm.metadata.get("max_parallelism", 1)),
+                execute=True,
+            )
+            mission = missions.refresh_progress(swarm.mission_id)
+            if mission.status != "running" or not dispatched.dispatched or dispatched.active_attempts:
+                return mission
         return missions.refresh_progress(swarm.mission_id)
 
     def collect(self, swarm: SwarmDescriptor, plan: MissionPlan) -> list[dict[str, Any]]:

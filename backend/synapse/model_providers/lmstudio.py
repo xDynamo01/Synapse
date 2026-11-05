@@ -27,8 +27,8 @@ from synapse.models.adapters import (
     estimate_chat_tokens,
     reduce_chat_messages,
 )
-from synapse.models.types import ModelRequest, ModelResponse, ModelUsage
 from synapse.models.errors import ModelError
+from synapse.models.types import ModelRequest, ModelResponse, ModelUsage
 
 
 class LMStudioProviderRuntime:
@@ -144,7 +144,7 @@ class LMStudioProviderRuntime:
         timeout_seconds: int,
     ) -> LMStudioChatResult:
         endpoint = _native_chat_endpoint(config.base_url)
-        budgeted_messages = reduce_chat_messages(
+        budgeted_messages = chat_request.messages if (chat_request.metadata or {}).get("context_budget") else reduce_chat_messages(
             chat_request.messages,
             total_char_limit=_input_context_limit(config.max_context_chars),
             user_char_limit=max(800, _input_context_limit(config.max_context_chars) // 2),

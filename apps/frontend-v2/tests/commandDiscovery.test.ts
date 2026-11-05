@@ -62,8 +62,7 @@ describe("slash command discovery", () => {
   it("builds a typed registry from frontend commands and factual backend tools", () => {
     const registry = buildCommandRegistry(commands);
 
-    expect(registry.map(commandName).slice(0, 5)).toEqual(["activity", "insight", "settings", "project", "project.files"]);
-    expect(registry.find((item) => commandName(item) === "activity")?.execution_kind).toBe("ui");
+    expect(registry.map(commandName).slice(0, 6)).toEqual(["ajuda", "insight", "settings", "project", "projects", "project.files"]);
     expect(registry.find((item) => commandName(item) === "project")?.argument_schema).toBe("project_id");
     expect(registry.find((item) => commandName(item) === "project.files")?.opens_surface).toBe("project_files");
     expect(registry.find((item) => commandName(item) === "agent.status")?.execution_kind).toBe("unsupported");
@@ -78,8 +77,7 @@ describe("slash command discovery", () => {
     expect(resolveSlashIntent("/unknown", registry)).toMatchObject({ kind: "unknown", command: "unknown" });
     expect(resolveSlashIntent("/project", registry)).toMatchObject({ kind: "missing_argument" });
     expect(resolveSlashIntent("/project bad/id", registry)).toMatchObject({ kind: "invalid_argument" });
-    expect(resolveSlashIntent("/activity now", registry)).toMatchObject({ kind: "invalid_argument" });
-    expect(resolveSlashIntent("/activity", registry)).toMatchObject({ kind: "ready", args: {} });
+    expect(resolveSlashIntent("/activity", registry)).toMatchObject({ kind: "unknown", command: "activity" });
     expect(resolveSlashIntent("/project.files", registry)).toMatchObject({ kind: "ready", args: {} });
     expect(resolveSlashIntent("/project backend", registry)).toMatchObject({
       kind: "ready",

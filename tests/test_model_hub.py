@@ -53,6 +53,18 @@ def runtime_in_tempdir():
 
 
 class ModelHubTests(unittest.TestCase):
+    def test_health_snapshot_does_not_trigger_model_discovery(self) -> None:
+        directory, _, runtime = runtime_in_tempdir()
+        self.addCleanup(directory.cleanup)
+        runtime.model_hub._initialized = False
+
+        with patch.object(runtime.model_hub, "refresh") as refresh:
+            snapshot = runtime.model_hub.health_snapshot()
+
+        refresh.assert_not_called()
+        self.assertTrue(snapshot["available"])
+        self.assertFalse(snapshot["initialized"])
+
     def test_clean_data_dir_seeds_v001_lmstudio_defaults(self) -> None:
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
@@ -345,7 +357,7 @@ class ModelHubTests(unittest.TestCase):
 
         self.assertTrue(health.model_hub_available)
         self.assertGreaterEqual(health.model_catalog_size, 1)
-        self.assertEqual(health.model_provider_count, 8)
+        self.assertEqual(health.model_provider_count, 9)
         self.assertIn("model_hub.ready", [check.id for check in readiness.checks])
 
     def test_api(self) -> None:
@@ -365,7 +377,21 @@ class ModelHubTests(unittest.TestCase):
         client = TestClient(app)
 
         self.assertEqual(client.get("/api/models/catalog").status_code, 200)
-        self.assertEqual(len(client.get("/api/models/providers").json()), 8)
+        providers = client.get("/api/models/providers").json()
+        self.assertEqual(
+            {item["provider_id"] for item in providers},
+            {
+                "anthropic",
+                "gemini",
+                "groq",
+                "lmstudio",
+                "ollama",
+                "openai",
+                "openai_compatible",
+                "openrouter",
+                "synapse_local",
+            },
+        )
         response = client.post(
             "/api/models/default",
             json={

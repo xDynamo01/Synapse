@@ -68,6 +68,8 @@ def runtime_at(data_dir: Path):
         {"subjects": {"local_owner": ["*"], "user:local_owner": ["*"]}},
     )
     runtime = create_runtime(settings)
+    # This lifecycle fixture models registered test tools through its authority boundary.
+    runtime.ephemeral_agents.authorized_tools = lambda agent_id: ["read", "search"]
     runtime.ephemeral_agents.resource_pressure = Pressure()
     runtime.ephemeral_agents.model_capability = Models()
     runtime.workforce_planner.resource_pressure = Pressure()

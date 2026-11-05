@@ -14,8 +14,11 @@ MEMORY_SCOPES = {
     "task",
     "mission",
     "knowledge",
+    "workspace",
+    "episodic",
+    "working",
 }
-MEMORY_STATUSES = {"active", "expired", "deleted"}
+MEMORY_STATUSES = {"active", "expired", "deleted", "superseded", "invalidated"}
 
 
 def now_iso() -> str:
@@ -48,6 +51,10 @@ class MemoryRecord:
     provenance: dict[str, Any] = field(default_factory=dict)
     project_id: str | None = None
     rfc_id: str | None = None
+    workspace_id: str | None = None
+    kind: str = "fact"
+    supersedes: str | None = None
+    verified: bool = False
 
 
 @dataclass(frozen=True)

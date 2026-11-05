@@ -7,6 +7,7 @@
   "scripts": {
     "prebuild": "npm run runtime:hygiene",
     "build": "npm run build:main && npm run build:renderer",
+    "build:root-exe": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-root-launcher.ps1",
     "build:backend-sidecar": "powershell -NoProfile -ExecutionPolicy Bypass -File ..\\..\\scripts\\build_backend_sidecar.ps1 -PythonPath ..\\..\\.venv\\Scripts\\python.exe",
     "build:main": "tsc -p tsconfig.main.json && node scripts/write-preload-cjs.mjs",
     "build:renderer": "vite build",

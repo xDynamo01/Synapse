@@ -55,7 +55,7 @@ export interface CommandDiscoveryItem {
   reason_unavailable?: string | null;
   execution_kind?: "ui" | "project_scope" | "operational" | "unsupported";
   argument_schema?: "none" | "project_id";
-  opens_surface?: "activity" | "insight" | "settings" | "project_files" | null;
+  opens_surface?: "activity" | "insight" | "settings" | "project_files" | "workspace_projects" | null;
   requires_backend_authority?: boolean;
 }
 
@@ -459,7 +459,31 @@ export type StreamEventType =
   | "chunk_received"
   | "generation_completed"
   | "generation_cancelled"
-  | "generation_failed";
+  | "generation_failed"
+  | "confirmation_required"
+  | "swarm_started";
+
+export interface SwarmInteractionRequest {
+  request_id: string;
+  conversation_id: string;
+  workspace_id: string;
+  project_id: string | null;
+  session_id: string | null;
+  task: string;
+  requested_agents: number | null;
+  recommended_agents: number;
+  explicit_models: string[];
+  status: string;
+  mission_id: string | null;
+  swarm_id: string | null;
+  execution_status: string | null;
+}
+
+export interface SwarmInteractionCommand {
+  type: "swarm_confirmation" | "swarm_execution";
+  request: SwarmInteractionRequest;
+  options: string[];
+}
 
 export interface TextStreamEvent {
   schema: "frontend-v2-text-stream-event-v1";
@@ -475,6 +499,13 @@ export interface TextStreamEvent {
     message: string;
   };
   idempotency_key?: string | null;
+  data?: SwarmInteractionCommand;
+}
+
+export interface SwarmConfirmationResult {
+  schema: "frontend-v2-swarm-confirmation-v1";
+  request: SwarmInteractionRequest;
+  message: string;
 }
 
 export interface CancelTurnResult {
@@ -888,6 +919,7 @@ export interface MoMConfiguration {
   enabled: boolean;
   revision: number;
   routes: MoMRoute[];
+  resource_policy?: "RESPONSIVE" | "ECONOMICAL";
 }
 
 export interface MoMConfigurationUpdate {
@@ -895,6 +927,18 @@ export interface MoMConfigurationUpdate {
   enabled: boolean;
   expected_revision: number;
   routes: MoMRoute[];
+  resource_policy?: "RESPONSIVE" | "ECONOMICAL";
+}
+
+export interface ExecutionResources {
+  selected_policy: "RESPONSIVE" | "ECONOMICAL";
+  resource_policy: "RESPONSIVE" | "ECONOMICAL";
+  transition_status: "STABLE" | "RECOVERY_REQUIRED";
+  execution_regime: "NORMAL" | "SWARM";
+  models: Array<{ model: string; state: string; owners: string[] }>;
+  reservations: Array<{ owner: string; models: string[]; ram_bytes: number; vram_bytes: number }>;
+  missions: Array<{ mission_id: string; status: string }>;
+  policy_effects_deferred: boolean;
 }
 
 export interface SettingsSnapshot {

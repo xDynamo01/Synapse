@@ -3,7 +3,6 @@ from pathlib import Path
 
 from PIL import Image
 
-
 ROOT = Path(__file__).parents[1] / "apps" / "frontend-v2" / "assets" / "media" / "icons"
 THEMES = ("synapse", "violet", "amber", "blue", "neutral")
 ASSETS = {

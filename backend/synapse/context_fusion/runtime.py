@@ -170,6 +170,8 @@ class ContextFusionRuntime:
             ),
             metadata={
                 "source": "context_fusion",
+                "workspace_id": options.get("workspace_id"),
+                "incoming_query": incoming_message or "",
                 "include_project_knowledge": options.get("include_project_knowledge") is True,
                 "retrieval_query": str(options.get("retrieval_query") or ""),
                 "retrieval_intent": options.get("retrieval_intent") or {},
@@ -218,6 +220,7 @@ class ContextFusionRuntime:
             omitted_items=omitted,
             warnings=[
                 *consistency.warnings,
+                *(["Memory retrieval unavailable; no memories were recovered."] if snapshot.metadata.get("memory_unavailable") else []),
                 *(["context budget omitted optional sources"] if omitted else []),
             ],
         )
@@ -356,6 +359,9 @@ class ContextFusionRuntime:
                 "session",
                 "task",
                 "mission",
+                "workspace",
+                "episodic",
+                "working",
             ]
             if self._include_project_knowledge(snapshot, incoming_message):
                 scopes.append("knowledge")
@@ -371,6 +377,9 @@ class ContextFusionRuntime:
                 if value
             ]
             filters = self._memory_filters(snapshot)
+            workspace_id = snapshot.metadata.get("workspace_id")
+            if workspace_id:
+                filters = {**(filters or {}), "workspace_ids": [str(workspace_id)]}
             memory_limit = 5 if filters is not None else 30
             retrieval_query = str(snapshot.metadata.get("retrieval_query") or incoming_message or "")
             if filters is None:
@@ -392,14 +401,19 @@ class ContextFusionRuntime:
                         memory_limit,
                         filters=filters,
                     )
-            memories = self._read("memory", read_memory)
+            try:
+                memories = self._read("memory", read_memory)
+            except Exception:
+                memories = []
+                snapshot.metadata["memory_unavailable"] = True
+                self.events.emit("context_retrieval_unavailable", "context_fusion", {"source": "memory"})
             for memory_item in memories:
                 add(
                     "memory",
                     memory_item.id,
                     memory_item.scope,
                     memory_item.content,
-                    150 + memory_item.importance,
+                    260 if memory_item.metadata.get("kind") == "summary" else 150 + memory_item.importance,
                     confidence=memory_item.confidence,
                     metadata={
                         "revision": memory_item.revision,

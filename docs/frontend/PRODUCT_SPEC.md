@@ -6,7 +6,35 @@ This document is the canonical product specification for the clean Synapse deskt
 
 ## Product direction
 
-Synapse V2 is a local-first desktop AI workspace. The primary surface is Presence: an ambient, factual visualization of the current assistant state. The persistent operational surface is the Conversation Log: text and voice share the same durable history. Activity, Constellation, Insight, commands, notifications, and attachments are available on demand without turning the main workspace into an operations dashboard.
+Synapse V2 is a local-first desktop AI workspace. The primary surface is Presence: an ambient, factual visualization of the current assistant state. The persistent operational surface is the Conversation Log: text and voice share the same durable history. Workspace, Insight, commands, notifications, and attachments are available on demand without turning the main workspace into an operations dashboard.
+
+### Planned integrated visual workspace
+
+The product direction reserves a future sidebar surface for a deep visual-creation
+workspace. This is a planned stage, not an implemented frontend requirement. It would
+bring an image/document canvas into Synapse so visual work, project files and AI
+interaction share one governed context instead of requiring an external editor for every
+iteration.
+
+The intended experience is closer to an AI-native creative workspace than a decorative
+visual panel: the user could create or edit a document, select a region, request a
+generation or transformation, review the result, and ask the Primary Agent or a Swarm
+to perform project-scoped work against the artifact. Local and external providers would
+remain behind the existing Model Hub, Provider Settings, permission and tool boundaries.
+
+The initial scope is deliberately deferred until the following contracts are designed:
+
+- durable document/layer/revision and asset-provenance models;
+- canvas/rendering and large-image performance boundaries;
+- explicit image-generation and region-edit capability contracts;
+- project-file custody, export and recovery semantics;
+- agent authority, approvals, progress, cancellation and failure handling;
+- safe Electron/preload exposure for file and rendering operations.
+
+This future surface must remain distinct from Presence (conversation/ambient state),
+Workspace CLI (operational work) and project execution surfaces. Adding
+the sidebar entry or implementing a canvas is outside the current frontend slices until
+the dedicated architecture/product plan is approved.
 
 The frontend must render backend facts. It must not invent agents, work, voice state, approvals, model availability, hardware compatibility, or activity.
 
@@ -55,14 +83,17 @@ Canonical Slice 2 structural shell wireframe:
 │ Synapse                                                    window controls │
 ├────┬───────────────────────────────────────────────┬─────────────────────┤
 │ ◎  │                                               │ Conversation Log    │
-│ ◌  │           Presence / Activity view            │ real conversation   │
+│ ◌  │           Presence / Workspace view           │ real conversation   │
 │    │        factual status / degraded state         │ stream + history    │
 │    │                                               │ minimizable         │
 │ ⚙  │             + text/commands  🎙 mode           │                     │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-The main shell must stay low-noise. Presence is the default visual area. Activity/Constellation is selectable from the sidebar and replaces only the central visual surface. Insight opens on demand as an elevated internal panel over the workspace; it is not page navigation and does not replace Presence/Activity or Conversation Log state.
+The main shell must stay low-noise. Presence is the default visual area. Workspace is
+the operational surface for projects, CLI work, files, research and Swarm execution.
+Insight opens on demand as an elevated internal panel over the workspace; it is not page
+navigation and does not replace Presence or Conversation Log state.
 
 ### Minimal sidebar
 
@@ -70,7 +101,7 @@ The sidebar contains only durable navigation and must not become a dense control
 
 - workspace/project switcher;
 - Conversation Log access;
-- Activity/Constellation toggle;
+- Workspace/CLI;
 - Insight panel;
 - settings access.
 
@@ -112,7 +143,7 @@ Evidence:
 - Backend command runtime and desktop command authority exist in `backend/synapse/bootstrap/application.py`, `backend/synapse/api/routers/tools.py`, and `backend/synapse/api/routers/desktop_commands.py`.
 - `apps/frontend-v2/src/shared/frontendClient.ts` consumes `/api/tools/catalog` and project scope endpoints.
 - `apps/frontend-v2/src/shared/commandDiscovery.ts` provides deterministic slash filtering, typed command registry, slash intent parsing and argument validation.
-- `apps/frontend-v2/src/renderer/main.tsx` routes plain text to conversation, routes `/activity`, `/insight` and `/settings` to existing UI surfaces, and routes `/project <id>` through real project lookup plus the frontend conversation boundary.
+- `apps/frontend-v2/src/renderer/main.tsx` routes plain text to conversation, routes `/insight` and `/settings` to existing UI surfaces, and routes `/project <id>` through real project lookup plus the frontend conversation boundary.
 - Backend tool catalog entries remain factual discovery items; unless mapped to a governed command route they are marked unavailable for direct composer execution.
 
 ### Official icon
@@ -159,25 +190,12 @@ Presence is the default visual surface. It reflects factual operational states:
 
 Presence must be driven by frontend-facing state derived from backend facts, not animation-only assumptions.
 
-### Activity / Constellation
+### Retired Activity / Constellation surface
 
-Activity is selectable from the shell. It visualizes factual events and projections:
-
-- projects;
-- sessions;
-- agents;
-- tools;
-- approvals;
-- tasks;
-- failures;
-- recovery/resync requirements.
-
-Status: `PARTIAL`.
-
-Evidence:
-
-- Project-scoped activity snapshots, cursor events, and SSE stream exist in `backend/synapse/api/routers/operational_projection.py`.
-- Slice 8 implements the frontend-facing Activity adapter and PixiJS constellation renderer over those existing contracts.
+The former Activity/Constellation visualization was removed from the active product
+direction. It is not a sidebar destination, command, or frontend requirement. The
+operational projection contracts may remain in the backend as factual infrastructure for
+Workspace and Swarm consumers, but no visual constellation is implied by their existence.
 
 ### Insight
 
@@ -194,7 +212,7 @@ Evidence:
 
 ### Settings
 
-Settings is an on-demand elevated internal panel for configuration, not page navigation and not a replacement for Presence/Activity. It preserves workspace, conversation, Conversation Log and visual state behind it.
+Settings is an on-demand elevated internal panel for configuration, not page navigation and not a replacement for Presence. It preserves workspace, conversation and Conversation Log state behind it.
 
 Status: `READY` for real Model/Provider, Voice and frontend-owned Appearance settings.
 
@@ -277,10 +295,10 @@ Evidence:
 | Voice conversation with TTS | `READY` for frontend V2 continuous turn loop, `PARTIAL` for full duplex interruption | Frontend V2 uses real backend STT + same conversation text response + governed TTS audio playback; provider-level cancellation/full duplex remains limited. |
 | Continuous voice/interruption | `PARTIAL` | Sessions/lifecycle exist; complete client/backend interruption contract is not identified. |
 | Presence visualization | `NOT REQUIRED BACKEND-SIDE` | Backend facts are required; visual scene state belongs to frontend. |
-| Activity/Constellation facts | `READY` | Operational projection exists; Slice 8 implements final visual grammar/projection adapter for Frontend V2. |
+| Workspace operational facts | `PARTIAL` | Project, file, CLI and Swarm contracts are being consolidated; no constellation UI is part of the active product. |
 | Insight hardware/model recommendations | `READY` | System Insight endpoints exist. |
 | Settings elevated surface | `READY` | Slice 10 exposes only real Model/Provider, Voice and reduced-motion settings with explicit ownership. |
-| Command intent routing | `READY` for Slice 12 mapped commands, `PARTIAL` for broad tool execution | `/activity`, `/insight`, `/settings` and `/project <id>` have governed routing; arbitrary tool/catalog execution remains unavailable from the composer. |
+| Command intent routing | `READY` for mapped commands, `PARTIAL` for broad tool execution | `/insight`, `/settings` and `/project <id>` have governed routing; arbitrary tool/catalog execution remains unavailable from the composer. |
 | Attachments | `READY` for governed staging/registration/turn refs, `PARTIAL` for advanced file UX/multimodal processing | Slice 13 enables the composer `+` flow through a safe picker, backend-owned checksum/storage ref and conversation-scoped refs; preview/extraction/remote uploads remain out of scope. |
 | Notifications | `READY` | Notification records/endpoints exist and Slice 11 consumes them as a header popover with unread/read/dismiss semantics. |
 | On-demand panels | `NOT REQUIRED BACKEND-SIDE` | Backend supplies feature facts; panel state is frontend. |

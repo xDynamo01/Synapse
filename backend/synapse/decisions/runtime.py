@@ -126,7 +126,12 @@ class DecisionRuntime:
 
         if permission:
             permission_decision = self.permissions.is_allowed(context, str(permission))
-            if permission_decision.allowed:
+            policy_permission_allowed = bool(
+                request.target_agent_id
+                and policy
+                and str(permission) in set(policy.allowed_permissions)
+            )
+            if permission_decision.allowed or policy_permission_allowed:
                 reasons.append(f"permission granted: {permission}")
             else:
                 blocked_reasons.append(f"missing permission: {permission}")

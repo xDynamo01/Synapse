@@ -163,13 +163,13 @@ class VoiceRuntimeTests(unittest.TestCase):
         pack = next(
             item
             for item in runtime.voice.list_voice_packs()
-            if item.pack_id == "kokoro-dora-v1"
+            if item.pack_id == "kokoro-feminine-v1"
         )
 
         self.assertEqual(pack.status, "ready")
-        self.assertEqual(len(pack.voices), 1)
-        self.assertEqual({voice.locale for voice in pack.voices}, {"pt-BR"})
-        self.assertEqual({voice.voice_id for voice in pack.voices}, {"pf_dora"})
+        self.assertEqual(len(pack.voices), 29)
+        self.assertEqual({voice.voice_profile["gender"] for voice in pack.voices}, {"feminine"})
+        self.assertIn("pf_dora", {voice.voice_id for voice in pack.voices})
         self.assertTrue(all(voice.usable for voice in pack.voices))
         self.assertEqual(pack.voices[0].provider, "kokoro")
         self.assertEqual(pack.voices[0].license, "Apache-2.0")

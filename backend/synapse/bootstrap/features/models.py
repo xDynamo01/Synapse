@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 
 from synapse.bootstrap.adapters.provider_taxonomy import register_model_provider_projections
 from synapse.bootstrap.adapters.speech_execution import LocalSpeechExecutionPort
+from synapse.bootstrap.adapters.voicestudio import VoiceStudioHttpTransport
 from synapse.bootstrap.feature import BuiltFeature, FeatureMetadata
 from synapse.core.config import ConfigStore
 from synapse.core.data_dir import DataDir
@@ -56,8 +58,20 @@ class ModelFeatureBuilder:
         lmstudio = LMStudioProviderRuntime(data_dir, events)
         models.adapters["lmstudio"] = LMStudioModelAdapter(lmstudio)
         models.adapters["lmstudio_local"] = LMStudioModelAdapter(lmstudio)
-        models.adapters["synapse_local"] = SynapseLocalModelAdapter(data_dir, events)
+        models.adapters["synapse_local"] = SynapseLocalModelAdapter(
+            data_dir, events,
+            max_loaded_models=models.system_config.get("models", {}).get("providers", {}).get(
+                "synapse_local", {}).get("max_loaded_models"),
+        )
         model_hub = ModelHubRuntime(data_dir, events, lmstudio, providers, provider_plugins, models)
+        def context_window(provider: str, model: str | None) -> int | None:
+            # Read the existing snapshot only; do not load providers to budget a prompt.
+            values = [entry.context_window for entry in model_hub.registry.list_models()
+                      if entry.provider == provider and model in {entry.id, entry.name}
+                      and entry.context_window is not None]
+            return min(values) if values else None
+
+        models.context_window_resolver = context_window
         system_insight = SystemInsightRuntime(data_dir, events, model_hub)
         models.model_capabilities = system_insight.model_capabilities
         provider_settings.model_hub = model_hub
@@ -68,6 +82,7 @@ class ModelFeatureBuilder:
             providers,
             events,
             execution=LocalSpeechExecutionPort(),
+            voicestudio_transport=VoiceStudioHttpTransport(os.getenv("SYNAPSE_VOICESTUDIO_URL", "http://127.0.0.1:3900")),
         )
         provider_catalog = ProviderCatalog()
         register_model_provider_projections(

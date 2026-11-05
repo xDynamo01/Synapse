@@ -133,7 +133,9 @@ class MemoryContextAdapter:
                 revision=item.revision,
                 source=item.source,
                 tags=item.tags,
-                metadata=item.metadata,
+                metadata={**item.metadata, "workspace_id": item.workspace_id, "kind": item.kind,
+                          "verified": item.verified, "supersedes": item.supersedes,
+                          "provenance": item.provenance},
             )
             for item in result.records
         ]

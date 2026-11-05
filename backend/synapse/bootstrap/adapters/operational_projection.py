@@ -104,6 +104,19 @@ def _project_id(event: Event) -> str | None:
     value = event.payload.get("project_id")
     if isinstance(value, str) and value.strip():
         return value
+    # Task lifecycle events carry their project scope in task metadata. Keep
+    # the projection authoritative without requiring every producer to flatten
+    # the same metadata into the event envelope.
+    metadata = event.payload.get("metadata")
+    if isinstance(metadata, dict):
+        value = metadata.get("project_id")
+        if isinstance(value, str) and value.strip():
+            return value
+    task = event.payload.get("task")
+    if isinstance(task, dict) and isinstance(task.get("metadata"), dict):
+        value = task["metadata"].get("project_id")
+        if isinstance(value, str) and value.strip():
+            return value
     conversation_id = event.payload.get("conversation_id")
     if isinstance(conversation_id, str) and conversation_id.strip():
         return f"conversation:{conversation_id}"

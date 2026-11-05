@@ -27,9 +27,43 @@ from synapse.speech_adapters.models import SpeechAdapterHealth, SpeechAdapterMan
 MODEL_HASH = "6e742170d309016e5891a994e1ce1559c702a2ccd0075e67ef7157974f6406cb"
 VOICES_HASH = "bca610b8308e8d99f32e6fe4197e7ec01679264efed0cac9140fe9c29f1fbf7d"
 
+# Kokoro's bundled voices use a stable language/gender/name identifier.  This
+# catalog intentionally contains only the ready-made feminine speakers.
+FEMININE_VOICES: dict[str, tuple[str, str, str]] = {
+    "af_alloy": ("en-US", "en-us", "American English"),
+    "af_aoede": ("en-US", "en-us", "American English"),
+    "af_bella": ("en-US", "en-us", "American English"),
+    "af_heart": ("en-US", "en-us", "American English"),
+    "af_jessica": ("en-US", "en-us", "American English"),
+    "af_kore": ("en-US", "en-us", "American English"),
+    "af_nicole": ("en-US", "en-us", "American English"),
+    "af_nova": ("en-US", "en-us", "American English"),
+    "af_river": ("en-US", "en-us", "American English"),
+    "af_sarah": ("en-US", "en-us", "American English"),
+    "af_sky": ("en-US", "en-us", "American English"),
+    "bf_alice": ("en-GB", "en-gb", "British English"),
+    "bf_emma": ("en-GB", "en-gb", "British English"),
+    "bf_isabella": ("en-GB", "en-gb", "British English"),
+    "bf_lily": ("en-GB", "en-gb", "British English"),
+    "pf_dora": ("pt-BR", "pt-br", "Brazilian Portuguese"),
+    "ef_dora": ("es-ES", "es", "Spanish"),
+    "ff_siwis": ("fr-FR", "fr-fr", "French"),
+    "if_sara": ("it-IT", "it", "Italian"),
+    "jf_alpha": ("ja-JP", "ja", "Japanese"),
+    "jf_gongitsune": ("ja-JP", "ja", "Japanese"),
+    "jf_nezumi": ("ja-JP", "ja", "Japanese"),
+    "jf_tebukuro": ("ja-JP", "ja", "Japanese"),
+    "hf_alpha": ("hi-IN", "hi", "Hindi"),
+    "hf_beta": ("hi-IN", "hi", "Hindi"),
+    "zf_xiaobei": ("zh-CN", "cmn", "Mandarin Chinese"),
+    "zf_xiaoni": ("zh-CN", "cmn", "Mandarin Chinese"),
+    "zf_xiaoxiao": ("zh-CN", "cmn", "Mandarin Chinese"),
+    "zf_xiaoyi": ("zh-CN", "cmn", "Mandarin Chinese"),
+}
+
 
 class KokoroTextToSpeechAdapter:
-    """Dora only. No network, subprocess authority or heavyweight imports here."""
+    """Ready-made feminine Kokoro voices, offline and without heavy imports."""
 
     def __init__(self, manifest: SpeechAdapterManifest, data_dir: DataDir,
                  execution: SpeechExecutionPort | None = None) -> None:
@@ -68,23 +102,35 @@ class KokoroTextToSpeechAdapter:
         return True
 
     def health(self) -> SpeechAdapterHealth:
+        python, _, model, voices = self._paths()
+        configured = any(path.exists() for path in (python, model, voices)) or self._data.resolve("voice/kokoro-runtime.json").exists()
         ready = self._execution is not None and self._verify()
+        status = "available" if ready else "unavailable" if configured else "unconfigured"
         return SpeechAdapterHealth(
             adapter_id=self._manifest.adapter_id, provider_id="kokoro",
-            status="available" if ready else "unavailable",
+            status=status,
             checked_at=datetime.now(UTC).isoformat(),
-            message="Kokoro local assets verified." if ready else "Kokoro local runtime is missing or invalid.",
-            metadata={"adapter_type": "tts", "engine": "kokoro", "voice": "pf_dora"},
+            message=("Kokoro local assets verified." if ready else
+                     "Kokoro local runtime is missing or invalid." if configured else
+                     "Kokoro is optional and has not been installed or configured."),
+            metadata={"adapter_type": "tts", "engine": "kokoro",
+                      "voices": tuple(FEMININE_VOICES)},
         )
 
     def synthesize(self, request: AudioOutputRequest) -> TextToSpeechResult:
         text = request.text.strip()
         if not text or len(text) > 20000:
             raise ValidationError("Invalid Kokoro speech input length.")
-        if request.voice_id not in {None, "pf_dora"}:
-            raise ValidationError("Kokoro supports only Dora (pt-BR).")
-        if request.language not in {None, "pt", "pt-BR", "pt-br"}:
-            raise ValidationError("Kokoro Dora is configured for pt-BR only.")
+        voice_id = request.voice_id or "pf_dora"
+        voice = FEMININE_VOICES.get(voice_id)
+        if voice is None:
+            raise ValidationError("Kokoro supports only its ready-made feminine voices.")
+        locale, lang, _ = voice
+        requested_locale = request.language
+        if requested_locale is not None and requested_locale.lower() not in {
+            locale.lower(), locale.split("-")[0].lower()
+        }:
+            raise ValidationError(f"Voice {voice_id} requires language {locale}.")
         if request.speed not in {None, 1.0}:
             raise ValidationError("Kokoro Dora uses the original voice speed.")
         if not self._lock.acquire(blocking=False):
@@ -103,7 +149,8 @@ class KokoroTextToSpeechAdapter:
             execution_request = SpeechExecutionRequest.create(
                 tool_reference="tool://kokoro",
                 argv=(str(python), "-I", str(runner), "--model", str(model), "--voices",
-                      str(voices), "--output_file", str(output)),
+                      str(voices), "--voice", voice_id, "--lang", lang,
+                      "--output_file", str(output)),
                 stdin=SpeechExecutionStdin(reference=f"transient://voice-text/{request.session_id}",
                                          checksum=hashlib.sha256(text.encode()).hexdigest(), text=text),
                 working_directory_reference="workspace://voice/synthesis",
@@ -127,7 +174,7 @@ class KokoroTextToSpeechAdapter:
                     raise ValidationError("Kokoro produced invalid speech output.")
             return TextToSpeechResult(
                 output_ref=f"inline://tts/{request.session_id}", provider_id="kokoro",
-                voice_id="pf_dora", audio_base64=base64.b64encode(output.read_bytes()).decode("ascii"),
+                voice_id=voice_id, audio_base64=base64.b64encode(output.read_bytes()).decode("ascii"),
                 audio_format="audio/wav", duration_ms=round(frames / rate * 1000),
                 sample_rate=rate, latency_ms=round((perf_counter() - started) * 1000),
                 metadata={"engine": "kokoro", "output_verified": True, "process_exited": True},

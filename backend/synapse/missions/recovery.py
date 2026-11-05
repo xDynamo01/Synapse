@@ -155,6 +155,13 @@ class MissionRecoveryRuntime:
                 "not_before": retry_at.isoformat(),
             },
         )
+        with self.planner.lock:
+            current = self.planner.get_plan(previous.mission_id, mission.plan_id)
+            updated_tasks = [replace(item, status="assigned", assigned_worker_id=selection.selected_worker,
+                                     assigned_agent_id=selection.selected_agent, revision=item.revision + 1,
+                                     error=previous.error, updated_at=now_iso())
+                             if item.task_id == previous.task_id else item for item in current.tasks]
+            self.planner.save_plan(replace(current, tasks=updated_tasks))
         self.events.emit(
             "recovery.applied",
             created.agent_id,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import asdict, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -63,6 +64,7 @@ class MissionRuntime:
         self.attempts = attempts
         self.implementation_binding = implementation_binding
         self.dispatcher: MissionDispatcher | None = None
+        self.plan_review_guard: Callable[[str], None] | None = None
         self.resource_pressure: Any | None = None
         self.desktop_runtime: Any | None = None
         self.tool_runtime: ToolExecutionPort | None = None
@@ -114,6 +116,7 @@ class MissionRuntime:
         execute: bool = True,
     ) -> Any:
         mission = self.get_mission(mission_id)
+        self.validate_execution(mission)
         resource_guard = bool(mission.metadata.get("resource_pressure_guard", False))
         if self.resource_pressure is not None and resource_guard:
             capacity = self.resource_pressure.assess_capacity("mission")
@@ -498,6 +501,29 @@ class MissionRuntime:
             "mission.planned",
         )
 
+    def accept_plan(self, mission_id: str, plan_id: str, expected_revision: int) -> Mission:
+        if self.planner is None:
+            raise ValidationError("Planner runtime is unavailable.")
+        admission_lock = self.dispatcher.admission_lock if self.dispatcher else self.planner.lock
+        with admission_lock, self.planner.lock:
+            mission = self.get_mission(mission_id)
+            if mission.status in {"completed", "cancelled", "archived"}:
+                raise ValidationError("Terminal mission cannot accept a replacement plan.")
+            if self.plan_review_guard is not None:
+                self.plan_review_guard(mission_id)
+            if mission.revision != expected_revision:
+                raise ValidationError("Mission revision conflict during plan review.")
+            if self.attempts and any(self.attempts.active_for_task(task.task_id)
+                                     for task in self.list_tasks(mission_id)):
+                raise ValidationError("Wait for active attempts before replacing the plan.")
+            plan = self.planner.get_plan(mission_id, plan_id)
+            if plan.mission_id != mission_id:
+                raise ValidationError("Plan belongs to another mission.")
+            return self._persist(replace(
+                mission, plan_id=plan_id, status="planned", revision=mission.revision + 1,
+                updated_at=now_iso(), metadata={**mission.metadata, "requires_plan_review": False},
+            ), "mission.plan_accepted")
+
     def pause(self, mission_id: str) -> Mission:
         mission = self.get_mission(mission_id)
         if mission.status == "paused":
@@ -549,8 +575,9 @@ class MissionRuntime:
             "mission.cancelled",
         )
 
-    def run_mission(self, mission_id: str) -> Mission:
-        mission = self.get_mission(mission_id)
+    def validate_execution(self, mission: Mission) -> None:
+        if mission.metadata.get("requires_plan_review"):
+            raise ValidationError("Review the generated mission plan before execution.")
         binding_values = (
             mission.project_id,
             mission.rfc_id,
@@ -578,6 +605,10 @@ class MissionRuntime:
             )
             if not decision.allowed:
                 raise ValidationError(f"RFC gate blocked mission: {decision.disposition}")
+
+    def run_mission(self, mission_id: str) -> Mission:
+        mission = self.get_mission(mission_id)
+        self.validate_execution(mission)
         if mission.status in {"completed", "cancelled", "paused"}:
             return mission
         planner = self.planner

@@ -298,10 +298,15 @@ class EffectivePolicyRuntime:
         global_permissions = self.permissions.permissions_for(agent_context)
         global_denies = self.permissions.denied_permissions_for(agent_context)
         config_permissions = set(agent.permissions)
+        # The configured primary agent is the Synapse control plane entry point.
+        # It must be able to see and invoke the registered Synapse capabilities;
+        # explicit denies, tool forbids and approval policy still apply below.
+        if agent.role.strip().lower() == "primary_agent":
+            config_permissions = {"*"}
         allowed_permissions = self._bounded_permissions(
             config_permissions=config_permissions,
             global_permissions=global_permissions,
-            known_permissions=known_permissions,
+            known_permissions=known_permissions | ({"tools.execute"} if agent.role.strip().lower() == "primary_agent" else set()),
         )
         denied_permissions = self._expand_permissions(global_denies, known_permissions)
         allowed_permissions -= denied_permissions

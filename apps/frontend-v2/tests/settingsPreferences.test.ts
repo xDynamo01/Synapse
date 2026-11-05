@@ -35,9 +35,9 @@ describe("settings preferences", () => {
     expect(effectiveReducedMotion("system", false)).toBe(false);
   });
 
-  it("persists and normalizes the frontend-owned theme preference", () => {
-    saveFrontendSettingsPreferences({ reducedMotion: "system", theme: "violet" });
+  it("keeps the single default theme when an old theme is supplied", () => {
+    saveFrontendSettingsPreferences({ reducedMotion: "system", theme: "cyberpunk" });
 
-    expect(loadFrontendSettingsPreferences()).toEqual({ reducedMotion: "system", theme: "violet" });
+    expect(loadFrontendSettingsPreferences()).toEqual({ reducedMotion: "system", theme: "synapse" });
   });
 });

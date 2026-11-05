@@ -202,9 +202,21 @@ def test_openapi_surface_remains_at_frozen_baseline() -> None:
     # Slice 4 cancellation, Slice 5 transcription, Slice 6 voice turns and
     # Slice 13 governed attachment staging and Slice 15.7 voice-pack discovery,
     # without generic IPC, visual state or a second conversation engine.
-    # Primary MoM, Synapse Local model status, and Project Knowledge add
-    # canonical, explicitly registered surfaces without generic IPC expansion.
-    assert len(schema["paths"]) == 506
-    assert len(operations) == 561
-    assert len(schema["components"]["schemas"]) == 139
+    # Primary MoM, Synapse Local model status, Project Knowledge, streamed
+    # voice turns and conversational Swarm confirmation add canonical,
+    # explicitly registered surfaces without generic IPC expansion.
+    # Authorized memory index, voice catalog and VoiceStudio profile creation.
+    assert set(schema["paths"]["/api/memory/index"]) == {"get"}
+    assert set(schema["paths"]["/api/voice/voices"]) == {"get"}
+    assert set(schema["paths"]["/api/voice/voicestudio/profiles"]) == {"post"}
+    # Authorized DCO delta: resource facts and explicit acceptance of a proposed
+    # mission plan. Keep the exact legacy surface plus these two operations.
+    assert set(schema["paths"]["/api/primary/mom/resources"]) == {"get"}
+    assert set(schema["paths"]["/api/missions/{mission_id}/review-plan"]) == {"post"}
+    assert "PlanReviewPayload" in schema["components"]["schemas"]
+    assert "ResourcePolicy" in schema["components"]["schemas"]
+    assert len(schema["paths"]) == 511 + 2
+    assert len(operations) == 566 + 2
+    assert "VoiceStudioProfilePayload" in schema["components"]["schemas"]
+    assert len(schema["components"]["schemas"]) == 141 + 2
     assert len(operation_ids) == len(set(operation_ids))

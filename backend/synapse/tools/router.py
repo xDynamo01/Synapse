@@ -189,5 +189,5 @@ class ToolRouter:
             approval_id=call.approval_id,
             id=call.id,
             requester=context.actor_id,
-            metadata={"source": "legacy_tool_router"},
+            metadata={"source": "legacy_tool_router", "workspace_id": mission_id},
         )

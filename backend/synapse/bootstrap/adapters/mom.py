@@ -40,8 +40,9 @@ class PrimaryChatRouting:
         self.mom = mom
 
     def select(self, context: PermissionContext, agent_id: str | None,
-               message: str, workspace_id: str) -> ChatModelSelection | None:
-        selected = self.mom.select_for_chat(context, agent_id, message, workspace_id)
+               message: str, workspace_id: str,
+               recent_intent: str | None = None) -> ChatModelSelection | None:
+        selected = self.mom.select_for_chat(context, agent_id, message, workspace_id, recent_intent)
         if selected is None:
             return None
         primary_id, route, revision = selected
@@ -90,7 +91,7 @@ class PrimaryInference:
             raise ValidationError("MoM provider is disabled.")
 
     def generate(self, context: PermissionContext, primary_agent_id: str,
-                 route: Route, message: str, operation_id: str) -> Output:
+                 route: Route, message: str, operation_id: str, *, max_tokens: int = 1024) -> Output:
         self.validate_route(route)
         loaded = self.loader.load(context, primary_agent_id).to_dict()
         style = self.memory.response_style(context, "")
@@ -99,7 +100,7 @@ class PrimaryInference:
         provider = self.models.system_config.get("models", {}).get("providers", {}).get(route.provider, {})
         response = self.models.generate_request(ModelRequest(
             agent_id=primary_agent_id, provider=route.provider, model=route.model,
-            user_message=message, context=loaded, tools=[], max_tokens=1024,
+            user_message=message, context=loaded, tools=[], max_tokens=max_tokens,
             base_url=provider.get("base_url") or provider.get("endpoint"),
             api_key=provider.get("api_key"), headers=dict(provider.get("headers", {})),
             timeout_seconds=180 if route.provider == "synapse_local" else 60,

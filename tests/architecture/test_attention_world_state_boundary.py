@@ -91,7 +91,7 @@ def test_bootstrap_builds_one_port_adapter_and_keeps_agent_loop_as_coordinator()
 
 def test_attention_world_state_scc_is_removed_without_new_cycle() -> None:
     graph = _runtime_context_graph()
-    assert len(graph) == 306  # Primary MoM: api -> mom -> core.
+    assert len(graph) == 313  # Includes governed Project Knowledge and local model surfaces.
     assert ("world_state", "attention") not in graph
     assert ("attention", "world_state") in graph
     assert cyclic_components(graph) == [

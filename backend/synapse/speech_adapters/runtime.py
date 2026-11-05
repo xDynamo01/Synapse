@@ -15,6 +15,7 @@ from synapse.core.events import EventBus
 from synapse.core.exceptions import NotFound
 from synapse.core.serialization import load_structured_file
 from synapse.providers.runtime import ProviderRuntime
+from synapse.speech_adapters.chattts_tts import ChatTTSTextToSpeechAdapter
 from synapse.speech_adapters.execution import SpeechExecutionPort
 from synapse.speech_adapters.faster_whisper import FasterWhisperSpeechToTextAdapter
 from synapse.speech_adapters.kokoro_tts import KokoroTextToSpeechAdapter
@@ -27,6 +28,10 @@ from synapse.speech_adapters.models import (
 )
 from synapse.speech_adapters.piper_tts import PiperTextToSpeechAdapter
 from synapse.speech_adapters.registry import SpeechAdapterRegistry
+from synapse.speech_adapters.voicestudio_tts import (
+    VoiceStudioTextToSpeechAdapter,
+    VoiceStudioTransport,
+)
 
 DEFAULT_POLICY: dict[str, Any] = {
     "enabled": True,
@@ -111,12 +116,14 @@ class SpeechAdapterRuntime:
         providers: ProviderRuntime,
         events: EventBus,
         execution: SpeechExecutionPort | None = None,
+        voicestudio_transport: VoiceStudioTransport | None = None,
     ) -> None:
         self.data_dir = data_dir
         self.registry = registry
         self.providers = providers
         self.events = events
         self.execution = execution
+        self.voicestudio_transport = voicestudio_transport
         self._runtime_adapters: dict[str, object] = {}
         for manifest in self.registry.list_adapters():
             self._runtime_adapters[manifest.adapter_id] = self._build_adapter(manifest)
@@ -293,6 +300,22 @@ class SpeechAdapterRuntime:
             [health for health in self.list_adapter_health() if health.status == "unavailable"]
         )
 
+    def list_tts_voices(self) -> list[dict[str, Any]]:
+        voices: list[dict[str, Any]] = []
+        for adapter_id, adapter in self._runtime_adapters.items():
+            manifest = self.registry.get_adapter(adapter_id)
+            if manifest.adapter_type != "tts" or not hasattr(adapter, "list_voices"):
+                continue
+            try:
+                for voice in adapter.list_voices():
+                    voices.append({**voice, "provider": manifest.provider_id, "engine": "voicestudio"})
+            except Exception:
+                continue
+        return voices
+
+    def get_runtime_adapter(self, adapter_id: str) -> object | None:
+        return self._runtime_adapters.get(adapter_id)
+
     def load_policy(self) -> dict[str, Any]:
         raw = load_structured_file(self.data_dir.resolve("config/speech_adapter_policy.yaml"))
         policy_raw = raw.get("speech_adapters", raw)
@@ -304,10 +327,14 @@ class SpeechAdapterRuntime:
         factory_name = self._adapter_factory_name(manifest)
         if factory_name == "kokoro_tts":
             return KokoroTextToSpeechAdapter(manifest, self.data_dir, self.execution)
+        if factory_name == "chattts_tts":
+            return ChatTTSTextToSpeechAdapter(manifest, self.data_dir, self.execution)
         if factory_name == "faster_whisper":
             return FasterWhisperSpeechToTextAdapter(manifest, self.data_dir)
         if factory_name == "piper_tts":
             return PiperTextToSpeechAdapter(manifest, self.data_dir, self.execution)
+        if factory_name == "voicestudio_tts":
+            return VoiceStudioTextToSpeechAdapter(manifest, self.data_dir, self.voicestudio_transport)
         if factory_name == "local_voice_analysis":
             return LocalVoiceAnalysisAdapter(manifest)
         if manifest.adapter_type == "stt":

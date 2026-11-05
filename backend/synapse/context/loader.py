@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import asdict, dataclass, field
 from typing import Any, Sequence
 
@@ -130,11 +131,20 @@ class ContextLoader:
             path = self.data_dir.resolve(relative_path)
             if not path.exists():
                 return
+            content = path.read_text(encoding="utf-8")
+            if kind == "memory" and conversation_context is not None:
+                query = str(conversation_context.get("snapshot", {}).get("metadata", {}).get("incoming_query", ""))
+                terms = {term.casefold() for term in re.findall(r"\w+", query) if len(term) > 2}
+                paragraphs = content.split("\n\n")
+                ranked = sorted(paragraphs, key=lambda part: sum(term in part.casefold() for term in terms), reverse=True)
+                content = "\n\n".join(part for part in ranked[:4] if any(term in part.casefold() for term in terms))[:2000]
+                if not content:
+                    return
             section = ContextSection(
                 kind=kind,
                 name=name,
                 source=relative_path.replace("\\", "/"),
-                content=path.read_text(encoding="utf-8"),
+                content=content,
                 order=order,
             )
             order += 1
@@ -150,6 +160,7 @@ class ContextLoader:
         add_file("memory", "user", "memory/USER.md")
         add_file("memory", "global", "memory/MEMORY.md")
         add_file("identity", "agent_soul", f"agents/{agent_id}/SOUL.md")
+        add_file("identity", "agent_rules", f"agents/{agent_id}/AGENTS.md")
         add_file("memory", "agent_memory", f"agents/{agent_id}/MEMORY.md")
         add_file("identity", "agent_skills", f"agents/{agent_id}/SKILLS.md")
 

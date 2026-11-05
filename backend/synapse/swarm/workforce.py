@@ -93,12 +93,14 @@ class EphemeralWorkforcePlanner:
                     required_skills=list(task.metadata.get("required_skills", [])),
                     preferred_model_requirements={
                         "capability": str(task.metadata.get("model_capability", "swarm")),
+                        "provider": task.metadata.get("provider"),
+                        "model": task.metadata.get("model"),
                         "context": task.metadata.get("context_requirement"),
                         "latency": task.metadata.get("latency_requirement"),
                         "reasoning": task.metadata.get("reasoning_requirement"),
                         "tool_calling": bool(task.required_tools),
                     },
-                    allowed_tools=list(task.required_tools),
+                    allowed_tools=list(task.metadata.get("authorized_tools", task.required_tools)),
                     denied_tools=list(task.metadata.get("denied_tools", [])),
                     context_scope={"mission_id": mission.mission_id, "task_id": task.task_id},
                     memory_scope=AgentMemoryScope.MISSION_SHARED

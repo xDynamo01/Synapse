@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
+from threading import RLock
 from typing import Any, Protocol
 
 from synapse.core.data_dir import DataDir
@@ -21,6 +22,7 @@ class PlannerRuntime:
         self.data_dir = data_dir
         self.events = events
         self.provider = provider
+        self.lock = RLock()
 
     def create_plan(
         self,
@@ -80,6 +82,8 @@ class PlannerRuntime:
         warnings: list[str] = []
         if not plan.tasks:
             errors.append("Plan must contain at least one task.")
+        if len(plan.tasks) > 64:
+            errors.append("Plan exceeds the 64-task execution budget.")
         for task in plan.tasks:
             if not task.title.strip() or not task.objective.strip():
                 errors.append(f"Task {task.task_id} must have a title and objective.")
@@ -133,6 +137,22 @@ class PlannerRuntime:
             item if isinstance(item, MissionTask) else MissionTask(mission_id=mission_id, **item)
             for item in tasks
         ]
+        # A proposal cannot carry self-declared completion. Preserve only results
+        # already validated under unchanged inputs, including transitive dependencies.
+        previous = {task.task_id: task for task in current.tasks}
+        fields = ("objective", "dependencies", "required_capabilities", "required_tools",
+                  "required_permissions", "verification_policy", "metadata", "expected_output")
+        changed = {task.task_id for task in parsed if task.task_id not in previous or any(
+            getattr(task, name) != getattr(previous[task.task_id], name) for name in fields)}
+        while True:
+            affected = changed | {task.task_id for task in parsed if set(task.dependencies) & changed}
+            if affected == changed:
+                break
+            changed = affected
+        parsed = [previous[task.task_id] if task.task_id in previous and task.task_id not in changed
+                  else replace(task, status="pending", result=None, error=None, completed_at=None,
+                               assigned_agent_id=None, assigned_worker_id=None, started_at=None)
+                  for task in parsed]
         replacement = MissionPlan(
             mission_id=mission_id,
             tasks=parsed,

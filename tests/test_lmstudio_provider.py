@@ -4,10 +4,10 @@ import json
 import sys
 import tempfile
 import unittest
-from pathlib import Path
-from urllib.error import HTTPError
 from io import BytesIO
+from pathlib import Path
 from unittest.mock import patch
+from urllib.error import HTTPError
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "backend"))

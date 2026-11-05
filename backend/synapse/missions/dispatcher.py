@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field, replace
+from threading import RLock
 from typing import Any
 
 from synapse.missions.dag import TaskGraph
 from synapse.missions.errors import NoWorkerAvailable
-from synapse.missions.models import now_iso
+from synapse.missions.models import MissionTask, now_iso
 
 
 @dataclass(frozen=True)
@@ -37,8 +40,31 @@ class MissionDispatcher:
         self.scheduler = scheduler
         self.execution = execution
         self.events = events
+        self.admission_lock = RLock()
+        self.resource_limit: Callable[[str, int], int] | None = None
+        self.route_admission: Callable[[str, MissionTask, str], tuple[str, str] | None] | None = None
+        self.worker_admission: Callable[[str, MissionTask, str], bool] | None = None
 
     def dispatch_ready_tasks(
+        self, mission_id: str, max_concurrency: int | None = None, *, execute: bool = True,
+    ) -> DispatchResult:
+        # Admit once under the shared plan lock. Only inference runs concurrently.
+        with self.admission_lock, self.planner.lock:
+            result = self._admit_ready_tasks(mission_id, max_concurrency, execute=False)
+        if execute and result.dispatched:
+            with ThreadPoolExecutor(max_workers=len(result.dispatched)) as executor:
+                futures = [executor.submit(self.execution.execute_attempt, item)
+                           for item in result.dispatched]
+                failures = [future.exception() for future in futures]
+            self.missions.refresh_progress(mission_id)
+            for failure in failures:
+                if failure is not None:
+                    raise failure
+        return replace(result, active_attempts=[item.attempt_id
+                       for item in self.attempts.list(mission_id=mission_id)
+                       if self.attempts.active_for_task(item.task_id) == item])
+
+    def _admit_ready_tasks(
         self,
         mission_id: str,
         max_concurrency: int | None = None,
@@ -66,13 +92,19 @@ class MissionDispatcher:
             )
         plan = self.planner.get_plan(mission_id, mission.plan_id)
         graph = TaskGraph(plan.tasks)
-        ready = graph.ready_tasks()
+        priorities = {"critical": 0, "high": 1, "normal": 2, "low": 3}
+        ready = sorted(graph.ready_tasks(), key=lambda task: (priorities.get(task.priority, 2), task.task_id))
         blocked = [task.task_id for task in graph.blocked_tasks()]
         active = self.attempts.list(mission_id=mission_id)
         active = [item for item in active if self.attempts.active_for_task(item.task_id) == item]
-        limit = max_concurrency or int(mission.metadata.get("max_concurrency", 1))
+        limit = max_concurrency if max_concurrency is not None else int(mission.metadata.get("max_concurrency", 1))
+        if limit < 1 or limit > 32:
+            raise ValueError("Mission concurrency must be between 1 and 32.")
+        if self.resource_limit is not None:
+            limit = self.resource_limit(mission_id, limit)
         slots = max(0, limit - len(active))
-        reserved = {item.worker_id for item in active}
+        reserved = {item.worker_id for item in self.attempts.list()
+                    if self.attempts.active_for_task(item.task_id) == item}
         dispatched: list[str] = []
         skipped: list[dict[str, str]] = []
         rejected: list[dict[str, Any]] = []
@@ -86,6 +118,12 @@ class MissionDispatcher:
                 continue
             candidates = [
                 worker for worker in self.workers.list() if worker.worker_id not in reserved
+                and (not task.metadata.get("ephemeral_agent_id")
+                     or worker.agent_id == task.metadata["ephemeral_agent_id"])
+                and (not worker.agent_id.startswith("ephemeral:")
+                     or worker.agent_id == task.metadata.get("ephemeral_agent_id"))
+                and (self.worker_admission is None or self.worker_admission(
+                    mission_id, task, worker.agent_id))
             ]
             try:
                 selection = self.scheduler.select_worker(task, candidates=candidates)
@@ -97,6 +135,7 @@ class MissionDispatcher:
             operational_agent_id = str(
                 task.metadata.get("ephemeral_agent_id") or selection.selected_agent
             )
+            selected_route = self.route_admission(mission_id, task, operational_agent_id) if self.route_admission else None
             assigned = replace(
                 task,
                 status="assigned",
@@ -104,6 +143,8 @@ class MissionDispatcher:
                 assigned_worker_id=selection.selected_worker,
                 revision=task.revision + 1,
                 updated_at=now_iso(),
+                metadata=({**task.metadata, "provider": selected_route[0], "model": selected_route[1]}
+                          if selected_route else task.metadata),
             )
             tasks[index] = assigned
             attempt = self.attempts.create(

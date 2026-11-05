@@ -8,10 +8,10 @@ import math
 import time
 import wave
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
-
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -406,6 +406,117 @@ def test_text_conversation_send_stream_history_and_restart_restore(tmp_path: Pat
     assert len(history.json()["messages"]) == 4
     assert history.json()["pagination"]["returned"] == 4
     assert history.json()["summary"]["conversation_id"] == conversation_id
+
+
+def test_swarm_confirmation_stream_is_scoped_and_creates_only_after_acceptance(
+    tmp_path: Path,
+) -> None:
+    runtime = runtime_at(tmp_path / "data", clean=True)
+    client = client_for(runtime)
+    create_ready_primary(client, runtime)
+    runtime.ephemeral_agents.model_capability = SimpleNamespace(
+        recommend_route=lambda *args: SimpleNamespace(
+            provider_id="mock", model_id="synapse-test", status="recommended",
+            reason="test inference", estimated_ram_gb=0, estimated_vram_gb=0))
+    opened = client.post(
+        "/api/frontend/conversations/open",
+        json={
+            "workspace_id": "default",
+            "project_id": "project-a",
+            "session_id": "session-a",
+        },
+    )
+    conversation_id = opened.json()["conversation"]["conversation_id"]
+
+    stream = client.post(
+        f"/api/frontend/conversations/{conversation_id}/turns/stream",
+        json={
+            "content": "Use um Swarm com 99 agentes para analisar o projeto",
+            "workspace_id": "default",
+            "project_id": "project-a",
+            "session_id": "session-a",
+        },
+    )
+
+    assert stream.status_code == 200, stream.text
+    events = [json.loads(line) for line in stream.text.splitlines()]
+    confirmation = next(event for event in events if event["type"] == "confirmation_required")
+    request_id = confirmation["data"]["request"]["request_id"]
+    assert runtime.missions.list_missions() == []
+    assert runtime.swarm.list() == []
+
+    wrong_scope = client.post(
+        f"/api/frontend/swarm/confirmations/{request_id}",
+        json={
+            "action": "accept_recommended",
+            "workspace_id": "default",
+            "project_id": "project-b",
+            "session_id": "session-a",
+        },
+    )
+    assert wrong_scope.status_code == 422
+    assert runtime.missions.list_missions() == []
+
+    wrong_session = client.post(
+        f"/api/frontend/swarm/confirmations/{request_id}",
+        json={
+            "action": "accept_recommended",
+            "workspace_id": "default",
+            "project_id": "project-a",
+            "session_id": "session-b",
+        },
+    )
+    assert wrong_session.status_code == 422
+    assert runtime.missions.list_missions() == []
+
+    accepted = client.post(
+        f"/api/frontend/swarm/confirmations/{request_id}",
+        json={
+            "action": "accept_recommended",
+            "workspace_id": "default",
+            "project_id": "project-a",
+            "session_id": "session-a",
+        },
+    )
+    # Confirmation cannot bypass execution governance for an unbound project.
+    assert accepted.status_code == 422, accepted.text
+    assert "incomplete RFC implementation binding" in accepted.text
+    assert runtime.swarm.list()[0].status == "failed"
+    assert all(item.state.value == "destroyed" for item in runtime.ephemeral_agents.list())
+    assert len(runtime.missions.list_missions()) == 1
+    assert len(runtime.swarm.list()) == 1
+
+
+def test_explicit_swarm_model_starts_without_redundant_confirmation(tmp_path: Path) -> None:
+    runtime = runtime_at(tmp_path / "data", clean=True)
+    client = client_for(runtime)
+    create_ready_primary(client, runtime)
+    runtime.ephemeral_agents.model_capability = SimpleNamespace(
+        recommend_route=lambda *args: SimpleNamespace(
+            provider_id="mock", model_id="synapse-test", status="recommended",
+            reason="test inference", estimated_ram_gb=0, estimated_vram_gb=0))
+    opened = client.post("/api/frontend/conversations/open", json={"workspace_id": "default"})
+    conversation_id = opened.json()["conversation"]["conversation_id"]
+
+    stream = client.post(
+        f"/api/frontend/conversations/{conversation_id}/turns/stream",
+        json={
+            "content": "Use um Swarm com modelo synapse-test",
+            "workspace_id": "default",
+        },
+    )
+
+    assert stream.status_code == 200, stream.text
+    events = [json.loads(line) for line in stream.text.splitlines()]
+    assert "confirmation_required" not in [event["type"] for event in events]
+    started = next(event for event in events if event["type"] == "swarm_started")
+    request = started["data"]["request"]
+    assert request["status"] == "completed"
+    assert request["explicit_models"] == ["synapse-test"]
+    instances = runtime.ephemeral_agents.list(request["mission_id"])
+    assert len(instances) == 1
+    assert instances[0].model_selection["provider"]
+    assert instances[0].model_selection["model"] == "synapse-test"
 
 
 def test_frontend_launch_opens_new_empty_active_conversation_and_indexes_history(tmp_path: Path) -> None:

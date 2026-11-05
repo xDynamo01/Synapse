@@ -143,7 +143,7 @@ class ProviderRuntimeTests(unittest.TestCase):
 
         provider = runtime.providers.resolve_provider_for_capability("text_to_speech")
 
-        self.assertEqual(provider.provider_id, "piper")
+        self.assertEqual(provider.provider_id, "kokoro")
 
     def test_provider_disabled_is_not_chosen(self) -> None:
         directory, settings, _ = runtime_in_tempdir()

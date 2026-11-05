@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
@@ -47,6 +48,7 @@ class ModelRouter:
         self.system_config = system_config
         self.events = events
         self.model_capabilities: Any | None = None
+        self.context_window_resolver: Callable[[str, str | None], int | None] | None = None
         self.egress_gate: IntelligenceEgressPort | None = None
         self.adapters = adapters or {
             "mock": MockModelAdapter(),
@@ -120,6 +122,18 @@ class ModelRouter:
         )
 
     def generate_request(self, request_payload: ModelRequest) -> ModelResponse:
+        provider_config = self.system_config.get("models", {}).get("providers", {}).get(request_payload.provider, {})
+        if "context_window" not in request_payload.metadata:
+            configured = provider_config.get("context_windows", {}).get(request_payload.model, provider_config.get("context_window"))
+            discovered = self.context_window_resolver(request_payload.provider, request_payload.model) if self.context_window_resolver else None
+            window = configured or discovered or 4096
+            request_payload = replace(request_payload, metadata={**request_payload.metadata,
+                "context_window": window, "context_window_source": "configured" if configured else "catalog" if discovered else "conservative_default"})
+        if request_payload.max_tokens is None:
+            # A local tool-selection turn needs a short call, then a separate
+            # response turn. Keep room for the full authorized tool catalog.
+            default_output = 256 if request_payload.provider == "synapse_local" and request_payload.tools else 1024
+            request_payload = replace(request_payload, max_tokens=min(default_output, int(request_payload.metadata["context_window"]) // 4))
         adapter = self.adapters.get(request_payload.provider)
         if not adapter:
             raise ModelError(
@@ -152,6 +166,9 @@ class ModelRouter:
                 )
             raise
         if self.events:
+            budget_metrics = request_payload.metadata.get("context_budget") or result.metadata.get("context_budget")
+            if budget_metrics:
+                self.events.emit("model_context_budget", request_payload.agent_id, budget_metrics)
             self.events.emit(
                 "generation_completed",
                 request_payload.agent_id,

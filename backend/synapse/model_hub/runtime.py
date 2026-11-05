@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 from dataclasses import asdict, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -39,6 +40,7 @@ PROVIDER_NAMES = {
     "openai_compatible": "OpenAI Compatible",
 }
 MODEL_EXTENSIONS = {".gguf", ".ggml", ".bin", ".safetensors"}
+MAX_IMPORT_BYTES = 80 * 1024 * 1024 * 1024
 
 
 class ModelHubRuntime:
@@ -194,6 +196,34 @@ class ModelHubRuntime:
         self.event_bus.emit("model_hub.folder_added", "model_hub", asdict(folder))
         return folder
 
+    def import_local_model(self, source_path: str, filename: str) -> dict[str, Any]:
+        """Copy a validated local model into the configured Synapse runtime directory."""
+        source = Path(source_path).expanduser().resolve()
+        if not source.is_file():
+            raise ValidationError("Model file does not exist.")
+        suffix = source.suffix.lower()
+        if suffix not in MODEL_EXTENSIONS:
+            raise ValidationError(f"Unsupported model extension: {suffix or 'none'}")
+        size = source.stat().st_size
+        if size <= 0 or size > MAX_IMPORT_BYTES:
+            raise ValidationError("Model file size is outside the supported import limit.")
+        safe_name = Path(filename).name
+        if not safe_name or Path(safe_name).suffix.lower() not in MODEL_EXTENSIONS:
+            raise ValidationError("Invalid model filename.")
+        roots = self._synapse_runtime_model_roots()
+        if not roots:
+            raise ValidationError("Synapse local model directory is not configured.")
+        target_root = roots[0].resolve()
+        target_root.mkdir(parents=True, exist_ok=True)
+        target = target_root / safe_name
+        temporary = target.with_name(f".{target.name}.importing")
+        shutil.copyfile(source, temporary)
+        os.replace(temporary, target)
+        result = {"provider": "synapse_local", "path": str(target), "filename": safe_name, "size_bytes": size}
+        self.event_bus.emit("model_hub.model_imported", "model_hub", result)
+        self.refresh()
+        return result
+
     def remove_folder(self, folder_id: str) -> ModelFolder:
         folders = self.list_folders()
         removed = next((item for item in folders if item.folder_id == folder_id), None)
@@ -279,6 +309,21 @@ class ModelHubRuntime:
             "available": True,
             "catalog_size": len(self.list_catalog()),
             "provider_count": len(self.list_providers()),
+            "folder_count": len(self.list_folders()),
+            "defaults": asdict(self.get_defaults()),
+        }
+
+    def health_snapshot(self) -> dict[str, Any]:
+        """Return cached model-hub facts without discovery or network probes."""
+        known_models = self._deduplicate_models(
+            [*self.registry.list_models(), *self._configured_models()]
+        )
+        known_providers = self.registry.list_providers()
+        return {
+            "available": True,
+            "initialized": self._initialized,
+            "catalog_size": len(known_models),
+            "provider_count": max(len(known_providers), len(PROVIDER_NAMES)),
             "folder_count": len(self.list_folders()),
             "defaults": asdict(self.get_defaults()),
         }
@@ -572,6 +617,7 @@ class ModelHubRuntime:
                 continue
             model_type = path.suffix.lower().lstrip(".")
             relative = path.relative_to(root)
+            is_multimodal_projector = path.stem.lower().startswith("mmproj")
             models.append(
                 ModelCatalogEntry(
                     id=f"{id_prefix}:{relative.as_posix()}",
@@ -583,7 +629,9 @@ class ModelHubRuntime:
                     availability_state="installed"
                     if provider != "lmstudio"
                     else "library-only/not-installed",
-                    chat_usable=provider == "synapse_local" and model_type in {"gguf", "ggml", "bin"},
+                    chat_usable=provider == "synapse_local"
+                    and model_type in {"gguf", "ggml", "bin"}
+                    and not is_multimodal_projector,
                     quantization=_quantization(path.name),
                     size_bytes=size,
                     estimated_ram_gb=round(size * 1.2 / (1024**3), 2),
@@ -591,7 +639,12 @@ class ModelHubRuntime:
                     cpu_compatible=model_type in {"gguf", "ggml", "bin"},
                     gpu_compatible=True,
                     status="available",
-                    metadata={**metadata, "path": str(path), "extension": path.suffix.lower()},
+                    metadata={
+                        **metadata,
+                        "path": str(path),
+                        "extension": path.suffix.lower(),
+                        "model_role": "mmproj" if is_multimodal_projector else "llm",
+                    },
                 )
             )
         return models

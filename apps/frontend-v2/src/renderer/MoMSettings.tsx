@@ -3,6 +3,7 @@ import type { SynapseFrontendClient } from "../shared/frontendClient";
 import type { MoMConfiguration, MoMOperation, MoMRoute, SettingsSnapshot } from "../shared/types";
 
 export const momOperations: Array<{ id: MoMOperation; label: string; description: string }> = [
+  { id: "conversation", label: "Modelo de conversa", description: "Conversa cotidiana; sem seleção usa o generalista." },
   { id: "coding", label: "Modelo de código", description: "Geração e análise de código." },
   { id: "reasoning", label: "Modelo de raciocínio", description: "Problemas que exigem análise e planejamento." },
   { id: "review", label: "Modelo de revisão", description: "Revisão de propostas e resultados." },
@@ -62,14 +63,15 @@ export function MoMSettings({ client, snapshot, primaryId, workspaceId, Select }
 
   async function save(): Promise<void> {
     if (!client || !configuration || status !== "ready") return;
-    if (configuration.enabled && (!configuration.routes.length || configuration.routes.some((route) =>
-      !choices.some((option) => option.value === routeKey(route) && !option.disabled)))) {
-      setMessage("Escolha ao menos um modelo disponível e remova ou substitua as escolhas indisponíveis."); return;
+    if (configuration.routes.some((route) =>
+      !choices.some((option) => option.value === routeKey(route) && !option.disabled))) {
+      setMessage("Remova ou substitua as escolhas indisponíveis."); return;
     }
     setStatus("saving"); setMessage("");
     const admittedGeneration = generation.current;
     try {
-      const saved = await client.saveMoMConfiguration({ workspace_id: workspaceId, enabled: configuration.enabled,
+      const saved = await client.saveMoMConfiguration({ workspace_id: workspaceId, enabled: true,
+        resource_policy: configuration.resource_policy ?? "RESPONSIVE",
         routes: configuration.routes, expected_revision: configuration.revision });
       if (generation.current !== admittedGeneration) return;
       setConfiguration(saved); setStatus("ready"); setMessage("Configuração do MoM salva.");
@@ -82,31 +84,29 @@ export function MoMSettings({ client, snapshot, primaryId, workspaceId, Select }
   }
 
   return <section className="settings-card mom-settings" aria-label="Configurações MoM">
-    <h3>MoM · Modelos do Primary</h3>
-    <p className="muted">Escolha um modelo para cada tipo de operação. Você pode repetir o mesmo modelo em várias funções. Os agentes do Swarm mantêm seus próprios modelos.</p>
-    <p className="muted">Escolha o generalista em Models → Modelo padrão. Conversas simples continuam nele, mesmo com MoM ligado. Especialistas podem aumentar o tempo de resposta. A seleção ocorre no início da tarefa; alterações não interrompem uma execução já iniciada.</p>
+    <header className="mom-heading">
+      <h3>MoM</h3>
+      <span className="muted">Roteamento sempre disponível</span>
+    </header>
     {status === "loading" ? <p role="status">Carregando configuração…</p> : null}
     {message ? <p role="status" className={status === "error" ? "settings-state error" : "settings-state"}>{message}</p> : null}
     {stalePrimary ? <p className="settings-state">O Primary mudou. Salvar vinculará estas escolhas ao Primary atual.</p> : null}
     {configuration ? <>
-      <label>Habilitar MoM para operações do Primary
-        <input type="checkbox" checked={configuration.enabled} disabled={status !== "ready"}
-          onChange={(event) => { setConfiguration({ ...configuration, enabled: event.target.checked }); setMessage(""); }} />
-      </label>
+      <div className="mom-grid">
       {momOperations.map((operation) => {
         const route = configuration.routes.find((item) => item.operation === operation.id);
         const value = route ? routeKey(route) : "";
         const missing = route && !choices.some((option) => option.value === value);
         return <div className="mom-operation" key={operation.id}>
-          <Select label={operation.label} value={value} disabled={status !== "ready" || !snapshot}
+          <span className="mom-route-state">{missing || (route && choices.find((option) => option.value === value)?.disabled) ? "Indisponível" : route ? "Configurado" : "Sem modelo"}</span>
+          <Select label={operation.label.replace("Modelo de ", "").replace(/^./, (letter) => letter.toUpperCase())} value={value} disabled={status !== "ready" || !snapshot}
             options={[{ value: "", label: "Não configurado" }, ...choices,
               ...(missing ? [{ value, label: `${route.model} · ${route.provider} · fora do catálogo`, disabled: true }] : [])]}
             onChange={(selected) => choose(operation.id, selected)} />
-          <small className="muted">{operation.description}</small>
         </div>;
       })}
+      </div>
     </> : null}
-    <p className="muted">Salvar não carrega modelos na memória. Operações sem modelo configurado não usam outro modelo silenciosamente.</p>
     <footer className="settings-footer">
       <button type="button" disabled={busy} onClick={() => setReload((value) => value + 1)}>Recarregar MoM</button>
       <button type="button" disabled={status !== "ready" || !snapshot || !primaryId} onClick={() => void save()}>

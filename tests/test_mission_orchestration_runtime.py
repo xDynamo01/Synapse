@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import tempfile
+import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -125,6 +126,10 @@ def test_swarm_strategies_are_real_and_bounded() -> None:
     directory, runtime = runtime_in_tempdir()
     with directory:
         mission = runtime.missions.create_mission("Swarm")
+        for name in ("worker", "reviewer"):
+            runtime.data_dir.ensure_file(f"agents/{name}/CONFIG.yaml", json.dumps({
+                "id": name, "name": name, "role": "worker", "preferred_model": "mock/deterministic",
+            }))
         for strategy in runtime.swarm.STRATEGIES:
             swarm = runtime.swarm.create(mission.mission_id, strategy, "leader", ["worker", "reviewer"], {"max_iterations": 2})
             assert runtime.swarm.get(swarm.swarm_id).strategy == strategy

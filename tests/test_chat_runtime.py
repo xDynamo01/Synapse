@@ -17,6 +17,7 @@ from synapse.core.config import Settings
 from synapse.core.exceptions import PermissionDenied
 from synapse.core.permissions import PermissionContext
 from synapse.models.adapters import build_chat_messages
+from synapse.models.errors import ModelError
 from synapse.models.types import ModelRequest
 
 
@@ -177,11 +178,12 @@ class ChatRuntimeTests(unittest.TestCase):
             },
         )
         messages = build_chat_messages(request)
-        self.assertIn("[MEMÓRIA DO USUÁRIO]", messages[0]["content"])
-        self.assertIn("Nome: Arthur", messages[0]["content"])
+        self.assertNotIn("Nome: Arthur", messages[0]["content"])
+        self.assertEqual(messages[-1]["role"], "user")
+        self.assertIn("Nome: Arthur", messages[-1]["content"])
         self.assertIn("Helpful agent", messages[0]["content"])
 
-    def test_memory_prompt_is_truncated_when_too_large(self) -> None:
+    def test_essential_prompt_overflow_is_reported_without_truncation(self) -> None:
         request = ModelRequest(
             agent_id="artemis",
             provider="mock",
@@ -205,14 +207,15 @@ class ChatRuntimeTests(unittest.TestCase):
                 "agent_policy": {"allowed_tools": [], "denied_capabilities": []},
             },
         )
-        messages = build_chat_messages(request)
-        total_chars = sum(len(message["content"]) for message in messages)
-        self.assertLessEqual(total_chars, 18_000)
-        self.assertIn("context truncated", messages[0]["content"] + messages[1]["content"])
+        with self.assertRaises(ModelError) as raised:
+            build_chat_messages(request)
+        self.assertEqual(raised.exception.code, "context_budget_exceeded")
+        self.assertEqual(request.user_message, "x" * 5000)
 
     def test_memory_persists_between_sessions(self) -> None:
         directory, settings, runtime = runtime_in_tempdir()
         self.addCleanup(directory.cleanup)
+        runtime.memory.append_global(runtime.context(), "USER.md", "Nome: Arthur")
 
         first = runtime.chat.send_message(
             runtime.context(),
@@ -406,7 +409,7 @@ class ChatRuntimeTests(unittest.TestCase):
 
         tool_result = result.message.metadata["tool_results"][0]
         self.assertFalse(tool_result["success"])
-        self.assertIn("Path escapes DATA_DIR", tool_result["error"])
+        self.assertIn("Parent traversal", tool_result["error"])
 
     def test_agent_tool_call_create_task_persists_task(self) -> None:
         directory, _, runtime = runtime_in_tempdir()
@@ -419,8 +422,11 @@ class ChatRuntimeTests(unittest.TestCase):
         )
 
         tool_result = result.message.metadata["tool_results"][0]
-        self.assertTrue(tool_result["success"])
-        task_id = tool_result["result"]["id"]
+        self.assertEqual(tool_result["status"], "awaiting_approval")
+        self.assertEqual(list(runtime.data_dir.resolve("tasks/active").glob("*.json")), [])
+        _, resumed = runtime.approval_resume.approve_and_resume(runtime.context(), tool_result["approval_id"])
+        self.assertTrue(resumed.success)
+        task_id = resumed.result["id"]
         self.assertTrue(runtime.data_dir.resolve(f"tasks/active/{task_id}.json").exists())
         self.assertEqual(runtime.tasks.get_task(task_id).title, "Tool Created Task")
 
@@ -438,8 +444,11 @@ class ChatRuntimeTests(unittest.TestCase):
         )
 
         tool_result = result.message.metadata["tool_results"][0]
-        self.assertTrue(tool_result["success"])
-        message_id = tool_result["result"]["id"]
+        self.assertEqual(tool_result["status"], "awaiting_approval")
+        self.assertEqual(runtime.communication.list_messages(runtime.context(), "researcher"), [])
+        _, resumed = runtime.approval_resume.approve_and_resume(runtime.context(), tool_result["approval_id"])
+        self.assertTrue(resumed.success)
+        message_id = resumed.result["id"]
         messages = runtime.communication.list_messages(runtime.context(), "researcher")
         self.assertEqual(messages[0].id, message_id)
         self.assertEqual(messages[0].body, "hello via tool")

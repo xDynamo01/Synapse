@@ -123,10 +123,11 @@ def builtin_speech_adapter_registry() -> SpeechAdapterRegistry:
             adapter_id="kokoro_tts_adapter",
             provider_id="kokoro",
             adapter_type="tts",
-            name="Kokoro · Dora (pt-BR)",
-            description="Offline CPU speech with the original Dora voice.",
+            name="Kokoro · Feminine voices",
+            description="Offline CPU speech with Kokoro's ready-made feminine voices.",
             version="1.0.0",
-            supported_languages=["pt-BR"],
+            supported_languages=["en-US", "en-GB", "pt-BR", "es-ES", "fr-FR",
+                                 "it-IT", "ja-JP", "hi-IN", "zh-CN"],
             supports_streaming=False,
             supports_file_input=False,
             supports_realtime=False,
@@ -155,6 +156,44 @@ def builtin_speech_adapter_registry() -> SpeechAdapterRegistry:
                 "engine": "piper",
                 "execution_boundary_required": True,
             },
+        ),
+        SpeechAdapterManifest(
+            adapter_id="chattts_tts_adapter",
+            provider_id="chattts",
+            adapter_type="tts",
+            name="ChatTTS (optional)",
+            description="Optional local dialogue TTS for English and Chinese.",
+            version="1.0.0",
+            supported_languages=["en-US", "zh-CN"],
+            supports_streaming=False,
+            supports_file_input=False,
+            supports_realtime=False,
+            requires_gpu=False,
+            requires_network=False,
+            metadata={
+                "mock": False,
+                "executes_real_provider": True,
+                "adapter_factory": "chattts_tts",
+                "engine": "chattts",
+                "optional": True,
+                "model_license": "CC BY-NC 4.0",
+            },
+        ),
+        SpeechAdapterManifest(
+            adapter_id="voicestudio_tts_adapter",
+            provider_id="voicestudio",
+            adapter_type="tts",
+            name="VoiceStudio · cloned voices",
+            description="Optional local VoiceStudio API with designed and cloned voices.",
+            version="1.0.0",
+            supported_languages=["pt-BR", "en-US", "en-GB", "es-ES", "fr-FR"],
+            supports_streaming=False,
+            supports_file_input=True,
+            supports_realtime=False,
+            requires_gpu=False,
+            requires_network=False,
+            metadata={"adapter_factory": "voicestudio_tts", "engine": "voicestudio", "optional": True,
+                      "external_process_required": True, "clone_profiles": True},
         ),
         SpeechAdapterManifest(
             adapter_id="mock_voice_analysis_adapter",
@@ -210,6 +249,12 @@ def builtin_speech_adapter_registry() -> SpeechAdapterRegistry:
     )
     registry.register_capability(
         SpeechAdapterCapability("piper_tts_adapter", "text_to_speech", 10, True)
+    )
+    registry.register_capability(
+        SpeechAdapterCapability("chattts_tts_adapter", "text_to_speech", 20, True)
+    )
+    registry.register_capability(
+        SpeechAdapterCapability("voicestudio_tts_adapter", "text_to_speech", 15, True)
     )
     registry.register_capability(
         SpeechAdapterCapability("local_voice_analysis_adapter", "voice_analysis", 10, True)

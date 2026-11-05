@@ -219,7 +219,7 @@ def test_dependency_graph_reverse_imports_bootstrap_and_scc_baselines_are_frozen
         ("sandbox_integrations", "sandbox_drivers"),
     }
     # Primary MoM adds api -> mom -> core without changing existing cycles.
-    for graph, count in ((_runtime_context_graph(), 306), (context_graph(), 341)):
+    for graph, count in ((_runtime_context_graph(), 313), (context_graph(), 352)):
         assert len(graph) == count
         assert {
             edge

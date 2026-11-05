@@ -43,8 +43,7 @@ def register_model_provider_projections(
             ProviderConfigurationField("default_model"),
             ProviderConfigurationField("api_key", required=requires_api_key, sensitive=True),
         )
-        catalog.register(
-            CanonicalProviderManifest(
+        manifest = CanonicalProviderManifest(
                 provider_id=setting.provider_id,
                 display_name=setting.display_name,
                 domain="model",
@@ -61,7 +60,20 @@ def register_model_provider_projections(
                 aliases=_MODEL_EXECUTION_ALIASES.get(setting.provider_id, ()),
                 metadata={"projection_source": "provider_settings"},
             )
-        )
+        catalog.register(manifest)
+        # Provider settings keep a canonical execution id while the public
+        # taxonomy may expose a storage/compatibility alias (for example
+        # ``lmstudio`` -> ``lmstudio_local``).  Register the alias as an
+        # independent lookup identity without creating a second execution
+        # implementation.
+        for alias in setting.metadata.get("aliases", ()):
+            if not isinstance(alias, str) or not alias.strip() or alias == manifest.provider_id:
+                continue
+            catalog.register(
+                CanonicalProviderManifest(
+                    **{**manifest.__dict__, "provider_id": alias.strip(), "aliases": (manifest.provider_id,)},
+                )
+            )
 
     for manifest in speech_adapters.registry.list_adapters():
         if manifest.metadata.get("mock"):

@@ -2,16 +2,16 @@ import type { CommandDiscoveryItem } from "./types.js";
 
 const frontendCommands: CommandDiscoveryItem[] = [
   {
-    tool_id: "activity",
-    display_name: "Activity",
-    description: "Toggle the central Presence/Activity surface.",
+    tool_id: "ajuda",
+    display_name: "Help",
+    description: "Show Workspace CLI commands. Usage: /ajuda.",
     category: "ui",
     available: true,
     requires_approval: false,
     risk_level: "low",
     execution_kind: "ui",
     argument_schema: "none",
-    opens_surface: "activity",
+    opens_surface: null,
     requires_backend_authority: false
   },
   {
@@ -51,6 +51,19 @@ const frontendCommands: CommandDiscoveryItem[] = [
     execution_kind: "project_scope",
     argument_schema: "project_id",
     opens_surface: null,
+    requires_backend_authority: true
+  },
+  {
+    tool_id: "projects",
+    display_name: "Projects",
+    description: "List projects in the Workspace. Usage: /projetos.",
+    category: "project",
+    available: true,
+    requires_approval: false,
+    risk_level: "low",
+    execution_kind: "ui",
+    argument_schema: "none",
+    opens_surface: "workspace_projects",
     requires_backend_authority: true
   },
   {

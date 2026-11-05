@@ -1,7 +1,8 @@
-# Kokoro / Dora local voice
+# Kokoro / feminine local voices
 
-User-approved replacement: one original Brazilian Portuguese female voice, Dora
-(`pf_dora`), no pitch variants, paid API, account, or runtime download.
+The packaged default is the ready-made feminine Kokoro catalog: 29 voices across
+Brazilian Portuguese, English, Spanish, French, Italian, Japanese, Hindi and
+Mandarin. `pf_dora` remains the default for Brazilian Portuguese.
 
 ## Boundary
 
@@ -26,7 +27,8 @@ When the application uses another data directory, `voice/kokoro-runtime.json`
 contains an installation-owned `root` pointing to the shared voice directory.
 This is separate from typed user voice settings so saving Settings preserves it.
 Set `tts_provider_id` to `kokoro` and `default_tts_voice` to `pf_dora` through voice
-settings. Existing installations are not globally auto-migrated by the adapter.
+settings. Each voice requires its matching language; unknown or masculine voice IDs
+are rejected rather than silently substituted.
 
 ## Provenance and licensing
 
@@ -45,7 +47,8 @@ settings. Existing installations are not globally auto-migrated by the adapter.
 The retired Cadu/Jeff/Edresson pack was moved, not erased, to
 `artifacts/restore-points/voice-library/synapse-default-v0.01`. It is no longer a
 packaged voice library. Piper remains an optional adapter for explicit external
-configuration. Tests of Piper use fixtures; real local execution now tests Dora.
+configuration. Tests of Piper use fixtures; real local execution covers the
+Kokoro feminine catalog.
 
 ## Verification observations
 
@@ -59,9 +62,10 @@ baseline is silently changed. The new adapter uses already-existing context edge
 Final checks: 45 voice/execution tests passed, Ruff passed, global Mypy passed
 for 815 source files; frontend lint and 33 shell tests passed; diff check passed.
 Architecture suite: six passed, one existing graph-count mismatch (312/306).
-The frozen sidecar built successfully and its API listed exactly Dora as ready;
+The frozen sidecar built successfully and its API listed the packaged Kokoro
+feminine voices as ready;
 the Electron harness synthesized through that API and played to ended (1.152 s).
-The packaged resources contain only kokoro-dora-v1, and no Torch, Transformers,
+The packaged resources contain only kokoro-feminine-v1, and no Torch, Transformers,
 SentenceTransformers or kokoro_onnx directory is present in the sidecar. The
 optional repository-runtime startup reported canonical-root mismatch in the
 isolated smoke data directory; it did not prevent the speech API smoke.

@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 
 from synapse.approvals.resume import ApprovalResumeRuntime
+from synapse.bootstrap.adapters.commands import (
+    CommandCompositionDependencies,
+    build_command_runtime,
+)
 from synapse.bootstrap.adapters.global_runtimes import bind_health, bind_lifecycle, build_all
 from synapse.bootstrap.adapters.mom import (
     MoMConfigurations,
@@ -22,6 +26,7 @@ from synapse.bootstrap.features.automation import (
     AutomationFeatureBuilder,
     AutomationFeatureDependencies,
 )
+from synapse.bootstrap.features.cognitive import bind_cognitive_orchestration
 from synapse.bootstrap.features.foundation import FoundationFeatureBuilder
 from synapse.bootstrap.features.integration import (
     IntegrationFeatureBuilder,
@@ -46,14 +51,12 @@ from synapse.bootstrap.features.skills import SkillsFeatureBuilder, SkillsFeatur
 from synapse.bootstrap.features.world import WorldFeatureBuilder, WorldFeatureDependencies
 from synapse.bootstrap.lifecycle import LifecycleManager, LifecycleReport
 from synapse.chat.runtime import ChatRuntime
-from synapse.commands.handlers import build_command_handlers
-from synapse.commands.registry import CommandRegistry
-from synapse.commands.runtime import CommandRuntime
-from synapse.commands.services import CommandServices
 from synapse.core.config import Settings
+from synapse.core.exceptions import ValidationError
 from synapse.mom.runtime import MoMRuntime
 from synapse.project_knowledge.embedding_providers import learned_embedding_provider_from_env
 from synapse.project_knowledge.runtime import ProjectKnowledgeRuntime
+from synapse.tools.calls import ToolCallResult
 from synapse.voice.perception import VoicePerceptionSink
 
 
@@ -72,6 +75,7 @@ class Application:
         return self.startup_report
 
     def close(self) -> LifecycleReport:
+        self.container.memory.consolidator.close()
         self.shutdown_report = self.lifecycle.close()
         return self.shutdown_report
 
@@ -217,19 +221,56 @@ def create_runtime(
     approval_resume = ApprovalResumeRuntime(
         platform.approvals, agents.tool_router, platform.policies
     )
-    commands = _build_commands(
-        foundation,
-        platform,
-        models,
-        interaction,
-        agents,
-        missions,
-        automation,
-        integration,
-        skills,
-        governance,
-        intelligence_boundary,
-        approval_resume,
+    def validate_mission_tool_resume(tool_call_id: str) -> None:
+        related = [attempt for attempt in missions.attempts.list() if tool_call_id in attempt.tool_call_ids]
+        for attempt in related:
+            mission = missions.missions.get_mission(attempt.mission_id)
+            if attempt.status != "waiting_approval" or mission.status != "running":
+                raise ValidationError("Mission tool approval is no longer executable; the task is not waiting for approval.")
+        for swarm in missions.swarm.list() if related else []:
+            if swarm.mission_id in {attempt.mission_id for attempt in related} and swarm.status == "waiting_approval":
+                missions.swarm.start(swarm.swarm_id)
+
+    approval_resume.before_tool_resume = validate_mission_tool_resume
+
+    def resume_mission_tool(receipt: ToolCallResult) -> None:
+        waiting = [attempt for attempt in missions.attempts.list()
+                   if attempt.status == "waiting_approval" and receipt.request.id in attempt.tool_call_ids]
+        if not waiting:
+            return
+        try:
+            missions.worker_execution.resume_approved_tool(asdict(receipt))
+        except Exception as exc:
+            foundation.events.emit("mission.approval_continuation.failed", "mission-runtime",
+                                   {"tool_call_id": receipt.request.id, "error": str(exc)})
+        for mission_id in {attempt.mission_id for attempt in waiting}:
+            missions.missions.refresh_progress(mission_id)
+            for swarm in missions.swarm.list():
+                if swarm.mission_id != mission_id or swarm.status in {"completed", "failed", "cancelled"}:
+                    continue
+                try:
+                    missions.swarm.run(swarm.swarm_id)
+                except Exception as exc:
+                    foundation.events.emit("swarm.approval_continuation.failed", "mission-runtime",
+                                           {"swarm_id": swarm.swarm_id, "error": str(exc)})
+                finally:
+                    missions.swarm_interactions.refresh_execution(swarm.swarm_id)
+    approval_resume.after_tool_resume = resume_mission_tool
+    commands = build_command_runtime(
+        CommandCompositionDependencies(
+            foundation,
+            platform,
+            models,
+            interaction,
+            agents,
+            missions,
+            automation,
+            integration,
+            skills,
+            governance,
+            intelligence_boundary,
+            approval_resume,
+        )
     )
     chat = ChatRuntime(
         foundation.data_dir,
@@ -254,6 +295,8 @@ def create_runtime(
     )
     commands.chat = chat
     chat.primary_model_routing = PrimaryChatRouting(mom)
+    chat.swarm_interactions = missions.swarm_interactions
+    bind_cognitive_orchestration(mom, chat, models, missions, platform, agents)
     integration.health.chat = chat
     world_built = WorldFeatureBuilder().build(
         WorldFeatureDependencies(
@@ -427,92 +470,3 @@ def create_runtime(
         application_lifecycle=lifecycle,
         bootstrap_metadata=metadata,
     )
-
-
-def _build_commands(
-    f, p, mo, i, a, m, au, x, skills, governance, intelligence_boundary, approval_resume
-) -> CommandRuntime:
-    services = CommandServices(
-        config=f.config,
-        events=f.events,
-        agents=p.agents,
-        identities=p.identities,
-        policies=p.policies,
-        memory=p.memory,
-        tasks=p.tasks,
-        tools=a.tool_router,
-        tool_runtime=x.tool_runtime,
-        approvals=p.approvals,
-        permissions=f.permissions,
-        approval_resume=approval_resume,
-        worker=a.worker,
-        scheduler=au.scheduler,
-        daemon=au.daemon,
-        presence=p.presence,
-        lifecycle=p.lifecycle,
-        notifications=p.notifications,
-        runner_identity=au.runner_identity,
-        health=x.health,
-        readiness=x.readiness,
-        migrations=p.migrations,
-        capabilities=p.capabilities,
-        provisioning=a.provisioning,
-        primary_agent=a.primary_agent,
-        audit=a.audit,
-        admin_policy=a.admin_policy,
-        decisions=au.decisions,
-        retention=a.retention,
-        maintenance=a.maintenance,
-        conversations=a.conversations,
-        dead_letter=a.dead_letter,
-        delegation=a.delegation,
-        delegation_autonomy=a.delegation_autonomy,
-        delegation_retry=a.delegation_retry,
-        delegation_timeout=a.delegation_timeout,
-        delegation_scheduling=a.delegation_scheduling,
-        delegation_inbox=a.delegation_inbox,
-        delegation_execution=a.delegation_execution,
-        delegation_recovery=a.delegation_recovery,
-        missions=m.missions,
-        mission_context=m.mission_context,
-        mission_supervision=m.mission_supervision,
-        mission_control=m.mission_control,
-        providers=mo.providers,
-        models=mo.models,
-        provider_plugins=mo.provider_plugins,
-        lmstudio=mo.lmstudio,
-        voice=i.voice,
-        multimodal=i.multimodal,
-        audio=i.audio,
-        vision=i.vision,
-        perception=i.perception,
-        context_fusion=x.context_fusion,
-        skills=skills,
-        project_governance=governance,
-        intelligence_boundary=intelligence_boundary,
-        speech_adapters=mo.speech_adapters,
-        speech_pipeline=i.speech_pipeline,
-        tool_discovery=x.tool_discovery,
-        tool_intents=x.tool_intents,
-        mcp=x.mcp,
-        mcp_bridge=x.mcp_bridge,
-        execution_router=x.execution_router,
-        agent_tool_calling=x.agent_tool_calling,
-        attempts=m.attempts,
-        worker_registry=m.worker_registry,
-        worker_execution=m.worker_execution,
-        mission_recovery_runtime=m.mission_recovery,
-        swarm=m.swarm,
-        ephemeral_agents=m.ephemeral_agents,
-        workforce_planner=m.workforce_planner,
-        mission_trace=m.mission_trace,
-        system_insight=mo.system_insight,
-        desktop=None,
-        chat=None,
-        world_state=None,
-        attention=None,
-        agent_loop=None,
-    )
-    registry = CommandRegistry()
-    registry.register_all(build_command_handlers(services))
-    return CommandRuntime(registry, services)

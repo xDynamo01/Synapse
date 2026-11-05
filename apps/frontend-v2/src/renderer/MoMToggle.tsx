@@ -30,25 +30,23 @@ export function MoMToggle({ client, workspaceId, onBusy }: {
       // Read back on every action; the settings panel or another window may have saved.
       const current = await client.momConfiguration(workspaceId);
       if (!configuration) { setConfiguration(current); return; }
-      if (!current.enabled && !current.routes.some((route) => route.operation !== "conversation")) {
-        setConfiguration(current); setError("Configure um especialista em Settings > MoM antes de ativar."); return;
-      }
       const saved = await client.saveMoMConfiguration({ workspace_id: workspaceId,
-        enabled: !current.enabled, routes: current.routes, expected_revision: current.revision });
+        enabled: true, routes: current.routes, expected_revision: current.revision,
+        resource_policy: current.resource_policy === "ECONOMICAL" ? "RESPONSIVE" : "ECONOMICAL" });
       setConfiguration(saved);
     } catch {
       setConfiguration(null);
-      setError("Não foi possível confirmar o MoM. Clique para recarregar antes de tentar novamente.");
+      setError("Não foi possível confirmar a política. Clique para recarregar antes de tentar novamente.");
     } finally { lock.current = false; setPending(false); onBusy(false); }
   }
 
   return <div className="composer-modes">
-    <button className="composer-action composer-mom" type="button" aria-pressed={configuration?.enabled ?? false} disabled={pending}
-      aria-label={pending ? "Salvando MoM" : configuration ? `MoM ${configuration.enabled ? "ligado" : "desligado"}` : "Recarregar MoM"}
-      title={`${configuration?.enabled ? "MoM ligado" : "MoM desligado"} — especialistas sob demanda. Clique para alternar. Pode aumentar o tempo de resposta.`}
+    <button className="composer-action composer-mom" type="button" aria-pressed={configuration?.resource_policy === "ECONOMICAL"} disabled={pending}
+      aria-label={pending ? "Salvando política" : configuration ? `Política ${configuration.resource_policy === "ECONOMICAL" ? "Econômico" : "Responsivo"}` : "Recarregar política"}
+      title="Política de recursos. Clique para alternar Responsivo/Econômico. Reservas do Swarm são preservadas."
       onClick={() => void toggle()}>
       <span className="brain-icon" aria-hidden="true" />
-      <span className="sr-only">{pending ? "Salvando…" : configuration ? `MoM ${configuration.enabled ? "ligado" : "desligado"}` : "Recarregar MoM"}</span>
+      <span className="sr-only">{pending ? "Salvando política" : configuration ? (configuration.resource_policy === "ECONOMICAL" ? "Econômico" : "Responsivo") : "Recarregar política"}</span>
     </button>
     {error ? <span className="mom-feedback" role="status">{error}</span> : null}
   </div>;

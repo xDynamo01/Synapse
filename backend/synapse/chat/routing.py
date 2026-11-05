@@ -15,4 +15,16 @@ class ChatModelSelection:
 
 class PrimaryModelRoutingPort(Protocol):
     def select(self, context: PermissionContext, agent_id: str | None,
-               message: str, workspace_id: str) -> ChatModelSelection | None: ...
+               message: str, workspace_id: str,
+               recent_intent: str | None = None) -> ChatModelSelection | None: ...
+
+
+@dataclass(frozen=True)
+class PlannedMission:
+    mission_id: str
+    response: str
+
+
+class ComplexMissionPort(Protocol):
+    def prepare(self, context: PermissionContext, agent_id: str | None, message: str,
+                conversation_id: str, project_id: str | None) -> PlannedMission | None: ...

@@ -28,6 +28,7 @@ def runtime_in_tempdir(
     agent_permissions: list[str] | None = None,
     forbidden_tools: list[str] | None = None,
     preferred_tools: list[str] | None = None,
+    role: str = "orchestrator",
 ):
     directory = tempfile.TemporaryDirectory()
     settings = Settings(
@@ -41,7 +42,7 @@ def runtime_in_tempdir(
     seed_test_agent(
         settings.data_dir,
         "artemis",
-        role="orchestrator",
+        role=role,
         extra={
             "permissions": agent_permissions or [],
             "forbidden_tools": forbidden_tools or [],
@@ -95,6 +96,17 @@ def runtime_in_tempdir(
 
 
 class EffectiveAgentPolicyTests(unittest.TestCase):
+    def test_primary_agent_receives_synapse_permissions(self) -> None:
+        directory, runtime = runtime_in_tempdir(role="primary_agent")
+        self.addCleanup(directory.cleanup)
+
+        policy = runtime.policies.resolve(runtime.context(), "artemis")
+
+        self.assertIn("filesystem.read", policy.allowed_permissions)
+        self.assertIn("filesystem.write", policy.allowed_permissions)
+        self.assertIn("read_file", policy.allowed_tools)
+        self.assertIn("write_file", policy.allowed_tools)
+
     def test_policy_combines_global_permissions_and_agent_config(self) -> None:
         directory, runtime = runtime_in_tempdir(
             global_permissions=["filesystem.read", "filesystem.list"],

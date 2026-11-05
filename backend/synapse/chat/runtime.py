@@ -10,7 +10,7 @@ from uuid import uuid4
 from synapse.agents.admin import AgentAdminRuntime
 from synapse.agents.runtime import AgentRuntime
 from synapse.chat.rag_policy import RetrievalDecision, decide_project_knowledge_retrieval
-from synapse.chat.routing import ChatModelSelection, PrimaryModelRoutingPort
+from synapse.chat.routing import ChatModelSelection, ComplexMissionPort, PrimaryModelRoutingPort
 from synapse.chat.streaming import stream_response
 from synapse.context.loader import ContextLoader, ContextSection
 from synapse.conversations.errors import ConversationError
@@ -122,6 +122,8 @@ class ChatRuntime:
         self.context_fusion = context_fusion
         self.models = models
         self.primary_model_routing: PrimaryModelRoutingPort | None = None
+        self.swarm_interactions: Any | None = None
+        self.complex_missions: ComplexMissionPort | None = None
         self._cancelled_frontend_turns: set[str] = set()
 
     def cancel_frontend_turn(self, idempotency_key: str) -> None:
@@ -144,11 +146,15 @@ class ChatRuntime:
         attachments: list[dict[str, Any]] | None = None,
         idempotency_key: str | None = None,
         project_id: str | None = None,
+        workspace_id: str = "default",
+        session_id: str | None = None,
         retrieval_intent: RetrievalDirective | dict[str, str] | None = None,
+        manual_model_selection: bool | None = None,
     ) -> ChatTurnResult | LocalChatResult:
         if not content.strip():
             raise ValidationError("invalid_message: message content is required")
         directive = self._resolve_retrieval_directive(content, retrieval_intent)
+        project_id = project_id or (workspace_id if workspace_id != "default" else None)
         retrieval_decision = self._retrieval_decision(directive, project_id)
         content_for_model = directive.query if directive.intent.value != "none" else content
         correlation = current_correlation() or new_correlation(
@@ -171,6 +177,7 @@ class ChatRuntime:
                     model_provider_id=model_provider_id,
                     model_name=model_name,
                     retrieval_decision=retrieval_decision,
+                    manual_model_selection=manual_model_selection,
                 )
             if not self.conversations:
                 raise ValidationError("persistence_failed: conversation runtime is unavailable")
@@ -211,6 +218,67 @@ class ChatRuntime:
                     context.actor_id,
                     {"conversation_id": conversation_id, "message_id": incoming.message_id},
                 )
+                swarm_runtime = self.swarm_interactions
+                swarm_interaction = swarm_runtime.prepare(
+                    text=content,
+                    conversation_id=conversation_id,
+                    workspace_id=workspace_id,
+                    project_id=project_id,
+                    session_id=session_id,
+                    actor_id=context.actor_id,
+                    idempotency_key=idempotency_key,
+                ) if swarm_runtime else None
+                if swarm_interaction is not None:
+                    assert swarm_runtime is not None
+                    command_type = "swarm_confirmation" if swarm_interaction.status == "pending" else "swarm_execution"
+                    completed_interaction = (
+                        swarm_runtime.execute_accepted(swarm_interaction.request_id)
+                        if swarm_interaction.status == "accepted"
+                        else swarm_interaction
+                    )
+                    if completed_interaction.status == "pending":
+                        response_text = (
+                            "Este pedido de Swarm precisa da sua confirmação. "
+                            f"Recomendo {completed_interaction.recommended_agents} agentes temporários."
+                        )
+                    else:
+                        response_text = (
+                            f"Swarm criado para a tarefa. Estado: "
+                            f"{completed_interaction.execution_status or completed_interaction.status}."
+                        )
+                        if completed_interaction.outputs:
+                            response_text += "\n\n" + "\n\n".join(completed_interaction.outputs)
+                        if completed_interaction.execution_status == "waiting_approval":
+                            response_text += "\n\nA tarefa ainda não foi concluída. Há alterações aguardando sua aprovação."
+                            for approval_id in completed_interaction.approval_ids:
+                                response_text += f"\nRevise em /approvals; para autorizar esta alteração: /approve {approval_id}"
+                    command = {
+                        "type": command_type,
+                        "request": asdict(completed_interaction),
+                        "options": ["accept_recommended", "keep_requested", "cancel"],
+                    }
+                    response = self.conversations.send_message(
+                        context,
+                        sender_agent_id=target,
+                        receiver_agent_id=sender_id,
+                        payload={"body": response_text, "role": "assistant", "interaction": command},
+                        conversation_id=conversation_id,
+                        status="completed",
+                        parent_message_id=incoming.message_id,
+                        metadata={"source": "chat", "role": "assistant", "interaction": command},
+                    )
+                    self.event_bus.emit(
+                        "conversation.generation_completed",
+                        context.actor_id,
+                        {"conversation_id": conversation_id, "message_id": response.message_id},
+                    )
+                    return ChatTurnResult(
+                        session_id=conversation_id,
+                        agent_id=target,
+                        response=response_text,
+                        message=ChatMessage("assistant", response_text, metadata={"interaction": command}),
+                        command=command,
+                    )
                 result = self.send_message(
                     context,
                     target,
@@ -220,6 +288,7 @@ class ChatRuntime:
                     model_provider_override=model_provider_id,
                     model_override=model_name,
                     retrieval_decision=retrieval_decision,
+                    manual_model_selection=manual_model_selection,
                 )
                 response = self.conversations.send_message(
                     context,
@@ -299,7 +368,15 @@ class ChatRuntime:
         yield {"type": "turn_started", "conversation_id": conversation_id}
         yield {"type": "generation_started", "conversation_id": conversation_id}
         try:
-            for kind, content in stream_response(lambda: self.submit_turn(context, **options).response):
+            result = self.submit_turn(context, **options)
+            command = getattr(result, "command", None)
+            if command and command.get("type") in {"swarm_confirmation", "swarm_execution"}:
+                yield {
+                    "type": "confirmation_required" if command["type"] == "swarm_confirmation" else "swarm_started",
+                    "conversation_id": conversation_id,
+                    "data": command,
+                }
+            for kind, content in stream_response(lambda: result.response):
                 yield {
                     "type": kind, "conversation_id": conversation_id,
                     "content": content, "streaming_mode": "progressive",
@@ -321,21 +398,23 @@ class ChatRuntime:
         model_provider_override: str | None = None,
         model_override: str | None = None,
         retrieval_decision: RetrievalDecision | None = None,
+        manual_model_selection: bool | None = None,
     ) -> ChatTurnResult:
         if self.admin:
             self.admin.assert_agent_runnable(agent_id)
-        if retrieval_decision is None:
-            directive = self._resolve_retrieval_directive(user_message, None)
-            retrieval_decision = self._retrieval_decision(directive, project_id)
-            if directive.intent.value != "none":
-                user_message = directive.query
         session = self._load_or_create_session(session_id, agent_id, project_id)
+        project_id = project_id or session.project_id
         correlation = current_correlation() or new_correlation(
             source="chat",
             session_id=session.id,
             agent_id=agent_id,
         )
         with correlation_scope(correlation):
+            if retrieval_decision is None:
+                directive = self._resolve_retrieval_directive(user_message, None)
+                retrieval_decision = self._retrieval_decision(directive, project_id)
+                if directive.intent.value != "none":
+                    user_message = directive.query
             return self._send_message(
                 context=context,
                 agent_id=agent_id,
@@ -345,6 +424,7 @@ class ChatRuntime:
                 model_provider_override=model_provider_override,
                 model_override=model_override,
                 retrieval_decision=retrieval_decision,
+                manual_model_selection=manual_model_selection,
             )
 
     def _send_message(
@@ -357,6 +437,7 @@ class ChatRuntime:
         model_provider_override: str | None = None,
         model_override: str | None = None,
         retrieval_decision: RetrievalDecision | None = None,
+        manual_model_selection: bool | None = None,
     ) -> ChatTurnResult:
         self._set_presence(
             agent_id,
@@ -432,6 +513,11 @@ class ChatRuntime:
                 command=asdict(result),
             )
 
+        manual = bool(model_provider_override or model_override) if manual_model_selection is None else manual_model_selection
+        if not manual:
+            planned_turn = self._plan_complex_turn(context, agent_id, user_message, session)
+            if planned_turn is not None:
+                return planned_turn
         self._set_presence(
             agent_id,
             "thinking",
@@ -456,7 +542,8 @@ class ChatRuntime:
                 "sections": len(loaded_context.sections),
             },
         )
-        routed = self._primary_chat_selection(context, agent_id, user_message, session.id)
+        routed = (None if manual else
+                  self._primary_chat_selection(context, agent_id, user_message, session.id))
         if routed is not None:
             model_provider_override, model_override = routed.provider, routed.model
         agent_result = self.agent_runtime.run(
@@ -589,18 +676,36 @@ class ChatRuntime:
         model_provider_id: str | None = None,
         model_name: str | None = None,
         retrieval_decision: RetrievalDecision | None = None,
+        manual_model_selection: bool | None = None,
     ) -> LocalChatResult:
         policy = self.load_local_chat_policy()
         if not policy.get("enabled", False):
             raise ValidationError(
                 "Habilite local_chat em config/local_chat_policy.yaml (local_chat.enabled=true)."
             )
+        manual = bool(model_name or model_provider_id) if manual_model_selection is None else manual_model_selection
+        if not manual and self.complex_missions is not None:
+            planning_session = self._load_or_create_session(
+                session_id or conversation_id, agent_id or self._default_agent_id(), project_id)
+            planned_turn = self._plan_complex_turn(context, agent_id, message, planning_session)
+            if planned_turn is not None:
+                conversation_id = self._ensure_local_conversation(
+                    context, planned_turn.agent_id, conversation_id,
+                    enabled=bool(policy.get("persist_conversations", True)),
+                )
+                if conversation_id:
+                    self._persist_local_conversation_messages(
+                        context, planned_turn.agent_id, conversation_id, message, planned_turn.response,
+                    )
+                return LocalChatResult(planned_turn.session_id, conversation_id, planned_turn.agent_id,
+                                       planned_turn.response, planned_turn.message, {}, policy)
         if retrieval_decision is None:
             directive = self._resolve_retrieval_directive(message, None)
             retrieval_decision = self._retrieval_decision(directive, project_id)
             if directive.intent.value != "none":
                 message = directive.query
-        routed = self._primary_chat_selection(context, agent_id, message, conversation_id)
+        routed = (None if manual else
+                  self._primary_chat_selection(context, agent_id, message, conversation_id))
         selection = ({"provider_id": routed.provider, "model_name": routed.model} if routed is not None
                      else self._resolve_local_chat_model(model_provider_id, model_name, policy))
         if not selection["provider_id"]:
@@ -641,6 +746,7 @@ class ChatRuntime:
         session = self._load_or_create_session(
             session_id or conversation_id, storage_agent_id, project_id
         )
+        project_id = project_id or session.project_id
         correlation = current_correlation() or new_correlation(
             source="local_chat",
             session_id=session.id,
@@ -891,7 +997,27 @@ class ChatRuntime:
                     raise
             else:
                 workspace = str(record.metadata.get("workspace_id") or "default")
-        return self.primary_model_routing.select(context, agent_id, message, workspace)
+        recent_intent = None
+        if conversation_id and self._session_path(conversation_id).exists():
+            session = self.get_session(conversation_id)
+            if session.messages and session.messages[-1].role == "assistant":
+                recent_intent = session.messages[-1].metadata.get("model", {}).get("mom", {}).get("operation")
+        return self.primary_model_routing.select(context, agent_id, message, workspace, recent_intent)
+
+    def _plan_complex_turn(self, context: PermissionContext, agent_id: str | None,
+                           message: str, session: ChatSession) -> ChatTurnResult | None:
+        if self.complex_missions is None:
+            return None
+        planned = self.complex_missions.prepare(context, agent_id, message, session.id, session.project_id)
+        if planned is None:
+            return None
+        reply = ChatMessage("assistant", planned.response,
+                            metadata={"mission_id": planned.mission_id, "execution_path": "mission"})
+        session = self._append_message(session, ChatMessage("user", message), session.agent_id, session.project_id)
+        session = self._append_message(session, reply, session.agent_id, session.project_id)
+        self._persist_session(session, context.actor_id)
+        return ChatTurnResult(session.id, session.agent_id, planned.response, reply,
+                              command={"type": "mission_plan", "mission_id": planned.mission_id})
 
     def _resolve_local_chat_model(
         self,
@@ -916,7 +1042,8 @@ class ChatRuntime:
                     raise ValidationError("The selected runtime 'lmstudio' is unavailable.")
 
             providers = {item.provider_id: item for item in self.model_hub.list_providers()}
-            if provider_id in providers and not providers[provider_id].active:
+            # A fresh LM Studio probe takes precedence over an older catalog snapshot.
+            if (provider_id not in {"lmstudio", "lmstudio_local"} or self.lmstudio is None) and provider_id in providers and not providers[provider_id].active:
                 raise ValidationError(f"The selected runtime '{provider_id}' is unavailable.")
 
         if not provider_id:
@@ -978,7 +1105,10 @@ class ChatRuntime:
         if session_id:
             path = self._session_path(session_id)
             if path.exists():
-                return self.get_session(session_id)
+                existing = self.get_session(session_id)
+                if project_id and existing.project_id and project_id != existing.project_id:
+                    raise ValidationError("session_workspace_mismatch: use a new session for another workspace")
+                return existing
             return ChatSession(
                 id=session_id,
                 agent_id=agent_id,
@@ -1003,10 +1133,12 @@ class ChatRuntime:
         max_history_items: int = 5,
         retrieval_decision: RetrievalDecision | None = None,
     ):
+        project_id = project_id or session.project_id
         retrieval_decision = retrieval_decision or self._retrieval_decision(
             RetrievalDirective(), project_id
         )
         fused_context = None
+        context_history: list[str | dict[str, str]] = [*self._history_for_context(session)]
         if self.context_fusion:
             conversation_id = None
             if self.conversations:
@@ -1023,17 +1155,39 @@ class ChatRuntime:
                     session_id=session.id,
                     permission_context=context,
                     options={
+                        "workspace_id": project_id,
                         "include_project_knowledge": retrieval_decision.allowed,
                         "retrieval_query": retrieval_decision.directive.query,
                         "retrieval_intent": retrieval_decision.to_dict(),
                     },
                 )
             )
+            # Frontend conversations are persisted by ConversationRuntime while the
+            # legacy chat session file is only updated after generation. Reuse the
+            # conversation transcript here so the Workspace and Conversation
+            # surfaces address the same memory and history.
+            snapshot = fused_context.get("snapshot", {}) if isinstance(fused_context, dict) else {}
+            fused_messages = snapshot.get("latest_messages", []) if isinstance(snapshot, dict) else []
+            if isinstance(fused_messages, list) and fused_messages:
+                context_history = []
+                for message in fused_messages:
+                    if not isinstance(message, dict):
+                        continue
+                    payload = message.get("payload", {})
+                    if not isinstance(payload, dict):
+                        payload = {}
+                    body = str(payload.get("body", "")).strip()
+                    if not body or body == incoming_message.strip():
+                        continue
+                    role = str(payload.get("role", "")).strip().lower()
+                    if role not in {"user", "assistant", "system"}:
+                        role = "assistant" if message.get("sender_agent_id") == agent_id else "user"
+                    context_history.append({"role": role, "content": body})
         loaded = self.context_loader.load(
             context=context,
             agent_id=agent_id,
             project_id=project_id,
-            history=self._history_for_context(session)[-max_history_items:],
+            history=context_history[-max_history_items:],
             conversation_context=fused_context,
         )
         loaded.agent_identity["application_features"] = [

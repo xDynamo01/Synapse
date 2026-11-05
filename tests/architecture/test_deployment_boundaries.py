@@ -139,8 +139,8 @@ def test_deployment_has_only_authorized_incoming_adapter_and_integration_edges()
         ("deployment_integrations", "sandbox"),
         ("deployment_integrations", "sandbox_drivers"),
     }
-    assert len(runtime) == 306  # Primary MoM: api -> mom -> core.
-    assert len(source) == 341  # Primary MoM adds the same two source edges.
+    assert len(runtime) == 313  # Includes the acyclic JEV decision -> core dependency.
+    assert len(source) == 352
     assert all("deployment" not in members for members, _ in cyclic_components(runtime))
     assert all("deployment" not in members for members, _ in cyclic_components(source))
 

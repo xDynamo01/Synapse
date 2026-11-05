@@ -6,7 +6,7 @@ import json
 import logging
 import re
 from dataclasses import asdict
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Header, Request
 from fastapi.responses import StreamingResponse
@@ -78,6 +78,13 @@ class FrontendCancelTurnPayload(BaseModel):
     project_id: str | None = None
     session_id: str | None = None
     idempotency_key: str = Field(min_length=1, max_length=160)
+
+
+class FrontendSwarmConfirmationPayload(BaseModel):
+    action: Literal["accept_recommended", "keep_requested", "cancel"]
+    workspace_id: str = "default"
+    project_id: str | None = None
+    session_id: str | None = None
 
 
 class FrontendVoiceTranscriptionPayload(BaseModel):
@@ -509,10 +516,7 @@ def submit_frontend_text_turn(
         )
         profile = runtime.primary_agent.get_primary(payload.workspace_id)
         provider_id, model_id = frontend_effective_model_selection(
-            runtime,
-            payload.model_provider_id,
-            payload.model_name,
-        )
+                runtime, payload.model_provider_id, payload.model_name)
         result = runtime.chat.submit_turn(
             context,
             conversation_id=conversation_id,
@@ -521,6 +525,7 @@ def submit_frontend_text_turn(
             target_agent_id=payload.target_agent_id or profile.agent_id,
             model_provider_id=provider_id,
             model_name=model_id,
+            manual_model_selection=bool(payload.model_provider_id or payload.model_name),
             attachments=validated_frontend_attachment_refs(
                 runtime,
                 conversation_id,
@@ -571,10 +576,7 @@ def stream_frontend_text_turn(
             )
             profile = runtime.primary_agent.get_primary(payload.workspace_id)
             provider_id, model_id = frontend_effective_model_selection(
-                runtime,
-                payload.model_provider_id,
-                payload.model_name,
-            )
+                runtime, payload.model_provider_id, payload.model_name)
             if runtime.chat.is_frontend_turn_cancelled(payload.idempotency_key):
                 yield frontend_stream_event(
                     payload,
@@ -593,6 +595,7 @@ def stream_frontend_text_turn(
                 target_agent_id=payload.target_agent_id or profile.agent_id,
                 model_provider_id=provider_id,
                 model_name=model_id,
+                manual_model_selection=bool(payload.model_provider_id or payload.model_name),
                 attachments=validated_frontend_attachment_refs(
                     runtime,
                     conversation_id,
@@ -600,6 +603,8 @@ def stream_frontend_text_turn(
                 ),
                 idempotency_key=payload.idempotency_key,
                 project_id=payload.project_id,
+                workspace_id=payload.workspace_id,
+                session_id=payload.session_id,
             ):
                 if runtime.chat.is_frontend_turn_cancelled(payload.idempotency_key):
                     cancel_latest_assistant_message(runtime, context, conversation_id)
@@ -672,6 +677,59 @@ def cancel_frontend_text_turn(
             "degraded": [],
             "errors": [],
         }
+    except Exception as exc:
+        raise api_error(exc) from exc
+
+
+@router.post("/swarm/confirmations/{request_id}")
+def resolve_frontend_swarm_confirmation(
+    request_id: str,
+    payload: FrontendSwarmConfirmationPayload,
+    request: Request,
+    x_actor_id: str | None = Header(default=None),
+    x_actor_type: str = Header(default="user"),
+) -> dict[str, Any]:
+    runtime = runtime_from(request)
+    context = context_from(runtime, x_actor_id, x_actor_type)
+    try:
+        swarm_interactions = runtime.chat.swarm_interactions
+        if swarm_interactions is None:
+            raise ValidationError("Swarm interactions are unavailable.")
+        pending = swarm_interactions.get(request_id)
+        if pending.workspace_id != payload.workspace_id:
+            raise ValidationError("Swarm confirmation workspace does not match.")
+        if pending.project_id != payload.project_id:
+            raise ValidationError("Swarm confirmation project does not match.")
+        if pending.session_id != payload.session_id:
+            raise ValidationError("Swarm confirmation session does not match.")
+        if pending.actor_id != context.actor_id:
+            raise ValidationError("Swarm confirmation belongs to another actor.")
+        result = swarm_interactions.resolve(request_id, payload.action)
+        if result.status == "cancelled":
+            body = "A criação do Swarm foi cancelada."
+        else:
+            body = (
+                f"Swarm {result.swarm_id} criado com {result.recommended_agents} agentes temporários. "
+                f"Estado: {result.execution_status or result.status}."
+            )
+        runtime.conversations.send_message(
+            context,
+            sender_agent_id=result.primary_agent_id,
+            receiver_agent_id="local_chat",
+            payload={
+                "body": body,
+                "role": "assistant",
+                "interaction": {
+                    "type": "swarm_confirmation",
+                    "request": asdict(result),
+                    "options": [],
+                },
+            },
+            conversation_id=result.conversation_id,
+            status="completed",
+            metadata={"source": "swarm_confirmation", "request_id": request_id},
+        )
+        return {"schema": "frontend-v2-swarm-confirmation-v1", "request": asdict(result), "message": body}
     except Exception as exc:
         raise api_error(exc) from exc
 
@@ -867,6 +925,7 @@ def run_frontend_voice_conversation_turn(
             idempotency_key=payload.idempotency_key or f"frontend-v2:{completed.recording_id}",
             model_provider_id=provider_id,
             model_name=model_id,
+            manual_model_selection=False,
         )
         synthesis = runtime.voice.get_synthesis(result.synthesis_id)
         audio_base64 = None

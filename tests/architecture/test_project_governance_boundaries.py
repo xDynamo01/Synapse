@@ -55,7 +55,7 @@ def test_plan_freshness_and_implemented_criteria_are_enforced() -> None:
 
 def test_project_governance_stays_outside_global_scc() -> None:
     graph = _runtime_context_graph()
-    assert len(graph) == 306  # Primary MoM: api -> mom -> core.
+    assert len(graph) == 313  # Includes the acyclic JEV decision -> core dependency.
     components = cyclic_components(graph)
     assert components == [
         (

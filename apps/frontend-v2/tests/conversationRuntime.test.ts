@@ -61,6 +61,16 @@ describe("conversation runtime resilience", () => {
     expect(failed.error).toEqual({ code: "generation_failed", message: "model failed", retryable: true });
   });
 
+  it("keeps interactive Swarm events in the active stream instead of treating them as failures", () => {
+    const confirming = applyStreamEvent(emptyConversationRuntime(), event("confirmation_required"));
+    const started = applyStreamEvent(confirming, event("swarm_started"));
+
+    expect(confirming.status).toBe("streaming");
+    expect(confirming.error).toBeNull();
+    expect(started.status).toBe("streaming");
+    expect(started.error).toBeNull();
+  });
+
   it("marks interrupted stream as disconnected without claiming completion", () => {
     const streaming = applyStreamEvent(emptyConversationRuntime(), event("chunk_received", "partial"));
     const interrupted = interruptedStream(streaming, new TypeError("network"));

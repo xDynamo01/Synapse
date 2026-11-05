@@ -191,6 +191,46 @@ def test_no_models_and_multiple_providers_are_honest() -> None:
     assert "no_registered_models" in report.limitations
 
 
+def test_registered_model_remains_visible_when_current_resources_are_low() -> None:
+    directory, insight = _insight(
+        SnapshotProvider(memory_used=15 * GIB, memory_total=16 * GIB),
+        FakeModelHub(
+            [_model("installed-local-model", ram=4, provider="synapse_local")],
+            [_provider("synapse_local")],
+        ),
+    )
+    with directory:
+        report = insight.model_capabilities.inspect()
+
+    assert report.available_models == 1
+    assert report.online_providers == 1
+    assert report.recommendations[0].model_id == "installed-local-model"
+    assert report.recommendations[0].provider_id == "synapse_local"
+    assert report.recommendations[0].status == "limited"
+
+
+def test_multimodal_projector_is_not_recommended_as_chat_model() -> None:
+    directory, insight = _insight(
+        SnapshotProvider(memory_used=15 * GIB, memory_total=16 * GIB),
+        FakeModelHub(
+            [
+                _model(
+                    "synapse-local:repo/mmproj-model.gguf",
+                    provider="synapse_local",
+                    ram=1,
+                    capabilities=[],
+                ),
+                _model("synapse-local:repo/chat-model.gguf", provider="synapse_local", ram=4),
+            ],
+            [_provider("synapse_local")],
+        ),
+    )
+    with directory:
+        report = insight.model_capabilities.inspect()
+
+    assert report.recommendations[0].model_id == "synapse-local:repo/chat-model.gguf"
+
+
 def test_vram_drop_changes_recommendation_to_smaller_registered_model() -> None:
     gpu = GPUInfo(
         "RTX",

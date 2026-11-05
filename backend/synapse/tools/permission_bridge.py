@@ -43,7 +43,7 @@ class ToolPermissionBridge:
         if resource_scope:
             context = replace(context, resource_scope=resource_scope)
 
-        if definition.metadata.get("legacy_catalog") and not request.agent_id:
+        if definition.metadata.get("legacy_catalog") and not request.agent_id and actor_type != "agent":
             if definition.required_permission:
                 self.permissions.require(context, definition.required_permission)
             decision = ToolExecutionDecision(

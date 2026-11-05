@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from pathlib import Path
+from tempfile import NamedTemporaryFile
 from typing import Any
 
 from fastapi import APIRouter, Header, Request
@@ -276,6 +278,26 @@ def refresh_model_hub(request: Request) -> dict[str, Any]:
         return asdict(runtime.model_hub.refresh())
     except Exception as exc:
         raise api_error(exc) from exc
+
+
+@router.post("/models/import")
+async def import_local_model(request: Request) -> dict[str, Any]:
+    """Stage an uploaded model and atomically place it in Synapse's model root."""
+    runtime = runtime_from(request)
+    filename = request.headers.get("x-model-filename", "model.bin")
+    suffix = Path(filename).suffix.lower()
+    if suffix not in {".gguf", ".ggml", ".bin", ".safetensors"}:
+        raise api_error(ValueError("Unsupported model extension."))
+    temporary = NamedTemporaryFile(prefix="synapse-model-", suffix=suffix, delete=False)
+    try:
+        with temporary:
+            body = await request.body()
+            temporary.write(body)
+        return runtime.model_hub.import_local_model(temporary.name, filename)
+    except Exception as exc:
+        raise api_error(exc) from exc
+    finally:
+        Path(temporary.name).unlink(missing_ok=True)
 
 
 @router.post("/models/resolve")

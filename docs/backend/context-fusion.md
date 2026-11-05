@@ -1,6 +1,6 @@
 # Context Fusion Runtime
 
-Status: **Implemented / Frozen**.
+Status: **Implemented; hierarchical memory extension under global validation.**
 
 The runtime receives consumer-owned Conversation, Mission, Perception,
 Multimodal, Memory and operational-status read ports. Thin adapters are built by
@@ -27,3 +27,16 @@ Health/readiness are opt-in. Events expose source IDs/counts without content.
 
 `ContextLoader` remains a compatibility adapter for identity/effective-policy
 DTOs. Chat and workers invoke Context Fusion before this adapter.
+
+
+The hierarchical-memory extension passes the selected workspace through options,
+prioritizes its current summary, and surfaces unavailable memory retrieval as an
+explicit warning with no fabricated evidence. Memory and project-document intent
+remain distinct: ordinary workspace memory does not authorize document retrieval.
+
+Selected items now reach the final model request as untrusted data with source,
+revision, workspace, kind and verification metadata. `models/budget.py` performs
+final allocation after identity, history, tools and results are known; fusion's
+budget alone is not treated as the final wire-payload budget. Essential overflow
+is an error; optional evidence omission is explicit. See [Memory Runtime](memory.md)
+for storage/index migration, authorization and validation limits.

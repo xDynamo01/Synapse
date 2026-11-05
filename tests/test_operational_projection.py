@@ -2,6 +2,8 @@ from dataclasses import replace
 
 import pytest
 
+from synapse.bootstrap.adapters.operational_projection import OperationalProjectionRuntime
+from synapse.core.events import EventBus
 from synapse.operational_projection import (
     ContradictoryOperationalFact,
     CrossProjectFact,
@@ -16,8 +18,6 @@ from synapse.operational_projection import (
     OperationalStatus,
     StaleOperationalFact,
 )
-from synapse.bootstrap.adapters.operational_projection import OperationalProjectionRuntime
-from synapse.core.events import EventBus
 
 NOW = "2026-08-20T12:00:00+00:00"
 

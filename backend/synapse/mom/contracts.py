@@ -5,6 +5,7 @@ from typing import Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
 
+from synapse.core.execution_policy import ResourcePolicy
 from synapse.core.permissions import PermissionContext
 
 
@@ -30,13 +31,12 @@ class Configuration(BaseModel):
     enabled: StrictBool = False
     revision: int = Field(default=0, ge=0, strict=True)
     routes: tuple[Route, ...] = ()
+    resource_policy: ResourcePolicy = ResourcePolicy.RESPONSIVE
 
     @model_validator(mode="after")
     def unique_operations(self) -> Configuration:
         if len({route.operation for route in self.routes}) != len(self.routes):
             raise ValueError("Each MoM operation must have exactly one route.")
-        if self.enabled and not self.routes:
-            raise ValueError("Enabled MoM requires at least one route.")
         return self
 
 
@@ -67,3 +67,8 @@ class InferencePort(Protocol):
     def validate_route(self, route: Route) -> None: ...
     def generate(self, context: PermissionContext, primary_agent_id: str,
                  route: Route, message: str, operation_id: str) -> Output: ...
+
+
+class ResourcePolicyPort(Protocol):
+    def apply(self, policy: ResourcePolicy) -> None: ...
+    def status(self) -> dict[str, object]: ...

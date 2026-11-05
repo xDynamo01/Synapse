@@ -139,5 +139,5 @@ def test_model_aliases_and_optional_availability_are_explicit() -> None:
 
     assert lmstudio.aliases == ("lmstudio",)
     assert ollama.aliases == ("ollama",)
-    assert lmstudio.availability == "not_configured"
+    assert lmstudio.availability == "configured"
     assert vision.lifecycle.cancel is False

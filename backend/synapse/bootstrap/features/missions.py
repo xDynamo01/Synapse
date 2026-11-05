@@ -15,6 +15,7 @@ from synapse.missions.runtime import MissionRuntime
 from synapse.missions.supervision import MissionSupervisionRuntime
 from synapse.missions.trace import MissionTraceRuntime
 from synapse.missions.verification import ResultVerifier
+from synapse.swarm.interaction import SwarmInteractionRuntime
 from synapse.swarm.runtime import SwarmRuntime
 from synapse.swarm.workforce import EphemeralWorkforcePlanner
 from synapse.workers.registry import WorkerRegistry
@@ -44,6 +45,7 @@ class MissionFeature:
     mission_recovery: MissionRecoveryRuntime
     mission_trace: MissionTraceRuntime
     swarm: SwarmRuntime
+    swarm_interactions: SwarmInteractionRuntime
     mission_context: MissionContextRuntime
     mission_supervision: MissionSupervisionRuntime
     mission_control: MissionControlRuntime
@@ -109,6 +111,10 @@ class MissionFeatureBuilder:
             model_capability=d.system_insight.model_capabilities,
             workers=worker_registry,
             attempts=attempts,
+            authorized_tools=lambda agent_id: [
+                tool.tool_id for tool in a.agent_runtime.available_tools(agent_id).tools
+                if tool.available or tool.requires_approval
+            ],
         )
         workforce_planner = EphemeralWorkforcePlanner(
             d.platform.agents,
@@ -123,6 +129,15 @@ class MissionFeatureBuilder:
             worker_registry,
             ephemeral_agents,
             workforce_planner,
+        )
+        swarm_interactions = SwarmInteractionRuntime(
+            d.data_dir,
+            d.events,
+            missions,
+            planner,
+            swarm,
+            ephemeral_agents,
+            a.primary_agent,
         )
         mission_context = MissionContextRuntime(
             d.events,
@@ -161,6 +176,7 @@ class MissionFeatureBuilder:
             mission_recovery,
             mission_trace,
             swarm,
+            swarm_interactions,
             mission_context,
             mission_supervision,
             mission_control,

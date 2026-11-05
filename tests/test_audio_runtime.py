@@ -208,7 +208,7 @@ class AudioRuntimeTests(unittest.TestCase):
 
         provider = runtime.audio.resolve_tts_provider()
 
-        self.assertEqual(provider.provider_id, "piper")
+        self.assertEqual(provider.provider_id, "kokoro")
         self.assertEqual(provider.capability_id, "text_to_speech")
 
     def test_transcribe_mock_returns_result(self) -> None:

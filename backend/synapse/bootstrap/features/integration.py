@@ -13,6 +13,7 @@ from synapse.bootstrap.adapters.context_fusion import (
     PerceptionContextAdapter,
     RuntimeStatusContextAdapter,
 )
+from synapse.bootstrap.adapters.ephemeral_execution import EphemeralExecutionAdapter
 from synapse.bootstrap.adapters.provider_taxonomy import register_runtime_provider_projections
 from synapse.bootstrap.adapters.tool_execution import register_desktop_tool_adapters
 from synapse.bootstrap.feature import BuiltFeature, FeatureMetadata
@@ -200,7 +201,9 @@ class IntegrationFeatureBuilder:
         a.worker.context_fusion = context_fusion
         m.worker_execution.context_fusion = context_fusion
         adapter = WorkerExecutionAdapter(a.context_loader, a.agent_runtime, context_fusion)
-        m.worker_execution.executor = adapter.execute
+        ephemeral_adapter = EphemeralExecutionAdapter(adapter, m.ephemeral_agents)
+        m.worker_execution.executor = ephemeral_adapter.execute
+        m.worker_execution.attempt_finished = ephemeral_adapter.finished
         value = IntegrationFeature(
             health,
             readiness,

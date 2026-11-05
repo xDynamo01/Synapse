@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -36,6 +37,7 @@ class PermissionManager:
         self.data_dir = data_dir
         self.event_bus = event_bus
         self.subjects, self.denies = self._load_permissions()
+        self.agent_permission_resolver: Callable[[str], set[str]] | None = None
 
     def _load_permissions(self) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
         path = self.data_dir / "config" / "permissions.yaml"
@@ -69,6 +71,8 @@ class PermissionManager:
         permissions: set[str] = set()
         for key in context.subject_keys:
             permissions.update(self.subjects.get(key, set()))
+        if context.actor_type == "agent" and self.agent_permission_resolver is not None:
+            permissions.update(self.agent_permission_resolver(context.actor_id))
         return permissions
 
     def denied_permissions_for(self, context: PermissionContext) -> set[str]:
