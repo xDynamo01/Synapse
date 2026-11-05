@@ -113,6 +113,15 @@ class IntelligenceBoundaryRuntime:
         self._emit("information_asset.registered", saved.asset_id, self._asset_event(saved))
         return saved
 
+    def ensure_asset(self, asset: InformationAsset) -> InformationAsset:
+        try:
+            return self.get_asset(asset.asset_id)
+        except BoundaryNotFound:
+            try:
+                return self.register_asset(asset)
+            except BoundaryConflict:
+                return self.get_asset(asset.asset_id)
+
     def get_asset(self, asset_id: str) -> InformationAsset:
         try:
             return self._asset(self.stores["assets"].get(asset_id))

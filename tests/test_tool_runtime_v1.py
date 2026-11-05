@@ -4,13 +4,16 @@ import json
 import sys
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Barrier
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "backend"))
 
 from synapse.core.app import create_runtime
 from synapse.core.config import Settings
+from synapse.intelligence_boundary.errors import BoundaryNotFound
 from synapse.tools.models import ToolDefinition, ToolExecutionRequest
 from synapse.tools.runtime import ToolRuntime
 
@@ -55,7 +58,67 @@ def runtime_in_tempdir():
     return directory, settings, create_runtime(settings)
 
 
+class ConcurrentAssetRegistrationGate:
+    def __init__(self, delegate):
+        self.delegate = delegate
+        self.missing = Barrier(2)
+
+    def get_asset(self, asset_id):
+        try:
+            return self.delegate.get_asset(asset_id)
+        except BoundaryNotFound:
+            self.missing.wait(timeout=5)
+            raise
+
+    def __getattr__(self, name):
+        return getattr(self.delegate, name)
+
+
 class ToolRuntimeV1Tests(unittest.TestCase):
+    def test_concurrent_identical_tool_inputs_reuse_one_boundary_asset(self) -> None:
+        directory, _, runtime = runtime_in_tempdir()
+        self.addCleanup(directory.cleanup)
+        runtime.tool_runtime.egress_gate = ConcurrentAssetRegistrationGate(
+            runtime.intelligence_boundary
+        )
+        runtime.tool_runtime.register(
+            ToolDefinition(
+                tool_id="test.concurrent-echo",
+                display_name="Concurrent Echo",
+                description="Echo identical concurrent inputs.",
+                category="test",
+                input_schema={
+                    "type": "object",
+                    "required": ["value"],
+                    "properties": {"value": {"type": "string"}},
+                    "additionalProperties": False,
+                },
+                required_permission="tools.execute",
+            ),
+            lambda request: {"value": request.arguments["value"]},
+        )
+
+        def execute(_index: int):
+            return runtime.tool_runtime.execute(
+                ToolExecutionRequest(
+                    tool_id="test.concurrent-echo",
+                    arguments={"value": "same"},
+                    caller="local_owner",
+                    caller_type="user",
+                )
+            )
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(execute, range(2)))
+
+        self.assertTrue(all(result.success for result in results), results)
+        tool_inputs = [
+            item
+            for item in runtime.intelligence_boundary.list_assets()
+            if item.asset_id.startswith("tool-input-")
+        ]
+        self.assertEqual(len(tool_inputs), 1)
+
     def test_schema_preview_and_idempotency(self) -> None:
         directory, _, runtime = runtime_in_tempdir()
         self.addCleanup(directory.cleanup)

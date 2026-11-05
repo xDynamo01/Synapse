@@ -62,7 +62,8 @@ def test_listing_only_gets_bounded_verification_feedback(tmp_path, monkeypatch, 
         with pytest.raises(Exception, match="verification failed"):
             runtime.chat.submit_turn(runtime.context(), content=command, target_agent_id="central")
         assert runtime.swarm.list()[0].status == "failed"
-        assert len(requests) == 4
+        assert len(requests) == 6
+        assert sum("verifier rejected" in request["user_message"] for request in requests) == 2
     assert any("verifier rejected" in request["user_message"] for request in requests)
 
 

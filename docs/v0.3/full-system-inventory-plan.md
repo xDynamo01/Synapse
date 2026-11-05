@@ -1,6 +1,7 @@
 # Mission 0.3.1 — Full System Inventory plan
 
-Status: `READY_FOR_EXECUTION` after Mission 0.3.0 documentation gates.
+Status: `EXECUTED_WITH_OPEN_FINDINGS` on 2026-11-05. Outputs are indexed in
+[Mission 0.3.1 status](mission-0.3.1-status.md).
 
 ## Goal and non-goals
 

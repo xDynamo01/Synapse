@@ -56,10 +56,12 @@ Status date: 2026-11-05. The Synapse 0.3 runtime is not declared operational.
 
 ## Open items
 
-- Resolve the four-versus-eight verification request contract, then complete the
-  full Python regression suite.
+- The historical four-versus-eight verification item was resolved in Mission
+  0.3.2: outer continuation now requires new receipt evidence, and the full
+  Python suite passes. This does not change the historical Mission 0.3.0 gate
+  result recorded above.
 - Confirm newly installed skill discovery on the next Codex turn.
 - Resolve whether Playwright should be introduced through a Windows-native,
   dependency-reviewed workflow.
-- Mission 0.3.1 must establish the real system inventory before any architectural
-  reconstruction.
+- Mission 0.3.1 established the code-grounded inventory and operational backlog;
+  its open findings must be resolved before architectural reconstruction.

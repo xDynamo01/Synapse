@@ -151,6 +151,21 @@ class WorkerRuntime:
                 if verification.status == "passed":
                     break
                 receipts = [item["value"] for item in result.get("evidence", []) if item.get("kind") == "tool_result"]
+                previous_receipts = context.get("previous_tool_results", [])
+                previous_call_ids = {
+                    receipt.get("request", {}).get("id")
+                    for receipt in previous_receipts
+                    if receipt.get("request", {}).get("id")
+                }
+                current_call_ids = {
+                    receipt.get("request", {}).get("id")
+                    for receipt in receipts
+                    if receipt.get("request", {}).get("id")
+                }
+                if context.get("verification_feedback") and not (
+                    current_call_ids - previous_call_ids
+                ):
+                    raise VerificationFailed("Task result verification failed without new evidence.")
                 if (verification_round >= 2 or "file_operations" not in task.verification_policy.get("checks", [])
                         or not receipts or any(not receipt.get("success") for receipt in receipts)):
                     raise VerificationFailed("Task result verification failed.")
@@ -168,6 +183,8 @@ class WorkerRuntime:
                 self.events.emit("task.verification_continuation", attempt.agent_id,
                                  {"task_id": task.task_id, "attempt_id": attempt_id,
                                   "round": verification_round + 1, "errors": verification.errors})
+            if result is None or verification is None:
+                raise VerificationFailed("Task execution produced no verifiable result.")
             attempt = self.attempts.transition(
                 attempt_id,
                 "completed",

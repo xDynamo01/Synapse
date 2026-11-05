@@ -375,34 +375,31 @@ class ToolRuntime:
         encoded = json.dumps(request.arguments, sort_keys=True, default=str).encode()
         payload_checksum = hashlib.sha256(encoded).hexdigest()
         asset_id = f"tool-input-{payload_checksum[:24]}"
-        try:
-            self.egress_gate.get_asset(asset_id)
-        except Exception:
-            self.egress_gate.register_asset(
-                InformationAsset(
-                    asset_id=asset_id,
-                    owner=InformationOwnership(
-                        request.metadata.get("information_owner", "user-owned")
-                    ),
-                    project_id=request.metadata.get("project_id"),
-                    source_domain="tools",
-                    source_reference=f"tool:{definition.tool_id}",
-                    content_type="application/json",
-                    classification=DataClassification(
-                        request.metadata.get("classification", "internal")
-                    ),
-                    categories=tuple(request.metadata.get("categories", ("tool.input",))),
-                    training_use_policy=TrainingUsePolicy(
-                        request.metadata.get("training_use_policy", "prohibited")
-                    ),
-                    external_processing_policy=str(
-                        request.metadata.get(
-                            "external_processing_policy", "policy-controlled"
-                        )
-                    ),
-                    metadata={"estimated_tokens": max(1, len(encoded) // 4)},
-                )
+        self.egress_gate.ensure_asset(
+            InformationAsset(
+                asset_id=asset_id,
+                owner=InformationOwnership(
+                    request.metadata.get("information_owner", "user-owned")
+                ),
+                project_id=request.metadata.get("project_id"),
+                source_domain="tools",
+                source_reference=f"tool:{definition.tool_id}",
+                content_type="application/json",
+                classification=DataClassification(
+                    request.metadata.get("classification", "internal")
+                ),
+                categories=tuple(request.metadata.get("categories", ("tool.input",))),
+                training_use_policy=TrainingUsePolicy(
+                    request.metadata.get("training_use_policy", "prohibited")
+                ),
+                external_processing_policy=str(
+                    request.metadata.get(
+                        "external_processing_policy", "policy-controlled"
+                    )
+                ),
+                metadata={"estimated_tokens": max(1, len(encoded) // 4)},
             )
+        )
         declared_boundary = definition.metadata.get("processing_boundary")
         if declared_boundary is None and (
             definition.provider_id != "internal" or definition.source != "builtin"
