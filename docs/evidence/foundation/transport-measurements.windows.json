@@ -1,0 +1,120 @@
+{
+  "status": "TESTED",
+  "result": "PASS",
+  "platform": "Windows-11-10.0.26200-SP0",
+  "python": "3.14.10",
+  "samples_per_candidate": 5,
+  "method": "fresh process; warm OS cache; actual server PID RSS at 100ms idle, excludes Windows venv launcher; reconnect includes new client and replay; restart includes actual server PID forced kill, new ephemeral bind and replay",
+  "candidates": {
+    "grpc": {
+      "samples": [
+        {
+          "startup_ms": 476.041,
+          "idle_rss_bytes": 38608896,
+          "reconnect_to_replay_ms": 1.771,
+          "kill_restart_to_replay_ms": 268.773
+        },
+        {
+          "startup_ms": 497.781,
+          "idle_rss_bytes": 38588416,
+          "reconnect_to_replay_ms": 1.607,
+          "kill_restart_to_replay_ms": 265.98
+        },
+        {
+          "startup_ms": 456.618,
+          "idle_rss_bytes": 38473728,
+          "reconnect_to_replay_ms": 1.68,
+          "kill_restart_to_replay_ms": 261.244
+        },
+        {
+          "startup_ms": 608.049,
+          "idle_rss_bytes": 38510592,
+          "reconnect_to_replay_ms": 1.667,
+          "kill_restart_to_replay_ms": 259.988
+        },
+        {
+          "startup_ms": 454.596,
+          "idle_rss_bytes": 38621184,
+          "reconnect_to_replay_ms": 1.543,
+          "kill_restart_to_replay_ms": 275.927
+        }
+      ],
+      "medians": {
+        "startup_ms": 476.041,
+        "idle_rss_bytes": 38588416,
+        "reconnect_to_replay_ms": 1.667,
+        "kill_restart_to_replay_ms": 265.98
+      }
+    },
+    "http": {
+      "samples": [
+        {
+          "startup_ms": 676.672,
+          "idle_rss_bytes": 49926144,
+          "reconnect_to_replay_ms": 1.421,
+          "kill_restart_to_replay_ms": 480.855
+        },
+        {
+          "startup_ms": 719.683,
+          "idle_rss_bytes": 49913856,
+          "reconnect_to_replay_ms": 1.654,
+          "kill_restart_to_replay_ms": 482.14
+        },
+        {
+          "startup_ms": 814.734,
+          "idle_rss_bytes": 50212864,
+          "reconnect_to_replay_ms": 1.572,
+          "kill_restart_to_replay_ms": 468.095
+        },
+        {
+          "startup_ms": 687.498,
+          "idle_rss_bytes": 50012160,
+          "reconnect_to_replay_ms": 1.724,
+          "kill_restart_to_replay_ms": 472.436
+        },
+        {
+          "startup_ms": 718.946,
+          "idle_rss_bytes": 50016256,
+          "reconnect_to_replay_ms": 1.603,
+          "kill_restart_to_replay_ms": 478.897
+        }
+      ],
+      "medians": {
+        "startup_ms": 718.946,
+        "idle_rss_bytes": 50012160,
+        "reconnect_to_replay_ms": 1.603,
+        "kill_restart_to_replay_ms": 478.897
+      }
+    }
+  },
+  "inputs_sha256": {
+    ".gitattributes": "a79691a93b46e49ce460c26ef22afcc03d6eca1e63bf2edbc20e96159510f6c9",
+    ".gitignore": "16ebe7d234794121d3d8bb894072d27ba59e29c995220070b8bdd253ba4741e1",
+    ".node-version": "9185b9f67843cabfa8054f65ce47ce0b52036b0bfe07ae5a6b834d97cc127140",
+    ".python-version": "4f4c88910b6d485ae689143880e5e81b595a48a51ecb391b2f14feaec106d180",
+    "client/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "client/main-process-client.ts": "cd1ef4671bd03a332e784b56cb4a2142c513705b4128f055a227dd856e53ed54",
+    "client/python_client.py": "900f88f908fd2405e2126664028ed76f0c343b1d080aa80590364c001e879d77",
+    "package.json": "38aa36a4349923a5bdce439a0c5eaeb0e61b6454f65f2be647f4704ef6b3ee0c",
+    "pnpm-lock.yaml": "95a388cad957d7e081f028cb1ea5c6c9d2e8f3a46896bbdbc924dfe9b6709402",
+    "pnpm-workspace.yaml": "dd2a4be3d9897f6b1e140887987870a8b0c9942cbb073e8981dbedacdfc21429",
+    "proto/synapse/foundation/v1/lifecycle.proto": "051d96757983a9d38948257c0488d5278739a34bab1ede36ab9799c4c66b1c69",
+    "pyproject.toml": "e69a546ba3a15b400bc71ab2016f498d4206593efc731e6d28373f5196344439",
+    "server/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "server/grpc_server.py": "5483d34ec8d9abb0272afa7d8e0ffd95e464c922c8393fdc81acaaa0e65cef98",
+    "server/http_server.py": "e15ea257d18b1bd111d85c1e4df91ade75ec1a3611b6b526c01da93b3c136ed2",
+    "server/lifecycle.py": "84287afb27e89ed0c7a0763afd75f1248d0dd7e4911659c0f7b0df2e0fe0d703",
+    "server/main.py": "cf6a2476757826ef010f2112240e550388771a1df4f8fb825ec4549432682123",
+    "tests/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "tests/generated-types.ts": "69e59c64ddcefe7b4c8881707ff218093b755a2f7b0208d4bdb42145ac75818c",
+    "tests/process_harness.py": "90eabe910539aedc912cc0b4b78063dae2a409ed8a78756018735640a1881e94",
+    "tests/reconnect.test.ts": "6ef837921bd830c8bd1a92e2652d0257b027c8f1fe0837845a634568f3154d15",
+    "tests/server-harness.ts": "434e92080fc4f9b1a996871e836bd68d5c9d30dac44b1c597fdb386921df90d5",
+    "tests/test_contract_semantics.py": "748755c397340b5e2fc0f1e853e11e464ce6507ba363f20885778c47624e7776",
+    "tools/check-toolchain.mjs": "402fff204379a336f5bc0f1cecc39995e3f62f096c08ed769755092d16633209",
+    "tools/generate-python.py": "658037ac4e98d9abd972bd7fdd89f1a14e49891b6a68a019a20d99b167059b8b",
+    "tools/measure.py": "e18af961c136ac39c57692b18876db048ade688f0c8b11d208a36bb17a77857d",
+    "tsconfig.json": "53afcbbbb545f2efa4b5afdabb8a6546051331482a3f40eb33f08c3d15e60e6a",
+    "uv.lock": "d046a51575b56c28e14d907bc33b0dd171f9a49c35aff7a00fb04133cb7c5a8b"
+  }
+}

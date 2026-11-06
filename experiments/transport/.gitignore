@@ -1,0 +1,8 @@
+.venv/
+.local/
+node_modules/
+generated/
+dist/
+__pycache__/
+.pytest_cache/
+*.sqlite*

@@ -1,0 +1,20 @@
+{
+  "name": "synapse-transport-spike",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.25.0",
+  "engines": { "node": ">=24.22.2 <25", "pnpm": "11.25.0" },
+  "devDependencies": {
+    "@grpc/grpc-js": "1.14.7",
+    "@grpc/proto-loader": "0.8.1",
+    "@types/node": "24.19.2",
+    "@types/ws": "8.18.2",
+    "ws": "8.22.1",
+    "typescript": "7.0.2"
+  },
+  "scripts": {
+    "generate": "proto-loader-gen-types --longs=String --keepCase --importFileExtension=.js --grpcLib=@grpc/grpc-js --outDir=generated/ts proto/synapse/foundation/v1/lifecycle.proto",
+    "test": "node tools/check-toolchain.mjs && pnpm run generate && tsc -p tsconfig.json && node --test dist/tests/reconnect.test.js"
+  }
+}

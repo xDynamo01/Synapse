@@ -1,0 +1,164 @@
+{
+  "captured": "2026-11-06",
+  "python": [
+    {
+      "name": "grpcio",
+      "version": "1.85.1",
+      "source": "https://pypi.org/pypi/grpcio/1.85.1/json",
+      "license": "Apache-2.0",
+      "requires_python": ">=3.10",
+      "candidate_wheels": {
+        "windows_x64": [
+          {
+            "filename": "grpcio-1.85.1-cp314-cp314-win_amd64.whl",
+            "sha256": "5f015600190124813032da0560ec950c13c257f77c1307abd77c393c0994f76f",
+            "url": "https://files.pythonhosted.org/packages/48/c9/68a6bbd2450f08942c3056acd8995ac28af2b4eeb0574c0a8e59fa59b140/grpcio-1.85.1-cp314-cp314-win_amd64.whl"
+          }
+        ],
+        "ubuntu_x64": [
+          {
+            "filename": "grpcio-1.85.1-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+            "sha256": "e0e6d5829b50a2ffcfcd2dbf08d02ac0d6919051a2e97c2ee27c99bc9916a245",
+            "url": "https://files.pythonhosted.org/packages/7b/b2/c67c1d8c7b70a094d404b28233458887bc1ca1319daa95d8952621216717/grpcio-1.85.1-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"
+          }
+        ],
+        "macos_arm64": [
+          {
+            "filename": "grpcio-1.85.1-cp314-cp314-macosx_11_0_universal2.whl",
+            "sha256": "90a7e0f26de39d15f5c741b8848bb2065c9ab7351c57d4fc973ff5cbda0cb9c7",
+            "url": "https://files.pythonhosted.org/packages/12/92/35bcee92bcfc2b0f66290a5dd6dd23ced7b9423fe269cf4495136e73d55b/grpcio-1.85.1-cp314-cp314-macosx_11_0_universal2.whl"
+          }
+        ]
+      }
+    },
+    {
+      "name": "grpcio-tools",
+      "version": "1.85.1",
+      "source": "https://pypi.org/pypi/grpcio-tools/1.85.1/json",
+      "license": "Apache-2.0",
+      "requires_python": ">=3.10",
+      "candidate_wheels": {
+        "windows_x64": [
+          {
+            "filename": "grpcio_tools-1.85.1-cp314-cp314-win_amd64.whl",
+            "sha256": "de09c7b2055c636e875adf60a4912a3700e503c7a376899d8d3fbe7b88c80422",
+            "url": "https://files.pythonhosted.org/packages/d7/86/284b05b15b9035a29aa86bd2ecd7136366d4e2ebe4936127fd6a511ad761/grpcio_tools-1.85.1-cp314-cp314-win_amd64.whl"
+          }
+        ],
+        "ubuntu_x64": [
+          {
+            "filename": "grpcio_tools-1.85.1-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+            "sha256": "a3d13e21ac9551cc8cd4baf49abefda3a6a30b1051c12367e7150dfe08c513e2",
+            "url": "https://files.pythonhosted.org/packages/54/b0/50787d212e65a9d530bf8b92ad3e30dafa7a9de23150ffe835c28c5d6b12/grpcio_tools-1.85.1-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"
+          }
+        ],
+        "macos_arm64": [
+          {
+            "filename": "grpcio_tools-1.85.1-cp314-cp314-macosx_11_0_universal2.whl",
+            "sha256": "a8c1fbe7984f5112ba2e3538755c58492dd3b46d20b1c6e3a00eebee01feafbc",
+            "url": "https://files.pythonhosted.org/packages/48/6f/b631864058da43b0ce8f4d48f237ea41d3d7e1566addb4456eb45f2e9894/grpcio_tools-1.85.1-cp314-cp314-macosx_11_0_universal2.whl"
+          }
+        ]
+      }
+    },
+    {
+      "name": "protobuf",
+      "version": "7.36.2",
+      "source": "https://pypi.org/pypi/protobuf/7.36.2/json",
+      "license": "3-Clause BSD License",
+      "requires_python": ">=3.10",
+      "candidate_wheels": {
+        "windows_x64": [
+          {
+            "filename": "protobuf-7.36.2-cp310-abi3-win_amd64.whl",
+            "sha256": "a300819d441e078a5608c0d3c709796bb548136058fda017ae51d425b44fd353",
+            "url": "https://files.pythonhosted.org/packages/8a/55/b77bda4e5e5f5971fb51b07663694690e9afdb9402136c16a522bd621cad/protobuf-7.36.2-cp310-abi3-win_amd64.whl"
+          }
+        ],
+        "ubuntu_x64": [
+          {
+            "filename": "protobuf-7.36.2-cp310-abi3-manylinux2014_x86_64.whl",
+            "sha256": "89f23aa53c24553a2416fd4fd1ec06f74fa42b14b546d8883128813f775bbfd2",
+            "url": "https://files.pythonhosted.org/packages/db/f3/3996583dd2906297a637af12114deddf7658af6e683fedb83be061983fb5/protobuf-7.36.2-cp310-abi3-manylinux2014_x86_64.whl"
+          }
+        ],
+        "macos_arm64": [
+          {
+            "filename": "protobuf-7.36.2-cp310-abi3-macosx_10_9_universal2.whl",
+            "sha256": "cbc70b17ee27e28894c7fee8bb04be1abead49e936bc70eb60052531eee2079e",
+            "url": "https://files.pythonhosted.org/packages/32/72/98342feb672507c8f3a69e34b4fa8961f608edba5c1a48a6f47156d92cb5/protobuf-7.36.2-cp310-abi3-macosx_10_9_universal2.whl"
+          }
+        ]
+      }
+    },
+    {
+      "name": "aiohttp",
+      "version": "3.14.5",
+      "source": "https://pypi.org/pypi/aiohttp/3.14.5/json",
+      "license": "Apache-2.0 AND MIT",
+      "requires_python": ">=3.10",
+      "candidate_wheels": {
+        "windows_x64": [
+          {
+            "filename": "aiohttp-3.14.5-cp314-cp314-win_amd64.whl",
+            "sha256": "6f967dde489ca6a8c02d093ab245d2cbf50ccb5c36adf0188b17b0ca39d24b67",
+            "url": "https://files.pythonhosted.org/packages/a9/74/8cdaf0e58c2588371670d5a9a8215bbb971d36940b6e5d051967dd05c07d/aiohttp-3.14.5-cp314-cp314-win_amd64.whl"
+          }
+        ],
+        "ubuntu_x64": [
+          {
+            "filename": "aiohttp-3.14.5-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
+            "sha256": "94684b879ac1d71e4238850c99b62dc1b28d9086b156a2555f082010b85a865c",
+            "url": "https://files.pythonhosted.org/packages/a6/66/55a8904b3a129fafdf94f9cc0a2e4ca09a3c914650be52355db7ad0bbdb6/aiohttp-3.14.5-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
+          }
+        ],
+        "macos_arm64": [
+          {
+            "filename": "aiohttp-3.14.5-cp314-cp314-macosx_10_15_universal2.whl",
+            "sha256": "7bd8ac754ebd6733a3e2a0dd1674c4d8ab086196803fd8dcd776f07b4e2607d9",
+            "url": "https://files.pythonhosted.org/packages/3d/36/a640fbecaa53727a5900b892bdbe17b5f3e8cc88903e22864fe41b654def/aiohttp-3.14.5-cp314-cp314-macosx_10_15_universal2.whl"
+          },
+          {
+            "filename": "aiohttp-3.14.5-cp314-cp314-macosx_11_0_arm64.whl",
+            "sha256": "c32e26310cc10e547f53cd13d39a369034f69dcb7d749d5cb0e5f67bc196b6ba",
+            "url": "https://files.pythonhosted.org/packages/ce/b5/05b8ac39a76ff4bca89f42a4c2471560c71f894ff6e4bc16158c951874e3/aiohttp-3.14.5-cp314-cp314-macosx_11_0_arm64.whl"
+          }
+        ]
+      }
+    }
+  ],
+  "node": [
+    {
+      "name": "@grpc/grpc-js",
+      "version": "1.14.7",
+      "source": "https://registry.npmjs.org/@grpc/grpc-js/1.14.7",
+      "license": "Apache-2.0",
+      "integrity": "sha512-W4W/fcBMGRVtG6dW2c7cw2mnpS3hvbBd+oQXjh2iYFTZDk1JJmcNqkM5KSaPubQpamlUUurrlb7G1s9NJeERmQ==",
+      "tarball": "https://registry.npmjs.org/@grpc/grpc-js/-/grpc-js-1.14.7.tgz"
+    },
+    {
+      "name": "@grpc/proto-loader",
+      "version": "0.8.1",
+      "source": "https://registry.npmjs.org/@grpc/proto-loader/0.8.1",
+      "license": "Apache-2.0",
+      "integrity": "sha512-wtF6h+DY6M3YaDBPAmvuuA6jV8Sif9MjtOI5euKFWRgCDl5PeDpPsHR9u2l6St5ceY8AZgoNDww5+HvEsXFsGg==",
+      "tarball": "https://registry.npmjs.org/@grpc/proto-loader/-/proto-loader-0.8.1.tgz"
+    },
+    {
+      "name": "ws",
+      "version": "8.22.1",
+      "source": "https://registry.npmjs.org/ws/8.22.1",
+      "license": "MIT",
+      "integrity": "sha512-oyL6OPYme/CmiFvNuGzeoxCJ4nOrZE2O1FwM9MWM1AsGri6nLXB2pg+lNA8aLeXMSav0J6eIVS1j6vUPzUtK9g==",
+      "tarball": "https://registry.npmjs.org/ws/-/ws-8.22.1.tgz"
+    },
+    {
+      "name": "@types/ws",
+      "version": "8.18.2",
+      "source": "https://registry.npmjs.org/@types/ws/8.18.2",
+      "license": "MIT",
+      "integrity": "sha512-67MQl+fpWKVTT1NYdnmo3U4sc/xPo/zQBncVnI74qmQa0z/b+1g6iYqNmGCPbxO+zz2aklb08a0oHfegiVd0/w==",
+      "tarball": "https://registry.npmjs.org/@types/ws/-/ws-8.18.2.tgz"
+    }
+  ]
+}

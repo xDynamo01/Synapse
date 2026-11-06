@@ -1,0 +1,46 @@
+syntax = "proto3";
+package synapse.foundation.v1;
+
+// Experiment only. Numeric event cursors use decimal strings across both wires.
+// Auth belongs in transport metadata; it is never a domain-message field.
+service Lifecycle {
+  rpc GetStatus(StatusRequest) returns (Envelope);
+  rpc SubmitCommand(CommandRequest) returns (Envelope);
+  rpc CancelCommand(CancelRequest) returns (Envelope);
+  rpc SubscribeEvents(stream SubscribeFrame) returns (stream Envelope);
+}
+message StatusRequest { string contract_version = 1; }
+message CommandRequest {
+  string contract_version = 1;
+  string command_id = 2;
+  string causation_id = 3;
+  string action = 4;
+}
+message CancelRequest {
+  string contract_version = 1;
+  string command_id = 2;
+  string causation_id = 3;
+}
+message SubscribeFrame {
+  string contract_version = 1;
+  string after_event_id = 2;
+  string ack_event_id = 3;
+}
+message StructuredError {
+  string code = 1;
+  string message = 2;
+  optional bool retryable = 3;
+  string last_event_id = 4;
+}
+message Envelope {
+  string contract_version = 1;
+  string command_id = 2;
+  string event_id = 3;
+  string causation_id = 4;
+  string state = 5;
+  optional bool duplicate = 6;
+  optional bool healthy = 7;
+  optional uint32 command_count = 8;
+  string last_event_id = 9;
+  StructuredError error = 10;
+}
