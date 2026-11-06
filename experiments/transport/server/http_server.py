@@ -25,7 +25,7 @@ async def start(lifecycle):
         return web.json_response(lifecycle.call(request.match_info["method"], body, auth))
 
     async def subscribe(request):
-        ws = web.WebSocketResponse(max_msg_size=MAX_FRAME_BYTES, heartbeat=5)
+        ws = web.WebSocketResponse(max_msg_size=MAX_FRAME_BYTES)
         await ws.prepare(request)
 
         async def receive():

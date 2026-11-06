@@ -13,6 +13,9 @@ import type { SubscribeFrame } from '../generated/ts/synapse/foundation/v1/Subsc
 
 const TEST_TOKEN = 'synapse-transport-spike-test-only';
 type Requests = { GetStatus: StatusRequest; SubmitCommand: CommandRequest; CancelCommand: CancelRequest };
+type TransportTermination =
+  | { transport: 'grpc'; code: grpc.status }
+  | { transport: 'websocket'; code: number };
 const schema = resolve('proto/synapse/foundation/v1/lifecycle.proto');
 const definition = grpc.loadPackageDefinition(loadSync(schema, {
   keepCase: true, longs: String,
@@ -53,9 +56,12 @@ export class Client {
   async events(after_event_id: string, acknowledge = true, token = TEST_TOKEN, version = '1.0'): Promise<EventStream> {
     const opening = { contract_version: version, after_event_id };
     if (this.stub) {
-      const wire = this.stub.SubscribeEvents(this.metadata(token), { deadline: Date.now() + 10000 });
+      const wire = this.stub.SubscribeEvents(this.metadata(token));
+      const transportTermination = new Promise<TransportTermination>(resolve => {
+        wire.once('status', ({ code }) => resolve({ transport: 'grpc', code }));
+      });
       const stream = new EventStream(acknowledge, version, frame => { wire.write(frame); },
-        () => { this.streams.delete(stream); wire.cancel(); });
+        () => { this.streams.delete(stream); wire.cancel(); }, transportTermination);
       this.streams.add(stream);
       wire.on('data', (event: Envelope) => stream.push(event));
       wire.on('error', error => stream.fail(error));
@@ -66,8 +72,11 @@ export class Client {
     const wire = new WebSocket(`ws://127.0.0.1:${this.port}/v1/SubscribeEvents`, {
       headers: { Authorization: `Bearer ${token}` }, handshakeTimeout: 3000, maxPayload: 4096,
     });
+    const transportTermination = new Promise<TransportTermination>(resolve => {
+      wire.once('close', code => resolve({ transport: 'websocket', code }));
+    });
     const stream = new EventStream(acknowledge, version, frame => wire.send(JSON.stringify(frame)),
-      () => { this.streams.delete(stream); wire.terminate(); });
+      () => { this.streams.delete(stream); wire.terminate(); }, transportTermination);
     this.streams.add(stream);
     wire.on('message', data => {
       try { stream.push(JSON.parse(data.toString()) as Envelope); }
@@ -96,7 +105,8 @@ export class EventStream {
   private closed = false;
   private waiting?: { resolve: (value: Envelope) => void; reject: (error: Error) => void };
   constructor(private acknowledge: boolean, private version: string,
-    private send: (frame: SubscribeFrame) => void, private dispose: () => void) {}
+    private send: (frame: SubscribeFrame) => void, private dispose: () => void,
+    readonly transportTermination: Promise<TransportTermination>) {}
   push(event: Envelope) {
     if (this.closed) return;
     if (this.waiting) { const waiter = this.waiting; this.waiting = undefined; waiter.resolve(event); }

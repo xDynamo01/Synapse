@@ -32,7 +32,7 @@ and their scope. [Transport evidence](../evidence/foundation/transport-spike.md)
 | `GetStatus` | Reports health, server contract version, admitted command count and latest event cursor. |
 | `SubmitCommand` | Atomically commits the admitted command and its acknowledgment event before returning. Reusing a `command_id` with the same immutable input returns the original acknowledgment with `duplicate=true`. Changed input returns `COMMAND_CONFLICT`. |
 | `CancelCommand` | Persists one cancellation event for an admitted command. Retries return that same event. Unknown IDs return `NOT_FOUND`. This test cancels a held fixture command. |
-| `SubscribeEvents` | Opens with an exclusive `after_event_id` cursor. Delivers ascending events and accepts one acknowledgment per outstanding event. An invalid cursor or ACK yields a structured error. A stalled consumer receives `BACKPRESSURE` with its last acknowledged cursor and the stream closes. |
+| `SubscribeEvents` | Opens with an exclusive `after_event_id` cursor and has no fixed maximum age. Delivers ascending events and accepts one acknowledgment per outstanding event. An invalid cursor or ACK yields a structured error. A stalled consumer receives `BACKPRESSURE` with its last acknowledged cursor and the stream closes. |
 
 A command and its events carry `command_id` and `causation_id`. Event IDs are
 monotonic decimal strings scoped to the journal. Structured domain errors carry
@@ -48,9 +48,10 @@ submission outcomes through the same command ID and immutable input.
 
 The shared experimental journal caps admission at 128 commands, uses a
 one-event acknowledgment window with a 500 ms deadline, and configures 4 KiB
-transport message ceilings. These are fixture parameters. The production
-retention, admission limits, deadlines and storage selection require their own
-evidence. Socket and HTTP/2 flow control protect the transport buffer. The
+transport message ceilings. The clients also bound individual event reads
+in the fixture. These bounds and the opening-frame deadline are fixture
+parameters. Production retention, admission limits, deadlines and storage
+selection require their own evidence. Socket and HTTP/2 flow control protect the transport buffer. The
 application acknowledgment keeps replay tied to consumption.
 [gRPC flow control](https://grpc.io/docs/guides/flow-control/)
 
@@ -96,10 +97,10 @@ implementation. The spike exercises neither certificates nor pairing.
 [aiohttp server TLS configuration](https://docs.aiohttp.org/en/stable/web_reference.html#aiohttp.web.TCPSite)
 
 Plan 01 must run locked installs, generation, contract negatives, real
-cancellation, backpressure, kill/restart and cursor replay for gRPC on Windows
-11 x64, Ubuntu 24.04 x64/glibc and macOS 14+ arm64. It must also verify the
-selected packaged Electron and renderer/main boundary on the applicable
-platform lanes. Linux/macOS CI evidence does not replace PL-004 physical
+cancellation, long-lived subscriptions, backpressure, kill/restart and cursor
+replay for gRPC on Windows 11 x64, Ubuntu 24.04 x64/glibc and macOS 14+ arm64.
+It must also verify the selected packaged Electron and renderer/main boundary
+on the applicable platform lanes. Linux/macOS CI evidence does not replace PL-004 physical
 validation. Reopening the transport choice requires a superseding ADR and the
 same two-candidate comparison. Rollback of this spike is a repository revert
 and recreation of local environments. It has no deployed state.

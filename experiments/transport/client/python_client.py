@@ -60,7 +60,7 @@ class Stream:
 
     async def open(self, cursor, token):
         if self.client.candidate == "grpc":
-            self.wire = self.client.stub.SubscribeEvents(metadata=(("authorization", f"Bearer {token}"),), timeout=10)
+            self.wire = self.client.stub.SubscribeEvents(metadata=(("authorization", f"Bearer {token}"),))
         else:
             self.wire = await self.client.connection.ws_connect(f"http://127.0.0.1:{self.client.port}/v1/SubscribeEvents",
                                                                headers={"Authorization": f"Bearer {token}"})
@@ -74,15 +74,19 @@ class Stream:
             await self.wire.send_json(frame)
 
     async def next(self):
-        if self.client.candidate == "grpc":
-            import grpc
-            from server.grpc_server import as_dict
-            reply = await asyncio.wait_for(self.wire.read(), 3)
-            if reply is grpc.aio.EOF:
-                raise EOFError("Event stream ended")
-            result = as_dict(reply)
-        else:
-            result = await asyncio.wait_for(self.wire.receive_json(), 3)
+        try:
+            if self.client.candidate == "grpc":
+                import grpc
+                from server.grpc_server import as_dict
+                reply = await asyncio.wait_for(self.wire.read(), 3)
+                if reply is grpc.aio.EOF:
+                    raise EOFError("Event stream ended")
+                result = as_dict(reply)
+            else:
+                result = await asyncio.wait_for(self.wire.receive_json(), 3)
+        except TimeoutError:
+            await self.close()
+            raise
         if result.get("event_id") and self.acknowledge:
             await self.send({"contract_version": self.version, "ack_event_id": result["event_id"]})
         return result

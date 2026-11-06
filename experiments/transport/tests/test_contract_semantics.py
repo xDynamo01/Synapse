@@ -47,19 +47,20 @@ def test_lifecycle_restart_and_faults(candidate, tmp_path):
                 async with client.events("0") as stream:
                     event = await stream.next()
                     assert event == first
-                second_request = {**request, "command_id": "two"}
-                second = await client.call("SubmitCommand", second_request)
-                assert second["event_id"] == "2"
-                # Event 2 was committed but the subscriber has only consumed event 1.
-                runtime_pid = process.runtime_pid
-                await process.kill()
-                assert not psutil.pid_exists(runtime_pid)
+                    second_request = {**request, "command_id": "two"}
+                    second = await client.call("SubmitCommand", second_request)
+                    assert second["event_id"] == "2"
+                    # Kill with a live subscription after commit, before the client consumes event 2.
+                    runtime_pid = process.runtime_pid
+                    await process.kill()
+                    assert not psutil.pid_exists(runtime_pid)
             await process.start()
             async with Client(candidate, process.port) as client:
                 duplicate = await client.call("SubmitCommand", request)
                 assert duplicate["duplicate"] is True and duplicate["event_id"] == "1"
-                assert (await client.call("GetStatus"))["command_count"] == 2
                 assert (await client.call("SubmitCommand", second_request)) == {**second, "duplicate": True}
+                status = await client.call("GetStatus")
+                assert status["command_count"] == 2 and status["last_event_id"] == "2"
                 cancelled = await client.call("CancelCommand", {"command_id": "one", "causation_id": "cancel-owner"})
                 assert cancelled["state"] == "CANCELLED" and cancelled["event_id"] == "3"
                 repeated = await client.call("CancelCommand", {"command_id": "one", "causation_id": "cancel-owner"})
@@ -87,6 +88,29 @@ def test_lifecycle_restart_and_faults(candidate, tmp_path):
 
     assert sys.version_info[:3] == (3, 14, 10)
     assert sys._is_gil_enabled()
+    asyncio.run(check())
+
+
+@pytest.mark.parametrize("candidate", CANDIDATES)
+def test_active_subscription_remains_open_past_ten_seconds(candidate, tmp_path):
+    from client.python_client import Client
+    from tests.process_harness import Server
+
+    async def check():
+        async with Server(candidate, tmp_path / "journal.sqlite") as process:
+            async with Client(candidate, process.port) as client:
+                async with client.events("0") as stream:
+                    started = asyncio.get_running_loop().time()
+                    for sequence in range(1, 13):
+                        if sequence > 1:
+                            await asyncio.sleep(1)
+                        event = await client.call("SubmitCommand", {
+                            "command_id": f"active-{sequence}", "causation_id": "owner", "action": "hold",
+                        })
+                        assert event["event_id"] == str(sequence)
+                        assert await stream.next() == event
+                    assert asyncio.get_running_loop().time() - started > 10
+
     asyncio.run(check())
 
 

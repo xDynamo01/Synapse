@@ -35,9 +35,10 @@ the GREEN runs.
 
 | Run | Python | TypeScript/Node |
 |---|---:|---:|
-| No-server RED | Exit 1, 4 failed | Exit 1, 2 failed |
-| Both candidate paths | Exit 0, 4 passed | Exit 0, 2 passed |
-| Selected gRPC path after ADR | Exit 0, 2 passed | Exit 0, 1 passed |
+| Initial no-server RED | Exit 1, 4 failed | Exit 1, 2 failed |
+| Active-subscription RED during review | Exit 1, 1 failed / 1 passed, 4 deselected | Exit 1, 1 failed / 3 passed |
+| Both candidate paths | Exit 0, 6 passed | Exit 0, 4 passed |
+| Selected gRPC path after review | Exit 0, 3 passed | Exit 0, 2 passed |
 
 Both candidates execute the same parameterized fixtures against owned live
 server processes. Python checks the actual listening socket of the runtime
@@ -49,16 +50,25 @@ checks same-major minor acceptance, changed-input conflicts, rejected shell
 actions, invalid cursors and ACKs, eight concurrent duplicate submissions,
 and the full 128-command journal cap.
 
-The Python restart fixture observes event 1, commits event 2, forcibly kills
-and reaps the Core interpreter, then reconnects to the replacement Core with
-the same journal. Explicit retries return the original admission events
-without advancing the journal. Cancellation commits event 3 and a stream
-opened after cursor 1 reads exactly events 2 and 3, including the original
-causation. The TypeScript fixture kills an owned process with a live stream,
-requires an observable connection failure, reconnects, retries without
-duplicating admission and replays the cancellation. Both harnesses check
-interpreter ownership and reaping, including the Windows venv launcher.
-A successful run also exercises graceful shutdown.
+Both restart fixtures consume event 1 and keep the subscription open as
+Core commits event 2. They forcibly kill and reap the interpreter before
+the application consumes event 2. The Node fixture observes native gRPC
+`UNAVAILABLE` or WebSocket abnormal close `1006`, independently of the
+event reader's watchdog. The replacement Core opens the same journal.
+Explicit retries return the original admission events with the journal
+still at cursor 2. A stream opened after cursor 1 reads event 2 and the
+subsequent cancellation event 3 with their original causation fields. Both
+harnesses verify interpreter ownership and reaping, including the Windows
+venv launcher, and exercise graceful shutdown.
+[gRPC status codes](https://grpc.io/docs/guides/status-codes/),
+[WebSocket close codes](https://www.rfc-editor.org/rfc/rfc6455.html#section-7.4.1)
+
+The active-subscription regression sends and acknowledges 12 events one
+second apart on a single connection. The prior gRPC adapters expired at
+10 seconds and both tests reproduced `DEADLINE_EXCEEDED`. WebSocket passed.
+After the fix both candidates pass across the old cutoff. Subscriptions
+have no fixed maximum age. The opening-frame and outstanding-event ACK
+bounds, and the adapters' individual read watchdogs, remain in force.
 
 ## Timing and idle RSS
 
@@ -72,8 +82,8 @@ its cancellation across reconnect/restart on every sample.
 
 | Candidate | Median startup ms | Median idle RSS bytes | Median reconnect ms | Median kill/restart/replay ms |
 |---|---:|---:|---:|---:|
-| gRPC/Protobuf | 476.041 | 38,588,416 | 1.667 | 265.980 |
-| HTTP/JSON + WebSocket | 718.946 | 50,012,160 | 1.603 | 478.897 |
+| gRPC/Protobuf | 491.210 | 38,498,304 | 1.648 | 255.872 |
+| HTTP/JSON + WebSocket | 699.286 | 50,012,160 | 1.792 | 469.316 |
 
 The sub-millisecond median reconnect difference is within the spread of the
 samples. The gRPC startup and RSS results favor the selected candidate in
