@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Synapse host capabilities",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["captured_at", "os", "cpu", "memory", "gpus", "disks", "audio", "tools", "limitations"],
+  "properties": {
+    "captured_at": {"type": "string", "format": "date-time", "pattern": "Z$"},
+    "os": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["family", "version", "architecture"],
+      "properties": {
+        "family": {"enum": ["windows", "linux", "macos", "unknown"]},
+        "version": {"$ref": "#/$defs/version"},
+        "architecture": {"enum": ["x64", "x86", "arm64", "arm", "other"]}
+      }
+    },
+    "cpu": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["physical_cores", "logical_processors"],
+      "properties": {
+        "physical_cores": {"type": ["integer", "null"], "minimum": 1},
+        "logical_processors": {"type": ["integer", "null"], "minimum": 1}
+      }
+    },
+    "memory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total_bytes", "available_bytes"],
+      "properties": {
+        "total_bytes": {"$ref": "#/$defs/bytes"},
+        "available_bytes": {"$ref": "#/$defs/bytes"}
+      }
+    },
+    "gpus": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["vendor", "reported_memory_bytes"],
+        "properties": {
+          "vendor": {"enum": ["amd", "intel", "nvidia", "other"]},
+          "reported_memory_bytes": {"$ref": "#/$defs/bytes"}
+        }
+      }
+    },
+    "disks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["workspace_volume", "total_bytes", "free_bytes"],
+        "properties": {
+          "workspace_volume": {"type": "boolean"},
+          "total_bytes": {"$ref": "#/$defs/bytes"},
+          "free_bytes": {"$ref": "#/$defs/bytes"}
+        }
+      }
+    },
+    "audio": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["endpoint_count", "ok_endpoint_count"],
+      "properties": {
+        "endpoint_count": {"type": ["integer", "null"], "minimum": 0},
+        "ok_endpoint_count": {"type": ["integer", "null"], "minimum": 0}
+      }
+    },
+    "tools": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["powershell_version", "available"],
+      "properties": {
+        "powershell_version": {"$ref": "#/$defs/version"},
+        "available": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": ["cargo", "dotnet", "ffmpeg", "git", "lms", "node", "npm", "nvidia-smi", "ollama", "pnpm", "python", "rustc", "uv"]
+          }
+        }
+      }
+    },
+    "limitations": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["probe", "code"],
+        "properties": {
+          "probe": {"enum": ["os", "cpu", "memory", "gpu", "disk", "audio"]},
+          "code": {"enum": ["unsupported_platform", "probe_failed", "no_devices", "dedicated_vram_unverified", "workspace_volume_unavailable", "measurement_unavailable"]},
+          "fallback": {"const": "cpu"}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "bytes": {"type": ["integer", "null"], "minimum": 0},
+    "version": {"type": ["string", "null"], "pattern": "^[0-9]{1,5}(\\.[0-9]{1,5}){1,3}$"}
+  }
+}

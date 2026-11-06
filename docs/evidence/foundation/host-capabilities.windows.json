@@ -1,0 +1,71 @@
+{
+  "captured_at": "2026-11-06T16:16:46.0495025Z",
+  "os": {
+    "family": "windows",
+    "version": "10.0.26200.0",
+    "architecture": "x64"
+  },
+  "cpu": {
+    "physical_cores": 6,
+    "logical_processors": 12
+  },
+  "memory": {
+    "total_bytes": 17064919040,
+    "available_bytes": 5187866624
+  },
+  "gpus": [
+    {
+      "vendor": "amd",
+      "reported_memory_bytes": 4293918720
+    }
+  ],
+  "disks": [
+    {
+      "workspace_volume": false,
+      "total_bytes": 511017218048,
+      "free_bytes": 128004005888
+    },
+    {
+      "workspace_volume": false,
+      "total_bytes": 250056011776,
+      "free_bytes": 69776863232
+    },
+    {
+      "workspace_volume": false,
+      "total_bytes": 1000186310656,
+      "free_bytes": 697585938432
+    },
+    {
+      "workspace_volume": true,
+      "total_bytes": 1000203087872,
+      "free_bytes": 584451481600
+    }
+  ],
+  "audio": {
+    "endpoint_count": 3,
+    "ok_endpoint_count": 3
+  },
+  "tools": {
+    "powershell_version": "7.6.9",
+    "available": [
+      "cargo",
+      "dotnet",
+      "ffmpeg",
+      "git",
+      "lms",
+      "node",
+      "npm",
+      "pnpm",
+      "python",
+      "rustc",
+      "uv"
+    ]
+  },
+  "limitations": [
+    {
+      "probe": "gpu",
+      "code": "dedicated_vram_unverified",
+      "fallback": "cpu"
+    }
+  ]
+}
