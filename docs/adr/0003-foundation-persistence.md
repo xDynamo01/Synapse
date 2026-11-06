@@ -83,7 +83,7 @@ authority follow the owner authorization policy.
 ## Evidence and alternatives
 
 The [Windows spike](../evidence/foundation/persistence-spike.md) met its host
-budget and completed 120 forced writer terminations. All 60 acknowledged
+budget and verified 120 forced writer terminations. All 60 acknowledged
 writes survived and all 60 staged pre-commit writes stayed invisible. All 120
 integrity checks passed. A 256-version snapshot restored into a separate
 directory. The rollback-journal alternative would trade concurrent snapshot

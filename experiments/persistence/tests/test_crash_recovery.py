@@ -1,3 +1,4 @@
+import signal
 import sqlite3
 import subprocess
 import sys
@@ -70,16 +71,20 @@ def test_forced_termination_before_and_after_acknowledgement(scratch):
                     assert storage.read_record("crash", acknowledged[-1]) == payload_for_version(
                         acknowledged[-1],
                     )
-                    if phase == "after":
-                        commit_times.append(float(elapsed))
-                        acknowledged.append(version)
+                    assert writer.poll() is None, "Writer exited before the kill request"
+                    writer.kill()
+                    if sys.platform == "win32":
+                        # Pinned CPython caches the exit code if TerminateProcess was rejected.
+                        assert writer.returncode is None, "Windows rejected the kill request"
+                        expected_exit = 1
                     else:
-                        uncommitted.append(version)
-                finally:
+                        expected_exit = -signal.SIGKILL
+                    assert writer.wait(timeout=15) == expected_exit
+                except BaseException:
                     if writer.poll() is None:
                         writer.kill()
                     writer.wait(timeout=15)
-                assert writer.returncode != 0
+                    raise
 
             recovery_started = perf_counter()
             recovered = Storage(storage.path)
@@ -88,17 +93,25 @@ def test_forced_termination_before_and_after_acknowledgement(scratch):
             assert recovered.read_record("crash", version) == expected
             assert recovered.read_record("crash", 1) == payload_for_version(1)
             recovered_times.append(perf_counter() - recovery_started)
+            if phase == "after":
+                commit_times.append(float(elapsed))
+                acknowledged.append(version)
+            else:
+                uncommitted.append(version)
 
-    assert len(acknowledged) == 61
-    assert len(uncommitted) == 60
+    verified_pre_commit = len(uncommitted)
+    verified_acknowledged = len(acknowledged) - 1
+    verified_kills = verified_pre_commit + verified_acknowledged
+    assert (verified_pre_commit, verified_acknowledged) == (60, 60)
     for version in acknowledged:
         assert storage.read_record("crash", version) == payload_for_version(version)
     for version in uncommitted:
         assert storage.read_record("crash", version) is None
 
     print(
-        "Forced terminations=120 pre_commit=60 acknowledged=60 "
-        "acknowledged_loss=0 partial_visibility=0 integrity_pass=120"
+        f"Forced terminations={verified_kills} pre_commit={verified_pre_commit} "
+        f"acknowledged={verified_acknowledged} acknowledged_loss=0 partial_visibility=0 "
+        f"integrity_pass={verified_kills}"
     )
     print(
         f"elapsed_seconds={perf_counter() - started:.3f} "

@@ -47,7 +47,7 @@ $env:TEMP = $env:TMP
 | `experiments/persistence/storage.py` (LF) | `c8ea7f16113eaec46ac8aef0a8610be7fdd84d62a40e468ea72d19e4c953756c` |
 | `experiments/persistence/tests/crash_writer.py` (LF) | `31188ace5b5d1931b7e421a3f3687b7da3933e8d1731de1db130015158b07aa7` |
 | `experiments/persistence/tests/test_atomic_write.py` (LF) | `ba4451441dc149c26e00cb363d56e34c3019e889d44935239938e4171e8eaf6d` |
-| `experiments/persistence/tests/test_crash_recovery.py` (LF) | `ae129fdf82e99bb7914ca60810302581a618f97cdaa40acc49377614ac85f7a9` |
+| `experiments/persistence/tests/test_crash_recovery.py` (LF) | `3f057fe5acf7d79ceb7cfa5866361efed0fe9059286a2cb4dae1c390b69d1f90` |
 | `experiments/persistence/tests/test_backup_restore.py` (LF) | `612e6bbcc77ae30b91d06b8bdbd66667e61320674edff26941d5c34391925e7e` |
 
 The Gate 00 execution report records the exact tested commit.
@@ -67,14 +67,25 @@ corrected fixture launches the base interpreter and asserts the writer's
 self-reported PID before terminating it. Only confirmed writer terminations
 count toward the decision.
 
-The final pre-commit run exited 0.
+The initial full suite passed 10 fixtures in 43.74 seconds. Its backup restored
+256 records from a 32,768-byte snapshot. Backup took 209.322 ms and restore took
+206.722 ms.
+
+Review tightened the crash fixture to check liveness immediately before the kill
+request, check Windows termination acceptance before waiting, and verify the
+expected termination status. The fixture counts each kill after reopening and
+checking recovery. A focused Windows probe made the writer exit with code 1
+between the liveness check and the kill request. The fixture rejected the
+iteration when CPython cached that exit code after the rejected request.
+
+The revised crash fixture exited 0 when run with the command above and
+`tests/test_crash_recovery.py` appended.
 
 ```text
-......backup_records=256 backup_bytes=32768 backup_ms=209.322 restore_ms=206.722
-...Forced terminations=120 pre_commit=60 acknowledged=60 acknowledged_loss=0 partial_visibility=0 integrity_pass=120
-elapsed_seconds=29.396 append_p50_ms=82.110 append_p95_ms=169.024 recover_check_p50_ms=30.083 recover_check_p95_ms=63.004 writer_resident_high_bytes=26120192 database_files_high_bytes=2081040
+Forced terminations=120 pre_commit=60 acknowledged=60 acknowledged_loss=0 partial_visibility=0 integrity_pass=120
+elapsed_seconds=31.165 append_p50_ms=83.629 append_p95_ms=175.578 recover_check_p50_ms=29.757 recover_check_p95_ms=61.682 writer_resident_high_bytes=26173440 database_files_high_bytes=2081040
 .
-10 passed in 43.74s
+1 passed in 31.64s
 ```
 
 ## Fixtures and measurements
@@ -86,13 +97,13 @@ elapsed_seconds=29.396 append_p50_ms=82.110 append_p95_ms=169.024 recover_check_
 | Schema and migration | Empty version-zero database migrates. Injected failure before the version bump rolls back both schema and application ID. Foreign and future schema versions fail closed. |
 | Pre-commit termination | A separate interpreter inserts a multi-page synthetic reference and pauses before `COMMIT` executes. The parent verifies new WAL frames and no visibility to a live reader, kills the verified process and checks recovery. All 60 staged writes stayed absent. |
 | Post-commit termination | The child reports after `append_record` returns. A keeper connection leaves the acknowledged write in the WAL. The current row is present to SQLite readers and absent from the main-file-only view. All 60 acknowledged rows and the seed survived across repeated restarts. |
-| Recovery | The parent verifies the process exited, reopens through `initialize()` and runs full SQLite integrity checks after every termination. It verifies the complete committed and rejected sets after the loop. |
+| Recovery | The parent verifies accepted termination and its exit status, reopens through `initialize()` and runs full SQLite integrity checks after every termination. It verifies the complete committed and rejected sets after the loop. |
 | Backup and restore | 256 versions backed up online with a reader pinning the old main-file snapshot. A separate new directory restores exactly those versions as an independent writable database. A later source commit stays outside the snapshot. Missing, truncated, foreign and sidecar-contaminated snapshots are rejected. Existing destination data is preserved. |
 
 The spike budget was 120 seconds for the crash loop, 128 MiB peak resident
 memory for the child and 8 MiB for the active database plus journal files,
 given the host's available resources and this small synthetic workload. The
-loop used 29.396 seconds, 24.91 MiB peak child working set and 1.98 MiB peak
+loop used 31.165 seconds, 24.96 MiB peak child working set and 1.98 MiB peak
 active database file bytes sampled at the termination barriers. Append
 latency includes connection setup, commit and close. Recovery latency
 includes reopening, integrity validation and two record reads. The backup
