@@ -21,6 +21,30 @@ candidates; SQLite WAL is the initial persistence candidate.
 
 **Spec:** `docs/specs/2026-11-06-synapse-0.3-clean-room-design.md`
 
+**Decision Charter:**
+`docs/specs/2026-11-06-synapse-0.3-decision-charter.md`
+
+## Decision Charter Compliance
+
+**Binding decisions:** `CR-001`, `CR-002`, `CR-003`, `CR-004`, `MI-003`,
+`MI-004`, `SE-005`, `SE-006`, `PL-001`, `PL-002`, `PL-003`, `PL-004`,
+`QA-001`, `QA-002`, `QA-003`.
+
+| Decision | Implementation obligation | Test/evidence owner |
+|---|---|---|
+| CR-001–CR-004 | clean-room experiments and public-repo redaction | Tasks 1, 2 and 6 |
+| MI-003–MI-004 | authority cannot expand during preflight or testing | Tasks 3 and 5 |
+| SE-005–SE-006 | loopback/CLI boundary and threat model precede product code | Tasks 3 and 5 |
+| PL-001–PL-004 | select portable Core/client foundation without microservices | Tasks 2–4 and 6 |
+| QA-001–QA-003 | truthful statuses and exact reproducible evidence | every task; Gate 00 |
+
+**Reviewed but not applicable:** Voice, memory, Skills, MoM, Swarm and browser
+behavior decisions are not implemented by Gate 00; Plan 01 and later plans must
+bind them when those capabilities enter scope.
+
+**Proposed deviations:** None. Any non-empty entry blocks execution until the
+owner approves a Charter amendment.
+
 ## Global Constraints
 
 - Do not copy or import runtime code, build output, state or configuration from
@@ -36,6 +60,7 @@ candidates; SQLite WAL is the initial persistence candidate.
 - No experiment result is `OPERATIONAL`; it is evidence for an ADR only.
 - Every ADR names rejected alternatives, measured evidence and rollback cost.
 - No secret, credential, raw audio, personal content or runtime state enters Git.
+- Gate 00 evidence and Plan 01 must reference the binding Decision Charter IDs.
 
 ## Review Focus
 

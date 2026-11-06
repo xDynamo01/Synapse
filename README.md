@@ -4,6 +4,7 @@ This branch is the documentation-first foundation for a clean-room rebuild of
 Synapse 0.3. It intentionally contains no product runtime code yet.
 
 - [Architecture design](docs/specs/2026-11-06-synapse-0.3-clean-room-design.md)
+- [Binding decision charter](docs/specs/2026-11-06-synapse-0.3-decision-charter.md)
 - [Reference proposals](docs/reference/proposals/)
 - [Historical pre-clean-room evidence](docs/archive/pre-cleanroom/v0.3/)
 
