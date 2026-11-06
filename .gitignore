@@ -1,0 +1,13 @@
+# Agent execution workspaces
+.worktrees/
+.superpowers/
+
+# Local runtime state must never enter the public repository
+.env
+.env.*
+!.env.example
+*.local
+runtime/
+data/
+logs/
+secrets/
