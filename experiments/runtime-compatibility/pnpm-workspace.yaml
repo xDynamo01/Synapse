@@ -1,0 +1,6 @@
+packages: []
+engineStrict: true
+ignoreScripts: true
+storeDir: .local/pnpm-store
+minimumReleaseAge: 1440
+blockExoticSubdeps: true

@@ -1,0 +1,17 @@
+{
+  "name": "synapse-runtime-compatibility",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.25.0",
+  "engines": { "node": ">=24.22.2 <25", "pnpm": "11.25.0" },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "json-schema-to-typescript": "16.0.0",
+    "typescript": "7.0.2"
+  },
+  "scripts": {
+    "generate": "node tools/generate-types.mjs",
+    "test": "node tools/check-toolchain.mjs && pnpm run generate && tsc -p tsconfig.json && node --test dist/tests/runtime-client.test.js"
+  }
+}

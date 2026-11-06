@@ -1,0 +1,11 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "RuntimeStatus",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract_version", "state"],
+  "properties": {
+    "contract_version": { "const": "1" },
+    "state": { "enum": ["ready", "stopped"] }
+  }
+}

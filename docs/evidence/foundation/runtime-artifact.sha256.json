@@ -1,0 +1,70 @@
+{
+  "algorithm": "sha256",
+  "scope": "Committed experiment code, fixtures, configuration and lockfiles, LF bytes fixed by local .gitattributes; documentation and generated outputs excluded",
+  "files": [
+    {
+      "path": "experiments/runtime-compatibility/.gitattributes",
+      "sha256": "a79691a93b46e49ce460c26ef22afcc03d6eca1e63bf2edbc20e96159510f6c9"
+    },
+    {
+      "path": "experiments/runtime-compatibility/.gitignore",
+      "sha256": "8d21aa663a5991506d8eb066c58220f4fdd8548c6c03c34eabfbc9802a99e1f8"
+    },
+    {
+      "path": "experiments/runtime-compatibility/.node-version",
+      "sha256": "9185b9f67843cabfa8054f65ce47ce0b52036b0bfe07ae5a6b834d97cc127140"
+    },
+    {
+      "path": "experiments/runtime-compatibility/.python-version",
+      "sha256": "4f4c88910b6d485ae689143880e5e81b595a48a51ecb391b2f14feaec106d180"
+    },
+    {
+      "path": "experiments/runtime-compatibility/fixtures/status.schema.json",
+      "sha256": "34702e22a99922fdc286c0a0d1e096b472649bf540869cdaa42c0fd3f8912388"
+    },
+    {
+      "path": "experiments/runtime-compatibility/package.json",
+      "sha256": "985a817306b3053b671ebe289e04aa8a04f28e6f2e3d524969c3694a4e2b296a"
+    },
+    {
+      "path": "experiments/runtime-compatibility/pnpm-lock.yaml",
+      "sha256": "d3f4ec78ae7f54633502d111508a7278d121ceda1c06d41c79f6e75fb0a56d5c"
+    },
+    {
+      "path": "experiments/runtime-compatibility/pnpm-workspace.yaml",
+      "sha256": "dd2a4be3d9897f6b1e140887987870a8b0c9942cbb073e8981dbedacdfc21429"
+    },
+    {
+      "path": "experiments/runtime-compatibility/pyproject.toml",
+      "sha256": "ea20ef1fb8939d06d5501eef0da41ac3b5e14f2c8bcaa5a247c48fae60e80466"
+    },
+    {
+      "path": "experiments/runtime-compatibility/tests/runtime-client.test.ts",
+      "sha256": "5db0631b5e942cc3a6262895c38b35a1ba5a5d4c8e2e8e8446b5b41dba29ecf5"
+    },
+    {
+      "path": "experiments/runtime-compatibility/tests/test_runtime_imports.py",
+      "sha256": "25ac2cb3dc9a460c6cfd598de561bc72d2d72284d3d99392eab4acab2c2736f7"
+    },
+    {
+      "path": "experiments/runtime-compatibility/tools/check-toolchain.mjs",
+      "sha256": "1dfd66a32837add469104a4b9bb4d3465b1bb2e8ca878c821380c993f77bcd21"
+    },
+    {
+      "path": "experiments/runtime-compatibility/tools/generate-types.mjs",
+      "sha256": "28fffddff8e0a2868a6f5117168d449cde998cb15c9a5828e0d0e064399ce4dd"
+    },
+    {
+      "path": "experiments/runtime-compatibility/tools/measure-runtime.py",
+      "sha256": "b94898db61ffe173eec0ad83da51b01b230e3c7760e6ad15bf04c9334df8fc9c"
+    },
+    {
+      "path": "experiments/runtime-compatibility/tsconfig.json",
+      "sha256": "b5dfd886f117826a605fec5ec9975f9b65a15d03c1de8c89dede6ef83bf8ae52"
+    },
+    {
+      "path": "experiments/runtime-compatibility/uv.lock",
+      "sha256": "826b5263df64686a68680822873311c0f08f0858f0952b2229e8e54d113d4006"
+    }
+  ]
+}

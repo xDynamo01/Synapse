@@ -1,0 +1,31 @@
+{
+  "captured_at": "2026-11-06T16:33:49.3755619+00:00",
+  "platform": "windows-x64",
+  "tools": [
+    {
+      "name": "python313",
+      "version": "3.13.18",
+      "executable_sha256": "d0a3fdb2f523217cc05cbfa015a249f53f670fe38c72522fa893377c5d2f17d5"
+    },
+    {
+      "name": "python314",
+      "version": "3.14.10",
+      "executable_sha256": "bcd8e6a0d88b5e9681e94bb4ce569ca1f76039e8ed9944ac7fcd13528d363cae"
+    },
+    {
+      "name": "node",
+      "version": "24.22.2",
+      "executable_sha256": "1c331340fa6cac5e4294725959070a143fa0507195a78ad77eed7943f719aac9"
+    },
+    {
+      "name": "uv",
+      "version": "0.13.7",
+      "executable_sha256": "1791d7a9ed5b6df13ccf80f102e025c333010d96326b4ff0262aa3b578835c5a"
+    }
+  ],
+  "node_archive": {
+    "sha256": "ca1bff5d8ead13c9f2ea404a176db46bd430704d5b5113734049fa365e7799e2",
+    "checksum_source": "https://nodejs.org/dist/v24.22.2/SHASUMS256.txt",
+    "url": "https://nodejs.org/dist/v24.22.2/node-v24.22.2-win-x64.zip"
+  }
+}

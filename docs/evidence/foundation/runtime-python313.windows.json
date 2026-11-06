@@ -1,0 +1,89 @@
+{
+  "captured_at": "2026-11-06T16:33:49.991886+00:00",
+  "platform": {
+    "os": "Windows",
+    "architecture": "AMD64"
+  },
+  "method": {
+    "runs": 5,
+    "idle_delay_ms": 100,
+    "models_loaded": false,
+    "startup": "parent launch to ready line received, measured with parent perf_counter",
+    "rss": "one post-import process working-set snapshot per run, not peak",
+    "cache": "fresh processes; warm OS/package caches; not reboot/disk-cold"
+  },
+  "python": [
+    {
+      "version": "3.13.18",
+      "startup_ms": 594.128,
+      "idle_rss_bytes": 80609280,
+      "process_total_ms": 744.28
+    },
+    {
+      "version": "3.13.18",
+      "startup_ms": 600.5,
+      "idle_rss_bytes": 80551936,
+      "process_total_ms": 754.535
+    },
+    {
+      "version": "3.13.18",
+      "startup_ms": 626.271,
+      "idle_rss_bytes": 80781312,
+      "process_total_ms": 786.152
+    },
+    {
+      "version": "3.13.18",
+      "startup_ms": 591.531,
+      "idle_rss_bytes": 80510976,
+      "process_total_ms": 750.733
+    },
+    {
+      "version": "3.13.18",
+      "startup_ms": 589.105,
+      "idle_rss_bytes": 80642048,
+      "process_total_ms": 746.095
+    }
+  ],
+  "node": [
+    {
+      "version": "24.22.2",
+      "startup_ms": 195.417,
+      "idle_rss_bytes": 36401152,
+      "process_total_ms": 312.433
+    },
+    {
+      "version": "24.22.2",
+      "startup_ms": 49.255,
+      "idle_rss_bytes": 36380672,
+      "process_total_ms": 171.373
+    },
+    {
+      "version": "24.22.2",
+      "startup_ms": 47.979,
+      "idle_rss_bytes": 36331520,
+      "process_total_ms": 169.696
+    },
+    {
+      "version": "24.22.2",
+      "startup_ms": 49.03,
+      "idle_rss_bytes": 36388864,
+      "process_total_ms": 169.51
+    },
+    {
+      "version": "24.22.2",
+      "startup_ms": 48.261,
+      "idle_rss_bytes": 36311040,
+      "process_total_ms": 155.831
+    }
+  ],
+  "python_summary": {
+    "median_startup_ms": 594.128,
+    "median_idle_rss_bytes": 80609280,
+    "max_idle_rss_bytes": 80781312
+  },
+  "node_summary": {
+    "median_startup_ms": 49.03,
+    "median_idle_rss_bytes": 36380672,
+    "max_idle_rss_bytes": 36401152
+  }
+}
