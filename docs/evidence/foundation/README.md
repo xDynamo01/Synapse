@@ -25,8 +25,10 @@ Get-SynapseHostCapabilities -OutputPath ./host-capabilities.local
 
 [The Windows snapshot](host-capabilities.windows.json) records its UTC capture
 time. [The schema](host-capabilities.schema.json) limits keys and value types.
-The check also verifies the GPU fallback and rejects fixture values that match
-current secret-like environment values. The check exercises six negative cases.
+The check exercises six negative cases and rejects fixture values that match
+current secret-like environment values. On Windows it also runs the collector
+with an empty GPU probe and checks the temporary JSON for the `no_devices`
+limitation and CPU fallback.
 
 ## Interpret the measurements
 

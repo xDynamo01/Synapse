@@ -100,8 +100,6 @@ $noGpu.limitations = @(@{ probe = 'audio'; code = 'probe_failed' })
 Assert-Rejected $noGpu 'empty GPU inventory without a GPU limitation' 'GPU inventory requires a matching GPU limitation and explicit CPU fallback.'
 $noGpu.limitations = @(@{ probe = 'gpu'; code = 'dedicated_vram_unverified'; fallback = 'cpu' })
 Assert-Rejected $noGpu 'empty GPU inventory with an inapplicable GPU limitation' 'GPU inventory requires a matching GPU limitation and explicit CPU fallback.'
-$noGpu.limitations = @(@{ probe = 'gpu'; code = 'no_devices'; fallback = 'cpu' })
-Assert-HostCapabilities (ConvertTo-Json -InputObject $noGpu -Depth 8)
 
 $secret = $document.Clone()
 $secret.os = $document.os.Clone()
@@ -119,4 +117,36 @@ $identifier.os = $document.os.Clone()
 $identifier.os.serial = 'invented-serial-number'
 Assert-Rejected $identifier 'unexpected device identifier' 'Host capabilities JSON does not match the schema.'
 
-Write-Output 'PASS host capabilities fixture, CPU fallback and six negative cases.'
+& {
+    $gpuProbe = @{ requested = $false }
+    function Get-CimInstance {
+        [CmdletBinding()]
+        param([string] $ClassName, [string[]] $Property, [string] $Filter)
+
+        if ($ClassName -eq 'Win32_VideoController') {
+            $gpuProbe.requested = $true
+        }
+    }
+
+    . $collectorPath
+    $temporary = [System.IO.Path]::GetTempFileName()
+    try {
+        Get-SynapseHostCapabilities -OutputPath $temporary
+        $json = Get-Content -LiteralPath $temporary -Raw
+        Assert-HostCapabilities $json
+        $result = ConvertFrom-Json -InputObject $json -AsHashtable -DateKind String
+        $gpu = $result.limitations | Where-Object probe -eq 'gpu'
+        $expectedCode = if ($IsWindows) { 'no_devices' } else { 'unsupported_platform' }
+        if ($IsWindows -and -not $gpuProbe.requested) {
+            throw 'The collector did not query the controlled Windows GPU probe.'
+        }
+        if ($result.gpus.Count -ne 0 -or $gpu.code -ne $expectedCode -or $gpu.fallback -ne 'cpu') {
+            throw "Collector must emit an empty GPU inventory with the '$expectedCode' limitation and CPU fallback."
+        }
+        Write-Output "PASS collector emitted '$expectedCode' with an empty GPU inventory and CPU fallback."
+    } finally {
+        Remove-Item -LiteralPath $temporary
+    }
+}
+
+Write-Output 'PASS host capabilities fixture and six negative cases.'
