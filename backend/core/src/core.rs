@@ -225,9 +225,21 @@ fn dispatch_tx(
         }
         Command::MissionGet { mission_id } => missions::get(tx, mission_id),
         Command::ModelRegister { model } => registry::model_register(tx, model),
-        Command::ModelsList => registry::models_list(tx),
+        Command::ModelsList { after, limit } => {
+            registry::models_list(tx, after.unwrap_or(0), limit.unwrap_or(50))
+        }
+        Command::ModelGet { model_id } => registry::model_get(tx, model_id),
         Command::SkillRegister { skill } => registry::skill_register(tx, skill),
-        Command::SkillsList { scope } => registry::skills_list(tx, scope),
+        Command::SkillsList {
+            scope,
+            after,
+            limit,
+        } => registry::skills_list(tx, scope, after.unwrap_or(0), limit.unwrap_or(50)),
+        Command::SkillGet {
+            scope,
+            skill_id,
+            version,
+        } => registry::skill_get(tx, scope, skill_id, version),
         Command::CapabilitiesList => Ok(registry::capabilities()),
         Command::Inference { .. } => Err(CoreError::new(
             "capability_unavailable",

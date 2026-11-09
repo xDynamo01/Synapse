@@ -420,6 +420,141 @@ fn oversized_historical_receipt_is_rejected_before_replay() {
 }
 
 #[test]
+fn large_skill_registry_is_traversable_and_details_remain_available() {
+    let root = TempDir::new().unwrap();
+    let instructions = "x".repeat(32_768);
+    let mut registrations = Vec::new();
+    for n in 0..12 {
+        registrations.push(req(&format!("register-skill-{n}"),json!({"type":"skill_register","skill":{"id":format!("skill-{n}"),"version":"1","scope":"project:a","provenance":"human-authored","tools":[],"permissions":[],"instructions":instructions}})));
+    }
+    run(&root, &registrations).iter().for_each(ok);
+    let default = run(
+        &root,
+        &[req(
+            "default-skill-list",
+            json!({"type":"skills_list","scope":"project:a"}),
+        )],
+    );
+    ok(&default[0]);
+    assert_eq!(default[0]["result"]["skills"].as_array().unwrap().len(), 12);
+    assert!(default[0].to_string().len() < 240_000);
+    let mut cursor = 0;
+    let mut seen = Vec::new();
+    for page in 0..6 {
+        let out = run(
+            &root,
+            &[req(
+                &format!("skill-list-{page}"),
+                json!({"type":"skills_list","scope":"project:a","after":cursor,"limit":3}),
+            )],
+        );
+        ok(&out[0]);
+        assert!(out[0].to_string().len() < 240_000);
+        seen.extend(
+            out[0]["result"]["skills"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| v["id"].as_str().unwrap().to_owned()),
+        );
+        cursor = out[0]["result"]["next_cursor"].as_u64().unwrap();
+        if out[0]["result"]["has_more"] == false {
+            break;
+        }
+    }
+    assert_eq!(
+        seen,
+        (0..12).map(|n| format!("skill-{n}")).collect::<Vec<_>>()
+    );
+    let details = run(
+        &root,
+        &[
+            req(
+                "skill-detail",
+                json!({"type":"skill_get","scope":"project:a","skill_id":"skill-11","version":"1"}),
+            ),
+            req(
+                "foreign-skill",
+                json!({"type":"skill_get","scope":"project:b","skill_id":"skill-11","version":"1"}),
+            ),
+        ],
+    );
+    ok(&details[0]);
+    assert_eq!(
+        details[0]["result"]["skill"]["instructions"]
+            .as_str()
+            .unwrap()
+            .len(),
+        32_768
+    );
+    error(&details[1], "not_found");
+    let mut models = Vec::new();
+    for n in 0..5 {
+        models.push(req(&format!("register-model-{n}"),json!({"type":"model_register","model":{"id":format!("model-{n}"),"provider":"local","endpoint":"http://127.0.0.1:1234","capabilities":["chat"],"memory_bytes":1024}})));
+    }
+    run(&root, &models).iter().for_each(ok);
+    let mut cursor = 0;
+    let mut seen_models = Vec::new();
+    for page in 0..4 {
+        let out = run(
+            &root,
+            &[req(
+                &format!("model-list-{page}"),
+                json!({"type":"models_list","after":cursor,"limit":2}),
+            )],
+        );
+        ok(&out[0]);
+        seen_models.extend(
+            out[0]["result"]["models"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| v["id"].as_str().unwrap().to_owned()),
+        );
+        cursor = out[0]["result"]["next_cursor"].as_u64().unwrap();
+        if out[0]["result"]["has_more"] == false {
+            break;
+        }
+    }
+    assert_eq!(
+        seen_models,
+        (0..5).map(|n| format!("model-{n}")).collect::<Vec<_>>()
+    );
+    let detail = run(
+        &root,
+        &[req(
+            "model-detail",
+            json!({"type":"model_get","model_id":"model-4"}),
+        )],
+    );
+    ok(&detail[0]);
+    assert_eq!(
+        detail[0]["result"]["model"]["endpoint"],
+        "http://127.0.0.1:1234"
+    );
+    let invalid = run(
+        &root,
+        &[
+            req(
+                "zero-skill-limit",
+                json!({"type":"skills_list","scope":"project:a","limit":0}),
+            ),
+            req(
+                "huge-model-limit",
+                json!({"type":"models_list","limit":101}),
+            ),
+            req(
+                "invalid-model-cursor",
+                json!({"type":"models_list","after":u64::MAX}),
+            ),
+        ],
+    );
+    invalid
+        .iter()
+        .for_each(|response| error(response, "invalid_request"));
+}
+
+#[test]
 fn duplicate_envelope_and_command_keys_are_rejected() {
     let root = TempDir::new().unwrap();
     let input = concat!(

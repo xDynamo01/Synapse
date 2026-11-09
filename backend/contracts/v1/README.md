@@ -26,9 +26,11 @@ The available command shapes are:
 | `mission_cancel`, `mission_revoke` | `mission_id`, `reason` |
 | `mission_get` | `mission_id` |
 | `model_register` | `model` |
-| `models_list` | none |
+| `models_list` | optional `after` (opaque registry cursor, default 0), `limit` (1–100, default 50) |
+| `model_get` | `model_id` |
 | `skill_register` | `skill` |
-| `skills_list` | `scope` |
+| `skills_list` | `scope`; optional `after` (opaque registry cursor, default 0), `limit` (1–100, default 50) |
+| `skill_get` | `scope`, `skill_id`, `version` |
 | `capabilities_list` | none |
 | `inference` | `model_id`, `prompt`; returns `capability_unavailable` in this version |
 | `mission_execute` | `mission_id`; returns `capability_unavailable` in this version |
@@ -40,5 +42,7 @@ Scopes use exact `project:<id>` strings. Memory reads require an explicit `conte
 A mission contract has `version:1`, `scope`, `objective`, nonempty `actions` and `resources`, and `rollback`. `mission_propose` returns its SHA-256 `contract_digest`. Approval requires the exact digest. Only a proposed mission can be approved; approved missions can be revoked; proposed or approved missions can be cancelled. Terminal states cannot transition. This version does not execute effects.
 
 A model manifest has `id`, `provider`, `endpoint`, `capabilities`, and `memory_bytes`. Registration is catalog data only: it does not activate a provider. A Skill manifest has `id`, `version`, `scope`, `provenance`, `tools`, `permissions`, and `instructions`. Each registered version is immutable; registration does not grant tool authority.
+
+Registry lists return bounded metadata pages with `next_cursor` and `has_more`; repeat with a new request ID and the returned `after` cursor until `has_more` is false. `models_list` entries contain `id`, `provider`, `capabilities`, `memory_bytes`, and `operational`; `skills_list` entries contain `id`, `version`, `scope`, `digest`, and `operational`. `model_get` and `skill_get` return complete registered manifests. Cursors are opaque append-order positions; do not infer IDs or ordering from them. List pages stop at the count or 220,000-byte record budget.
 
 State uses one SQLite Core connection with WAL and FULL synchronous transactions. A process-held exclusive lock on the canonical state directory refuses a second live Core process with `state_in_use` and releases on process exit. Domain state, events, and the request receipt commit together. A repeated request ID with the same payload returns its original response, including after restart. A changed payload with that ID returns `idempotency_conflict`. `events_read` supports ordered replay by cursor. The state directory is bound to the canonical workspace path and rejects a different workspace.

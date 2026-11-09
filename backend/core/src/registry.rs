@@ -2,7 +2,7 @@ use crate::{
     contracts::{CoreError, CoreResult, ModelManifest, SkillManifest, bounded, scope},
     store,
 };
-use rusqlite::{Transaction, params};
+use rusqlite::{OptionalExtension, Transaction, params};
 use serde_json::{Value, json};
 
 pub(crate) fn model_register(tx: &Transaction<'_>, model: &ModelManifest) -> CoreResult<Value> {
@@ -34,14 +34,61 @@ pub(crate) fn model_register(tx: &Transaction<'_>, model: &ModelManifest) -> Cor
     Ok(json!({"model":model,"operational":false}))
 }
 
-pub(crate) fn models_list(tx: &Transaction<'_>) -> CoreResult<Value> {
-    let mut q = tx.prepare("SELECT manifest FROM models ORDER BY id")?;
-    let rows = q.query_map([], |r| r.get::<_, String>(0))?;
-    let mut models = Vec::new();
-    for row in rows {
-        models.push(json!({"manifest":serde_json::from_str::<Value>(&row?)?,"operational":false}));
+fn page(after: u64, limit: u32) -> CoreResult<()> {
+    if after > i64::MAX as u64 || !(1..=100).contains(&limit) {
+        return Err(CoreError::invalid(
+            "Invalid registry cursor or limit (1..100)",
+        ));
     }
-    Ok(json!({"models":models}))
+    Ok(())
+}
+
+pub(crate) fn models_list(tx: &Transaction<'_>, after: u64, limit: u32) -> CoreResult<Value> {
+    page(after, limit)?;
+    let mut q =
+        tx.prepare("SELECT rowid,manifest FROM models WHERE rowid>?1 ORDER BY rowid LIMIT ?2")?;
+    let rows = q.query_map(params![after as i64, (limit + 1) as i64], |r| {
+        Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
+    })?;
+    let mut models = Vec::new();
+    let mut bytes = 0;
+    let mut next_cursor = after;
+    let mut has_more = false;
+    for row in rows {
+        let (cursor, raw) = row?;
+        if models.len() >= limit as usize {
+            has_more = true;
+            break;
+        }
+        let manifest: ModelManifest = serde_json::from_str(&raw)?;
+        let item = json!({"id":manifest.id,"provider":manifest.provider,"capabilities":manifest.capabilities,"memory_bytes":manifest.memory_bytes,"operational":false});
+        let size = serde_json::to_vec(&item)?.len();
+        if bytes + size > 220_000 {
+            if models.is_empty() {
+                return Err(CoreError::new(
+                    "response_too_large",
+                    "A model summary exceeds page byte budget",
+                ));
+            }
+            has_more = true;
+            break;
+        }
+        bytes += size;
+        next_cursor = cursor as u64;
+        models.push(item);
+    }
+    Ok(json!({"models":models,"next_cursor":next_cursor,"has_more":has_more}))
+}
+
+pub(crate) fn model_get(tx: &Transaction<'_>, id: &str) -> CoreResult<Value> {
+    bounded(id, "model_id", 128)?;
+    let manifest: Option<String> = tx
+        .query_row("SELECT manifest FROM models WHERE id=?1", [id], |r| {
+            r.get(0)
+        })
+        .optional()?;
+    let manifest = manifest.ok_or_else(|| CoreError::new("not_found", "Model not found"))?;
+    Ok(json!({"model":serde_json::from_str::<Value>(&manifest)?,"operational":false}))
 }
 
 pub(crate) fn skill_register(tx: &Transaction<'_>, skill: &SkillManifest) -> CoreResult<Value> {
@@ -89,19 +136,76 @@ pub(crate) fn skill_register(tx: &Transaction<'_>, skill: &SkillManifest) -> Cor
     Ok(json!({"skill":skill,"digest":digest,"operational":false}))
 }
 
-pub(crate) fn skills_list(tx: &Transaction<'_>, project_scope: &str) -> CoreResult<Value> {
+pub(crate) fn skills_list(
+    tx: &Transaction<'_>,
+    project_scope: &str,
+    after: u64,
+    limit: u32,
+) -> CoreResult<Value> {
     scope(project_scope)?;
-    let mut q =
-        tx.prepare("SELECT manifest,digest FROM skills WHERE scope=?1 ORDER BY id,version")?;
-    let rows = q.query_map([project_scope], |r| {
-        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
-    })?;
+    page(after, limit)?;
+    let mut q = tx.prepare("SELECT rowid,id,version,digest FROM skills WHERE scope=?1 AND rowid>?2 ORDER BY rowid LIMIT ?3")?;
+    let rows = q.query_map(
+        params![project_scope, after as i64, (limit + 1) as i64],
+        |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
+            ))
+        },
+    )?;
     let mut skills = Vec::new();
+    let mut bytes = 0;
+    let mut next_cursor = after;
+    let mut has_more = false;
     for row in rows {
-        let (manifest, digest) = row?;
-        skills.push(json!({"manifest":serde_json::from_str::<Value>(&manifest)?,"digest":digest,"operational":false}));
+        let (cursor, id, version, digest) = row?;
+        if skills.len() >= limit as usize {
+            has_more = true;
+            break;
+        }
+        let item = json!({"id":id,"version":version,"scope":project_scope,"digest":digest,"operational":false});
+        let size = serde_json::to_vec(&item)?.len();
+        if bytes + size > 220_000 {
+            if skills.is_empty() {
+                return Err(CoreError::new(
+                    "response_too_large",
+                    "A Skill summary exceeds page byte budget",
+                ));
+            }
+            has_more = true;
+            break;
+        }
+        bytes += size;
+        next_cursor = cursor as u64;
+        skills.push(item);
     }
-    Ok(json!({"scope":project_scope,"skills":skills}))
+    Ok(json!({"scope":project_scope,"skills":skills,"next_cursor":next_cursor,"has_more":has_more}))
+}
+
+pub(crate) fn skill_get(
+    tx: &Transaction<'_>,
+    project_scope: &str,
+    id: &str,
+    version: &str,
+) -> CoreResult<Value> {
+    scope(project_scope)?;
+    bounded(id, "skill_id", 128)?;
+    bounded(version, "skill_version", 64)?;
+    let row: Option<(String, String)> = tx
+        .query_row(
+            "SELECT manifest,digest FROM skills WHERE scope=?1 AND id=?2 AND version=?3",
+            params![project_scope, id, version],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?;
+    let (manifest, digest) =
+        row.ok_or_else(|| CoreError::new("not_found", "Skill version not found"))?;
+    Ok(
+        json!({"skill":serde_json::from_str::<Value>(&manifest)?,"digest":digest,"operational":false}),
+    )
 }
 
 pub(crate) fn capabilities() -> Value {

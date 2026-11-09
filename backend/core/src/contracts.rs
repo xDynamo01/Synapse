@@ -79,12 +79,29 @@ pub enum Command {
     ModelRegister {
         model: ModelManifest,
     },
-    ModelsList,
+    ModelsList {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        after: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        limit: Option<u32>,
+    },
+    ModelGet {
+        model_id: String,
+    },
     SkillRegister {
         skill: SkillManifest,
     },
     SkillsList {
         scope: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        after: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        limit: Option<u32>,
+    },
+    SkillGet {
+        scope: String,
+        skill_id: String,
+        version: String,
     },
     CapabilitiesList,
     Inference {
