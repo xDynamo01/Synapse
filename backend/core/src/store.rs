@@ -40,7 +40,7 @@ impl Store {
         connection.pragma_update(None, "synchronous", "FULL")?;
         let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let version: u32 = tx.pragma_query_value(None, "user_version", |r| r.get(0))?;
-        if version > 1 {
+        if version > 2 {
             return Err(CoreError::new(
                 "unsupported_storage_version",
                 "Database schema is newer than this Core",
@@ -62,6 +62,9 @@ PRAGMA user_version=1;")?;
                 [workspace_root.to_string_lossy().as_ref()],
             )?;
         }
+        if version < 2 {
+            tx.execute_batch("CREATE TABLE ai_jobs(id TEXT PRIMARY KEY,kind TEXT NOT NULL,chat_id TEXT,model_id TEXT NOT NULL,status TEXT NOT NULL,result TEXT,error TEXT,user_message_id TEXT,assistant_message_id TEXT); PRAGMA user_version=2;")?;
+        }
         let recorded: String = tx.query_row(
             "SELECT value FROM metadata WHERE key='workspace_root'",
             [],
@@ -72,6 +75,20 @@ PRAGMA user_version=1;")?;
                 "workspace_mismatch",
                 "State belongs to another workspace",
             ));
+        }
+        let interrupted: Vec<String> = {
+            let mut statement =
+                tx.prepare("SELECT id FROM ai_jobs WHERE status='running' ORDER BY id")?;
+            statement
+                .query_map([], |r| r.get(0))?
+                .collect::<Result<_, _>>()?
+        };
+        for id in interrupted {
+            tx.execute(
+                "UPDATE ai_jobs SET status='interrupted',error='worker_interrupted' WHERE id=?1",
+                [&id],
+            )?;
+            event(&tx, "ai_job_interrupted", json!({"job_id":id}))?;
         }
         tx.commit()?;
         Ok(Self {

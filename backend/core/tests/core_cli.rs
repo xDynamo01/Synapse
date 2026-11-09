@@ -261,7 +261,7 @@ fn registries_persist_and_absent_execution_is_unavailable() {
     assert_eq!(out[0]["result"]["models"].as_array().unwrap().len(), 1);
     assert_eq!(out[1]["result"]["skills"].as_array().unwrap().len(), 1);
     ok(&out[2]);
-    error(&out[3], "capability_unavailable");
+    error(&out[3], "model_unavailable");
     error(&out[4], "capability_unavailable");
 }
 
@@ -595,7 +595,7 @@ fn newer_storage_and_different_workspace_are_rejected_at_startup() {
         .unwrap();
     assert_eq!(journal.to_lowercase(), "wal");
     assert_eq!(synchronous, 2);
-    db.pragma_update(None, "user_version", 2).unwrap();
+    db.pragma_update(None, "user_version", 3).unwrap();
     drop(db);
     let newer = Command::new(binary)
         .args([

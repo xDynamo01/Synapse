@@ -12,3 +12,7 @@ data/
 logs/
 secrets/
 /target/
+__pycache__/
+*.pyc
+python_install_*.log
+/backend/python/Python/

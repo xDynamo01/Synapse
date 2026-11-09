@@ -1,0 +1,1 @@
+"""Unprivileged local inference worker."""

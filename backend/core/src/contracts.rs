@@ -108,6 +108,17 @@ pub enum Command {
         model_id: String,
         prompt: String,
     },
+    ConversationStart {
+        chat_id: String,
+        model_id: String,
+        content: String,
+    },
+    JobGet {
+        job_id: String,
+    },
+    JobCancel {
+        job_id: String,
+    },
     MissionExecute {
         mission_id: String,
     },

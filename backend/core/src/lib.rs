@@ -1,9 +1,11 @@
 mod chats;
 pub mod contracts;
+mod conversation;
 mod core;
 mod memory;
 mod missions;
 mod registry;
 mod store;
+mod worker;
 pub use contracts::{Command, CoreError, CoreResult, Request, Response};
 pub use core::Core;
