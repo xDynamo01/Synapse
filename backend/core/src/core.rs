@@ -56,7 +56,7 @@ impl Core {
         let tx = self.store.transaction()?;
         let receipt: Option<(String, i64)> = tx
             .query_row(
-                "SELECT digest,LENGTH(response) FROM receipts WHERE request_id=?1",
+                "SELECT digest,LENGTH(CAST(response AS BLOB)) FROM receipts WHERE request_id=?1",
                 [&request.request_id],
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )

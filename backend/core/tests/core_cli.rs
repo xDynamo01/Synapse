@@ -404,6 +404,22 @@ fn large_chat_and_memory_histories_page_after_restart() {
 }
 
 #[test]
+fn oversized_historical_receipt_is_rejected_before_replay() {
+    let root = TempDir::new().unwrap();
+    let request = req("old-page", json!({"type":"health"}));
+    ok(&run(&root, &[request.clone()])[0]);
+    let db = rusqlite::Connection::open(root.path().join("state").join("core.sqlite3")).unwrap();
+    db.execute(
+        "UPDATE receipts SET response=?1 WHERE request_id='old-page'",
+        ["é".repeat(130_000)],
+    )
+    .unwrap();
+    drop(db);
+    let replay = run(&root, &[request]);
+    error(&replay[0], "response_too_large");
+}
+
+#[test]
 fn duplicate_envelope_and_command_keys_are_rejected() {
     let root = TempDir::new().unwrap();
     let input = concat!(
