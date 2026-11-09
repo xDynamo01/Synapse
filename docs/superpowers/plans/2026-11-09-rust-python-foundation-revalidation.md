@@ -1,5 +1,11 @@
 # Rust/Python foundation revalidation — Gate 00 reopened
 
+**DELIVERY ORDER SUPERSEDED, 2026-11-09:** the owner explicitly authorized
+integrated backend implementation now and frontend afterward. The prohibition
+on product scaffolding below is historical. See the Charter delivery amendment
+and `2026-11-09-integrated-backend.md`. Retain remaining checks as capability
+validation obligations; do not require UI feasibility before backend code.
+
 Date: 2026-11-09. Status: **REQUIRED / NOT RUN**. Gate 00: **BLOCKED**.
 
 The owner approved Rust native application/device integration and Python AI.
