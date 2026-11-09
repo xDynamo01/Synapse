@@ -122,6 +122,28 @@ pub enum Command {
     MissionExecute {
         mission_id: String,
     },
+    ToolExecute {
+        mission_id: String,
+        operation: ToolOperation,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ToolOperation {
+    List { path: String },
+    Read { path: String },
+    Create { path: String, content: String },
+    Replace { path: String, content: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SkillPin {
+    pub scope: String,
+    pub id: String,
+    pub version: String,
+    pub digest: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -165,6 +187,10 @@ pub struct MissionContract {
     pub actions: Vec<String>,
     pub resources: Vec<String>,
     pub rollback: String,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub artifact_digests: std::collections::BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skill: Option<SkillPin>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

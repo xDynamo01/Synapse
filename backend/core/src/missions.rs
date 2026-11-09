@@ -30,6 +30,19 @@ fn validate(contract: &MissionContract) -> CoreResult<()> {
     for resource in &contract.resources {
         bounded(resource, "resource", 512)?;
     }
+    if contract.artifact_digests.len() > 64
+        || contract.artifact_digests.iter().any(|(path, digest)| {
+            !contract.resources.contains(path)
+                || digest.len() != 64
+                || !digest
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        })
+    {
+        return Err(CoreError::invalid(
+            "Artifact digests must bind approved resources to lowercase SHA-256",
+        ));
+    }
     Ok(())
 }
 
@@ -40,6 +53,41 @@ pub(crate) fn propose(
 ) -> CoreResult<Value> {
     bounded(id, "mission_id", 128)?;
     validate(contract)?;
+    if let Some(pin) = &contract.skill {
+        if pin.scope != contract.scope {
+            return Err(CoreError::new(
+                "permission_denied",
+                "Skill scope differs from mission",
+            ));
+        }
+        let row: Option<(String, String)> = tx
+            .query_row(
+                "SELECT manifest,digest FROM skills WHERE scope=?1 AND id=?2 AND version=?3",
+                params![pin.scope, pin.id, pin.version],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+        let (manifest, digest) =
+            row.ok_or_else(|| CoreError::new("not_found", "Pinned Skill not found"))?;
+        let skill: crate::contracts::SkillManifest = serde_json::from_str(&manifest)?;
+        if digest != pin.digest || store::digest(&skill)? != digest {
+            return Err(CoreError::new(
+                "contract_conflict",
+                "Pinned Skill digest differs",
+            ));
+        }
+        if skill
+            .permissions
+            .iter()
+            .any(|p| !contract.actions.contains(p))
+            || skill.tools.iter().any(|p| !contract.actions.contains(p))
+        {
+            return Err(CoreError::new(
+                "permission_denied",
+                "Skill declarations exceed mission actions",
+            ));
+        }
+    }
     let duplicate: bool = tx.query_row(
         "SELECT EXISTS(SELECT 1 FROM missions WHERE id=?1)",
         [id],

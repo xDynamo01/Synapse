@@ -3,7 +3,7 @@ use crate::{
     contracts::*,
     conversation, memory, missions, registry,
     store::{self, Store},
-    worker,
+    tools, worker,
 };
 use rusqlite::{OptionalExtension, Transaction, params};
 use serde_json::{Value, json};
@@ -80,8 +80,21 @@ impl Core {
             ));
         }
         let digest = store::digest(request)?;
+        if matches!(
+            &request.command,
+            Command::ToolExecute {
+                operation: ToolOperation::Create { .. },
+                ..
+            }
+        ) {
+            return match self.create_artifact(request, &digest) {
+                Ok(response) => Ok(response),
+                Err(error) => self.cache_create_failure(request, &digest, error),
+            };
+        }
         let mut pending = None;
         let busy = self.active.is_some();
+        let state_dir = self.store.state_dir.clone();
         let tx = self.store.transaction()?;
         let receipt: Option<(String, i64)> = tx
             .query_row(
@@ -110,11 +123,23 @@ impl Core {
             )?;
             return Ok(serde_json::from_str(&response)?);
         }
+        let intent: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM tool_intents WHERE request_id=?1)",
+            [&request.request_id],
+            |r| r.get(0),
+        )?;
+        if intent {
+            return Err(CoreError::new(
+                "idempotency_conflict",
+                "Request ID is bound to a tool intent",
+            ));
+        }
         tx.execute_batch("SAVEPOINT domain_request")?;
         let outcome = dispatch_tx(
             &tx,
             &request.command,
             &self.workspace_root,
+            &state_dir,
             &request.request_id,
             busy,
             &mut pending,
@@ -157,6 +182,134 @@ impl Core {
         if let Some(launch) = pending {
             self.launch(launch);
         }
+        Ok(response)
+    }
+    fn cache_create_failure(
+        &mut self,
+        request: &Request,
+        digest: &str,
+        error: CoreError,
+    ) -> CoreResult<Response> {
+        let tx = self.store.transaction()?;
+        let bound: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM receipts WHERE request_id=?1 UNION ALL SELECT 1 FROM tool_intents WHERE request_id=?1)", [&request.request_id], |r| r.get(0))?;
+        let response =
+            Response::failure(Some(request.request_id.clone()), store::cursor(&tx)?, error);
+        if !bound {
+            tx.execute(
+                "INSERT INTO receipts(request_id,digest,response) VALUES(?1,?2,?3)",
+                params![
+                    request.request_id,
+                    digest,
+                    serde_json::to_string(&response)?
+                ],
+            )?;
+        }
+        tx.commit()?;
+        Ok(response)
+    }
+    fn create_artifact(&mut self, request: &Request, digest: &str) -> CoreResult<Response> {
+        let Command::ToolExecute {
+            mission_id,
+            operation,
+        } = &request.command
+        else {
+            unreachable!()
+        };
+        let ToolOperation::Create { content, .. } = operation else {
+            unreachable!()
+        };
+        let state = self.store.state_dir.clone();
+        let tx = self.store.transaction()?;
+        let prior: Option<(String, String)> = tx
+            .query_row(
+                "SELECT digest,response FROM receipts WHERE request_id=?1",
+                [&request.request_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+        if let Some((d, response)) = prior {
+            if d != digest {
+                return Err(CoreError::new(
+                    "idempotency_conflict",
+                    "Request ID already binds a different payload",
+                ));
+            }
+            return Ok(serde_json::from_str(&response)?);
+        }
+        let prior: Option<String> = tx
+            .query_row(
+                "SELECT request_digest FROM tool_intents WHERE request_id=?1",
+                [&request.request_id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if let Some(d) = prior {
+            if d != digest {
+                return Err(CoreError::new(
+                    "idempotency_conflict",
+                    "Request ID already binds a different payload",
+                ));
+            }
+            return Err(CoreError::new(
+                "recovery_required",
+                "Prepared artifact requires manual recovery",
+            ));
+        }
+        let pin = tools::authorize(&tx, mission_id, operation)?;
+        if content.len() > 32768 {
+            return Err(CoreError::invalid("Content exceeds 32768 bytes"));
+        }
+        let broker = tools::prepare(&self.workspace_root, &state, operation)?;
+        let target = broker.target();
+        let reserved: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM tool_intents WHERE target=?1 COLLATE NOCASE AND status='prepared')", [&target], |r| r.get(0))?;
+        if reserved {
+            return Err(CoreError::new(
+                "recovery_required",
+                "Target reserved by a prepared artifact",
+            ));
+        }
+        tx.execute("INSERT INTO tool_intents(request_id,request_digest,mission_id,target,content_digest,status) VALUES(?1,?2,?3,?4,?5,'prepared')", params![request.request_id,digest,mission_id,target,tools::sha(content.as_bytes())])?;
+        tx.commit()?;
+        #[cfg(feature = "test-fault-injection")]
+        if std::env::var_os("SYNAPSE_TEST_CRASH_AFTER_TOOL_PREPARE").is_some() {
+            std::process::exit(86);
+        }
+        let tx = self.store.transaction()?;
+        tools::authorize(&tx, mission_id, operation)?;
+        let mut result = broker.execute(operation).map_err(|_| {
+            CoreError::new(
+                "recovery_required",
+                "Artifact outcome is ambiguous; manual recovery required",
+            )
+        })?;
+        result["mission_id"] = json!(mission_id);
+        result["skill"] = pin;
+        store::event(
+            &tx,
+            "tool_effect",
+            json!({"request_id":request.request_id,"mission_id":mission_id,"action":"artifact_create","target":target,"sha256":result["sha256"],"skill":result["skill"]}),
+        )?;
+        tx.execute(
+            "UPDATE tool_intents SET status='confirmed' WHERE request_id=?1",
+            [&request.request_id],
+        )?;
+        let response = Response {
+            version: PROTOCOL_VERSION,
+            request_id: Some(request.request_id.clone()),
+            ok: true,
+            event_cursor: store::cursor(&tx)?,
+            result: Some(result),
+            error: None,
+        };
+        tx.execute(
+            "INSERT INTO receipts(request_id,digest,response) VALUES(?1,?2,?3)",
+            params![
+                request.request_id,
+                digest,
+                serde_json::to_string(&response)?
+            ],
+        )?;
+        tx.commit()?;
         Ok(response)
     }
     fn launch(&mut self, launch: conversation::Launch) {
@@ -228,13 +381,14 @@ fn dispatch_tx(
     tx: &Transaction<'_>,
     command: &Command,
     _workspace_root: &Path,
+    state_dir: &Path,
     request_id: &str,
     busy: bool,
     pending: &mut Option<conversation::Launch>,
 ) -> CoreResult<Value> {
     match command {
         Command::Health => Ok(
-            json!({"identity":"A.R.T.E.M.I.S.","protocol_version":1,"storage_schema":2,"journal_mode":"wal","synchronous":"full"}),
+            json!({"identity":"A.R.T.E.M.I.S.","protocol_version":1,"storage_schema":3,"journal_mode":"wal","synchronous":"full"}),
         ),
         Command::EventsRead { after, limit } => store::events_read(tx, *after, *limit),
         Command::ChatCreate {
@@ -350,5 +504,22 @@ fn dispatch_tx(
             "capability_unavailable",
             "Mission tool execution is not integrated",
         )),
+        Command::ToolExecute {
+            mission_id,
+            operation,
+        } => {
+            let pin = tools::authorize(tx, mission_id, operation)?;
+            let broker = tools::prepare(_workspace_root, state_dir, operation)?;
+            tools::authorize(tx, mission_id, operation)?;
+            let mut result = broker.execute(operation)?;
+            result["mission_id"] = json!(mission_id);
+            result["skill"] = pin;
+            store::event(
+                tx,
+                "tool_observation",
+                json!({"request_id":request_id,"mission_id":mission_id,"action":tools::details(operation).0,"target":broker.target(),"skill":result["skill"]}),
+            )?;
+            Ok(result)
+        }
     }
 }

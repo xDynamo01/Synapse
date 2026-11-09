@@ -1,0 +1,468 @@
+use crate::{
+    contracts::{CoreError, CoreResult, MissionContract, SkillManifest, ToolOperation},
+    store,
+};
+use rusqlite::{OptionalExtension, Transaction, params};
+use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
+use std::path::Path;
+
+pub(crate) fn sha(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .map(|x| format!("{x:02x}"))
+        .collect()
+}
+
+pub(crate) fn details(op: &ToolOperation) -> (&str, &str) {
+    match op {
+        ToolOperation::List { path } => ("workspace_list", path),
+        ToolOperation::Read { path } => ("workspace_read", path),
+        ToolOperation::Create { path, .. } => ("artifact_create", path),
+        ToolOperation::Replace { path, .. } => ("artifact_replace", path),
+    }
+}
+
+pub(crate) fn authorize(
+    tx: &Transaction<'_>,
+    mission: &str,
+    op: &ToolOperation,
+) -> CoreResult<Value> {
+    let row: Option<(String, String)> = tx
+        .query_row(
+            "SELECT contract,state FROM missions WHERE id=?1",
+            [mission],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?;
+    let (raw, state) = row.ok_or_else(|| CoreError::new("not_found", "Mission not found"))?;
+    if state != "approved" {
+        return Err(CoreError::new(
+            "mission_not_approved",
+            "Mission is not approved",
+        ));
+    }
+    let contract: MissionContract = serde_json::from_str(&raw)?;
+    let (action, path) = details(op);
+    if !contract.actions.iter().any(|a| a == action)
+        || !contract.resources.iter().any(|p| p == path)
+    {
+        return Err(CoreError::new(
+            "permission_denied",
+            "Action or exact resource is not approved",
+        ));
+    }
+    if matches!(op, ToolOperation::Replace { .. }) {
+        return Err(CoreError::new(
+            "capability_unavailable",
+            "Replacement needs backup and recovery",
+        ));
+    }
+    if matches!(op, ToolOperation::Create { .. }) && contract.rollback != "manual removal" {
+        return Err(CoreError::new(
+            "permission_denied",
+            "Create requires the manual removal rollback policy",
+        ));
+    }
+    if let ToolOperation::Create { content, .. } = op {
+        if contract.artifact_digests.get(path).map(String::as_str)
+            != Some(sha(content.as_bytes()).as_str())
+        {
+            return Err(CoreError::new(
+                "permission_denied",
+                "Artifact digest is not approved for this target",
+            ));
+        }
+    }
+    let mut pin_result = Value::Null;
+    if let Some(pin) = contract.skill {
+        let row: Option<(String, String)> = tx
+            .query_row(
+                "SELECT manifest,digest FROM skills WHERE scope=?1 AND id=?2 AND version=?3",
+                params![pin.scope, pin.id, pin.version],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+        let (raw, digest) =
+            row.ok_or_else(|| CoreError::new("contract_conflict", "Pinned Skill missing"))?;
+        let skill: SkillManifest = serde_json::from_str(&raw)?;
+        if pin.scope != contract.scope
+            || digest != pin.digest
+            || store::digest(&skill)? != digest
+            || !skill.tools.iter().any(|x| x == action)
+            || !skill.permissions.iter().any(|x| x == action)
+            || skill
+                .permissions
+                .iter()
+                .any(|x| !contract.actions.contains(x))
+            || skill.tools.iter().any(|x| !contract.actions.contains(x))
+        {
+            return Err(CoreError::new(
+                "permission_denied",
+                "Pinned Skill does not authorize this tool",
+            ));
+        }
+        pin_result = json!({"scope":pin.scope,"id":pin.id,"version":pin.version,"digest":digest});
+    }
+    Ok(pin_result)
+}
+
+#[cfg(not(windows))]
+pub(crate) fn prepare(_root: &Path, _state: &Path, _op: &ToolOperation) -> CoreResult<Broker> {
+    Err(CoreError::new(
+        "capability_unavailable",
+        "Workspace tools currently require Windows",
+    ))
+}
+#[cfg(not(windows))]
+pub(crate) struct Broker;
+#[cfg(not(windows))]
+impl Broker {
+    pub fn target(&self) -> String {
+        String::new()
+    }
+    pub fn execute(&self, _: &ToolOperation) -> CoreResult<Value> {
+        Err(CoreError::new("capability_unavailable", "Windows required"))
+    }
+}
+
+#[cfg(windows)]
+mod win {
+    use super::*;
+    use std::{
+        fs::{File, OpenOptions},
+        io::{Read, Seek, SeekFrom, Write},
+        os::windows::{ffi::OsStrExt, fs::OpenOptionsExt, io::AsRawHandle},
+        path::{Component, PathBuf},
+    };
+    use windows_sys::Win32::{
+        Foundation::HANDLE,
+        Globalization::{CSTR_EQUAL, CompareStringOrdinal},
+        Storage::FileSystem::*,
+    };
+
+    fn fail(message: &str) -> CoreError {
+        CoreError::new("path_denied", message)
+    }
+    fn same(a: &[u16], b: &[u16]) -> bool {
+        unsafe {
+            CompareStringOrdinal(a.as_ptr(), a.len() as i32, b.as_ptr(), b.len() as i32, 1)
+                == CSTR_EQUAL
+        }
+    }
+    fn within(path: &[u16], dir: &[u16]) -> bool {
+        path.len() >= dir.len()
+            && same(&path[..dir.len()], dir)
+            && (path.len() == dir.len()
+                || dir.last() == Some(&(b'\\' as u16))
+                || path[dir.len()] == b'\\' as u16)
+    }
+    fn final_path(file: &File) -> CoreResult<Vec<u16>> {
+        let handle = file.as_raw_handle() as HANDLE;
+        let needed = unsafe { GetFinalPathNameByHandleW(handle, std::ptr::null_mut(), 0, 0) };
+        if needed == 0 || needed > 32767 {
+            return Err(fail("Cannot resolve opened handle"));
+        }
+        let mut buf = vec![0u16; needed as usize + 1];
+        let len =
+            unsafe { GetFinalPathNameByHandleW(handle, buf.as_mut_ptr(), buf.len() as u32, 0) };
+        if len == 0 || len as usize >= buf.len() {
+            return Err(fail("Cannot resolve opened handle"));
+        }
+        buf.truncate(len as usize);
+        Ok(buf)
+    }
+    fn info(file: &File, directory: bool) -> CoreResult<()> {
+        let mut i: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+        if unsafe { GetFileInformationByHandle(file.as_raw_handle() as HANDLE, &mut i) } == 0 {
+            return Err(fail("Cannot inspect file handle"));
+        }
+        if unsafe { GetFileType(file.as_raw_handle() as HANDLE) } != FILE_TYPE_DISK
+            || i.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0
+            || (i.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY != 0) != directory
+            || (!directory && i.nNumberOfLinks != 1)
+        {
+            return Err(fail("Reparse point, hard link or unexpected type"));
+        }
+        Ok(())
+    }
+    fn open(path: &Path, directory: bool) -> CoreResult<File> {
+        let mut opts = OpenOptions::new();
+        opts.read(true)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+            .custom_flags(
+                FILE_FLAG_OPEN_REPARSE_POINT
+                    | if directory {
+                        FILE_FLAG_BACKUP_SEMANTICS
+                    } else {
+                        0
+                    },
+            );
+        let f = opts.open(path).map_err(|_| fail("Cannot open path"))?;
+        info(&f, directory)?;
+        Ok(f)
+    }
+    fn pin_ancestors(path: &Path, dirs: &mut Vec<File>) -> CoreResult<Vec<u16>> {
+        let mut ancestors: Vec<&Path> = path.ancestors().filter(|p| p.has_root()).collect();
+        ancestors.reverse();
+        let volume = ancestors
+            .first()
+            .ok_or_else(|| fail("Absolute directory required"))?;
+        let mut wide: Vec<u16> = volume.as_os_str().encode_wide().collect();
+        wide.push(0);
+        let mut filesystem = [0u16; 64];
+        if unsafe { GetDriveTypeW(wide.as_ptr()) } != 3
+            || unsafe {
+                GetVolumeInformationW(
+                    wide.as_ptr(),
+                    std::ptr::null_mut(),
+                    0,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    filesystem.as_mut_ptr(),
+                    filesystem.len() as u32,
+                )
+            } == 0
+            || !same(
+                &filesystem[..filesystem
+                    .iter()
+                    .position(|x| *x == 0)
+                    .unwrap_or(filesystem.len())],
+                &[b'N' as u16, b'T' as u16, b'F' as u16, b'S' as u16],
+            )
+        {
+            return Err(CoreError::new(
+                "capability_unavailable",
+                "Workspace tools require local fixed NTFS volumes",
+            ));
+        }
+        let mut prior: Option<Vec<u16>> = None;
+        for ancestor in ancestors {
+            let f = open(ancestor, true)?;
+            let actual = final_path(&f)?;
+            if let Some(parent) = &prior {
+                if !within(&actual, parent) {
+                    return Err(fail("Directory identity changed"));
+                }
+            }
+            prior = Some(actual);
+            dirs.push(f);
+        }
+        prior.ok_or_else(|| fail("Absolute directory required"))
+    }
+    fn parts(raw: &str) -> CoreResult<Vec<String>> {
+        if raw == "." {
+            return Ok(vec![]);
+        }
+        if raw.is_empty() || raw.len() > 512 || raw.contains('\\') || raw.contains(':') {
+            return Err(fail("Invalid relative path"));
+        }
+        let path = Path::new(raw);
+        let mut out = Vec::new();
+        for c in path.components() {
+            let Component::Normal(s) = c else {
+                return Err(fail("Invalid path component"));
+            };
+            let s = s.to_str().ok_or_else(|| fail("Invalid path encoding"))?;
+            if s.is_empty()
+                || s.ends_with('.')
+                || s.ends_with(' ')
+                || !s
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"._- ".contains(&b))
+            {
+                return Err(fail("Invalid path component"));
+            }
+            let stem = s.split('.').next().unwrap().to_ascii_uppercase();
+            if [
+                "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7",
+                "COM8", "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8",
+                "LPT9",
+            ]
+            .contains(&stem.as_str())
+            {
+                return Err(fail("Reserved name"));
+            }
+            out.push(s.to_string());
+        }
+        if raw
+            .split('/')
+            .any(|x| x.is_empty() || x == "." || x == "..")
+            || out.is_empty()
+        {
+            return Err(fail("Invalid relative path"));
+        }
+        Ok(out)
+    }
+    pub(crate) struct Broker {
+        _dirs: Vec<File>,
+        parent: PathBuf,
+        leaf: Option<String>,
+        target: String,
+        root: Vec<u16>,
+        state: Vec<u16>,
+    }
+    impl Broker {
+        pub fn target(&self) -> String {
+            self.target.clone()
+        }
+        pub fn execute(&self, op: &ToolOperation) -> CoreResult<Value> {
+            let path = self
+                .leaf
+                .as_ref()
+                .map_or(self.parent.clone(), |x| self.parent.join(x));
+            match op {
+                ToolOperation::List { .. } => {
+                    let mut entries = Vec::new();
+                    let mut scanned = 0;
+                    for item in
+                        std::fs::read_dir(&path).map_err(|_| fail("Cannot list directory"))?
+                    {
+                        scanned += 1;
+                        if scanned > 128 {
+                            return Err(CoreError::new(
+                                "response_too_large",
+                                "Directory exceeds 128 entries",
+                            ));
+                        }
+                        let item = item.map_err(|_| fail("Cannot list directory"))?;
+                        let n = item.file_name().to_string_lossy().into_owned();
+                        if entries.len() >= 128 {
+                            return Err(CoreError::new(
+                                "response_too_large",
+                                "Directory exceeds 128 entries",
+                            ));
+                        }
+                        let child = item.path();
+                        if let Ok(f) = open(&child, true).or_else(|_| open(&child, false)) {
+                            let actual = final_path(&f)?;
+                            if within(&actual, &self.root) && !within(&actual, &self.state) {
+                                entries.push(n);
+                            }
+                        }
+                    }
+                    entries.sort();
+                    Ok(json!({"entries":entries}))
+                }
+                ToolOperation::Read { .. } => {
+                    let f = open(&path, false)?;
+                    let actual = final_path(&f)?;
+                    if !within(&actual, &self.root) || within(&actual, &self.state) {
+                        return Err(fail("Protected or outside workspace"));
+                    }
+                    let mut bytes = Vec::new();
+                    f.take(32769)
+                        .read_to_end(&mut bytes)
+                        .map_err(|_| fail("Cannot read file"))?;
+                    if bytes.len() > 32768 {
+                        return Err(CoreError::new(
+                            "response_too_large",
+                            "File exceeds read limit",
+                        ));
+                    }
+                    let content = String::from_utf8(bytes.clone())
+                        .map_err(|_| fail("Only UTF-8 files are supported"))?;
+                    Ok(json!({"content":content,"sha256":sha(&bytes),"bytes":bytes.len()}))
+                }
+                ToolOperation::Create { content, .. } => {
+                    if content.len() > 32768 {
+                        return Err(CoreError::invalid("Content exceeds 32768 bytes"));
+                    }
+                    let mut opts = OpenOptions::new();
+                    opts.read(true)
+                        .write(true)
+                        .create_new(true)
+                        .share_mode(FILE_SHARE_READ)
+                        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+                    let mut f = opts
+                        .open(&path)
+                        .map_err(|_| CoreError::new("effect_failed", "Cannot create new file"))?;
+                    info(&f, false)?;
+                    let actual = final_path(&f)?;
+                    if !within(&actual, &self.root) || within(&actual, &self.state) {
+                        return Err(fail("Protected or outside workspace"));
+                    }
+                    f.write_all(content.as_bytes())
+                        .and_then(|_| f.sync_all())
+                        .and_then(|_| f.seek(SeekFrom::Start(0)).map(|_| ()))
+                        .map_err(|_| {
+                            CoreError::new("effect_failed", "Cannot write and flush artifact")
+                        })?;
+                    let mut readback = Vec::new();
+                    f.take(32769)
+                        .read_to_end(&mut readback)
+                        .map_err(|_| CoreError::new("effect_failed", "Cannot read artifact"))?;
+                    if readback != content.as_bytes() {
+                        return Err(CoreError::new("effect_failed", "Artifact readback differs"));
+                    }
+                    Ok(
+                        json!({"sha256":sha(&readback),"bytes":readback.len(),"readback_verified":true}),
+                    )
+                }
+                ToolOperation::Replace { .. } => Err(CoreError::new(
+                    "capability_unavailable",
+                    "Replacement unavailable",
+                )),
+            }
+        }
+    }
+    pub(crate) fn prepare(root: &Path, state: &Path, op: &ToolOperation) -> CoreResult<Broker> {
+        let (_, raw) = details(op);
+        let components = parts(raw)?;
+        let mut dirs = Vec::new();
+        let root_real = pin_ancestors(root, &mut dirs)?;
+        let state_real = pin_ancestors(state, &mut dirs)?;
+        let is_list = matches!(op, ToolOperation::List { .. });
+        if components.is_empty() && !is_list {
+            return Err(fail("File path required"));
+        }
+        let parent_count = if is_list {
+            components.len()
+        } else {
+            components.len() - 1
+        };
+        let mut current = root.to_path_buf();
+        for part in &components[..parent_count] {
+            current.push(part);
+            let f = open(&current, true)?;
+            let actual = final_path(&f)?;
+            if !within(&actual, &root_real) || within(&actual, &state_real) {
+                return Err(fail("Protected or outside workspace"));
+            }
+            dirs.push(f);
+        }
+        let parent_real = final_path(dirs.last().unwrap())?;
+        // With no components the last retained handle is the state handle, not the root.
+        let parent_real = if parent_count == 0 {
+            root_real.clone()
+        } else {
+            parent_real
+        };
+        if within(&parent_real, &state_real) {
+            return Err(fail("Protected state"));
+        }
+        let leaf = if is_list {
+            None
+        } else {
+            components.last().cloned()
+        };
+        let mut target = String::from_utf16(&parent_real).map_err(|_| fail("Invalid path"))?;
+        if let Some(l) = &leaf {
+            if !target.ends_with('\\') {
+                target.push('\\');
+            }
+            target.push_str(l);
+        }
+        Ok(Broker {
+            _dirs: dirs,
+            parent: current,
+            leaf,
+            target,
+            root: root_real,
+            state: state_real,
+        })
+    }
+}
+#[cfg(windows)]
+pub(crate) use win::prepare;

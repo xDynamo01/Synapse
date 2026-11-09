@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
     fs::{File, OpenOptions},
-    path::Path,
+    path::{Path, PathBuf},
     time::Duration,
 };
 
@@ -13,6 +13,7 @@ use std::{
 pub(crate) struct Store {
     connection: Connection,
     _ownership_lock: File,
+    pub(crate) state_dir: PathBuf,
 }
 impl Store {
     pub(crate) fn open(state_dir: &Path, workspace_root: &Path) -> CoreResult<Self> {
@@ -40,7 +41,7 @@ impl Store {
         connection.pragma_update(None, "synchronous", "FULL")?;
         let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let version: u32 = tx.pragma_query_value(None, "user_version", |r| r.get(0))?;
-        if version > 2 {
+        if version > 3 {
             return Err(CoreError::new(
                 "unsupported_storage_version",
                 "Database schema is newer than this Core",
@@ -64,6 +65,9 @@ PRAGMA user_version=1;")?;
         }
         if version < 2 {
             tx.execute_batch("CREATE TABLE ai_jobs(id TEXT PRIMARY KEY,kind TEXT NOT NULL,chat_id TEXT,model_id TEXT NOT NULL,status TEXT NOT NULL,result TEXT,error TEXT,user_message_id TEXT,assistant_message_id TEXT); PRAGMA user_version=2;")?;
+        }
+        if version < 3 {
+            tx.execute_batch("CREATE TABLE tool_intents(request_id TEXT PRIMARY KEY, request_digest TEXT NOT NULL, mission_id TEXT NOT NULL, target TEXT NOT NULL, content_digest TEXT NOT NULL, status TEXT NOT NULL); CREATE UNIQUE INDEX active_tool_target ON tool_intents(target) WHERE status='prepared'; PRAGMA user_version=3;")?;
         }
         let recorded: String = tx.query_row(
             "SELECT value FROM metadata WHERE key='workspace_root'",
@@ -94,6 +98,7 @@ PRAGMA user_version=1;")?;
         Ok(Self {
             connection,
             _ownership_lock: ownership_lock,
+            state_dir: canonical_state,
         })
     }
     /// Domain extensions share this writer and one transaction per dispatcher request.

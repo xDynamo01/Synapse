@@ -51,6 +51,400 @@ fn error(v: &Value, code: &str) {
     assert_eq!(v["error"]["code"], code, "{v}");
 }
 
+#[cfg(windows)]
+fn tool(id: &str, mission: &str, kind: &str, path: &str, content: Option<&str>) -> Value {
+    let mut operation = json!({"type":kind,"path":path});
+    if let Some(content) = content {
+        operation["content"] = json!(content);
+    }
+    req(
+        id,
+        json!({"type":"tool_execute","mission_id":mission,"operation":operation}),
+    )
+}
+
+#[cfg(windows)]
+fn approved_tool_mission(root: &TempDir, mission: &str, resources: Value, skill: Option<Value>) {
+    use sha2::{Digest, Sha256};
+    let mut contract = json!({"version":1,"scope":"project:a","objective":"Work on approved files","actions":["workspace_list","workspace_read","artifact_create","artifact_replace"],"resources":resources,"rollback":"manual removal"});
+    let mut digests = serde_json::Map::new();
+    for resource in resources.as_array().unwrap() {
+        let path = resource.as_str().unwrap();
+        let content = match path {
+            "report.txt" => "hello",
+            "existing.txt" => "changed",
+            "file.txt" => "pinned",
+            "new.txt" => "no",
+            _ => "data",
+        };
+        let digest = Sha256::digest(content.as_bytes())
+            .iter()
+            .map(|x| format!("{x:02x}"))
+            .collect::<String>();
+        digests.insert(path.into(), json!(digest));
+    }
+    contract["artifact_digests"] = json!(digests);
+    if let Some(skill) = skill {
+        contract["skill"] = skill;
+    }
+    let proposal = run(
+        root,
+        &[req(
+            &format!("p-{mission}"),
+            json!({"type":"mission_propose","mission_id":mission,"contract":contract}),
+        )],
+    );
+    ok(&proposal[0]);
+    let digest = proposal[0]["result"]["contract_digest"].as_str().unwrap();
+    let approval = run(
+        root,
+        &[req(
+            &format!("a-{mission}"),
+            json!({"type":"mission_approve","mission_id":mission,"contract_digest":digest}),
+        )],
+    );
+    ok(&approval[0]);
+}
+
+#[cfg(windows)]
+#[test]
+fn tool_create_read_list_and_stop_survive_restart() {
+    let root = TempDir::new().unwrap();
+    approved_tool_mission(&root, "m", json!([".", "report.txt"]), None);
+    let create = tool("create", "m", "create", "report.txt", Some("hello"));
+    let wrong = run(
+        &root,
+        &[tool(
+            "wrong-digest",
+            "m",
+            "create",
+            "report.txt",
+            Some("different"),
+        )],
+    );
+    error(&wrong[0], "permission_denied");
+    assert!(!root.path().join("report.txt").exists());
+    let out = run(
+        &root,
+        &[
+            create.clone(),
+            tool("read", "m", "read", "report.txt", None),
+            tool("list", "m", "list", ".", None),
+        ],
+    );
+    for v in &out {
+        ok(v);
+    }
+    assert_eq!(
+        out[0]["result"]["sha256"],
+        "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+    );
+    assert_eq!(out[1]["result"]["content"], "hello");
+    assert_eq!(out[1]["result"]["sha256"], out[0]["result"]["sha256"]);
+    assert!(
+        out[2]["result"]["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|x| x == "report.txt")
+    );
+    assert!(
+        !out[2]["result"]["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|x| x == "state")
+    );
+    let next = run(
+        &root,
+        &[
+            create.clone(),
+            tool("create", "m", "create", "report.txt", Some("changed")),
+            req(
+                "revoke",
+                json!({"type":"mission_revoke","mission_id":"m","reason":"stop"}),
+            ),
+            tool("after", "m", "read", "report.txt", None),
+        ],
+    );
+    assert_eq!(out[0], next[0]);
+    error(&next[1], "idempotency_conflict");
+    ok(&next[2]);
+    error(&next[3], "mission_not_approved");
+    let after = run(
+        &root,
+        &[
+            create,
+            tool(
+                "after-restart",
+                "m",
+                "create",
+                "report.txt",
+                Some("overwrite"),
+            ),
+        ],
+    );
+    assert_eq!(out[0], after[0]);
+    error(&after[1], "mission_not_approved");
+    assert_eq!(
+        std::fs::read_to_string(root.path().join("report.txt")).unwrap(),
+        "hello"
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn tool_denies_unapproved_paths_state_links_overwrite_and_replace() {
+    let root = TempDir::new().unwrap();
+    std::fs::write(root.path().join("existing.txt"), "original").unwrap();
+    let proposed = json!({"version":1,"scope":"project:a","objective":"Pending","actions":["workspace_read"],"resources":["existing.txt"],"rollback":"manual removal"});
+    ok(&run(
+        &root,
+        &[req(
+            "pending",
+            json!({"type":"mission_propose","mission_id":"pending","contract":proposed}),
+        )],
+    )[0]);
+    error(
+        &run(
+            &root,
+            &[tool("unapproved", "pending", "read", "existing.txt", None)],
+        )[0],
+        "mission_not_approved",
+    );
+    approved_tool_mission(
+        &root,
+        "m",
+        json!([
+            "existing.txt",
+            "state/core.sqlite3",
+            "../outside",
+            "link.txt",
+            "absent.txt",
+            "file:stream"
+        ]),
+        None,
+    );
+    std::fs::hard_link(
+        root.path().join("state/core.sqlite3"),
+        root.path().join("link.txt"),
+    )
+    .unwrap();
+    let out = run(
+        &root,
+        &[
+            tool("denied-resource", "m", "read", "other.txt", None),
+            tool("traversal", "m", "read", "../outside", None),
+            tool("ads", "m", "read", "file:stream", None),
+            tool("state", "m", "read", "state/core.sqlite3", None),
+            tool("hardlink", "m", "read", "link.txt", None),
+            tool("replace", "m", "replace", "existing.txt", Some("changed")),
+            tool("overwrite", "m", "create", "existing.txt", Some("changed")),
+        ],
+    );
+    error(&out[0], "permission_denied");
+    for i in 1..=4 {
+        error(&out[i], "path_denied");
+    }
+    error(&out[5], "capability_unavailable");
+    error(&out[6], "recovery_required");
+    assert_eq!(
+        std::fs::read_to_string(root.path().join("existing.txt")).unwrap(),
+        "original"
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn tool_rejects_junction_and_cancelled_mission() {
+    let root = TempDir::new().unwrap();
+    let outside = TempDir::new().unwrap();
+    std::fs::write(outside.path().join("secret.txt"), "secret").unwrap();
+    let link = root.path().join("junction");
+    let status = Command::new("cmd")
+        .args(["/c", "mklink", "/J"])
+        .arg(&link)
+        .arg(outside.path())
+        .output()
+        .unwrap();
+    assert!(
+        status.status.success(),
+        "{}",
+        String::from_utf8_lossy(&status.stderr)
+    );
+    approved_tool_mission(&root, "m", json!(["junction/secret.txt", "new.txt"]), None);
+    let out = run(
+        &root,
+        &[
+            tool("junction", "m", "read", "junction/secret.txt", None),
+            req(
+                "cancel",
+                json!({"type":"mission_cancel","mission_id":"m","reason":"stop"}),
+            ),
+        ],
+    );
+    error(&out[0], "path_denied");
+    ok(&out[1]);
+    let out = run(
+        &root,
+        &[tool("cancelled", "m", "create", "new.txt", Some("no"))],
+    );
+    error(&out[0], "mission_not_approved");
+    assert!(!root.path().join("new.txt").exists());
+}
+
+#[cfg(windows)]
+#[test]
+fn skill_version_cannot_be_replaced_or_broaden_mission() {
+    let root = TempDir::new().unwrap();
+    let skill = json!({"id":"helper","version":"1","scope":"project:a","provenance":"local","tools":["artifact_create"],"permissions":["artifact_create"],"instructions":"First"});
+    let registered = run(
+        &root,
+        &[req("one", json!({"type":"skill_register","skill":skill}))],
+    );
+    ok(&registered[0]);
+    let digest = registered[0]["result"]["digest"].clone();
+    let mut changed = skill.clone();
+    changed["instructions"] = json!("Changed");
+    error(
+        &run(
+            &root,
+            &[req(
+                "replace-skill",
+                json!({"type":"skill_register","skill":changed}),
+            )],
+        )[0],
+        "already_exists",
+    );
+    changed["version"] = json!("2");
+    ok(&run(
+        &root,
+        &[req(
+            "new-skill",
+            json!({"type":"skill_register","skill":changed}),
+        )],
+    )[0]);
+    let pin = json!({"scope":"project:a","id":"helper","version":"1","digest":digest});
+    approved_tool_mission(&root, "m", json!(["file.txt"]), Some(pin.clone()));
+    let out = run(
+        &root,
+        &[tool(
+            "create-pinned",
+            "m",
+            "create",
+            "file.txt",
+            Some("pinned"),
+        )],
+    );
+    ok(&out[0]);
+    assert_eq!(out[0]["result"]["skill"]["version"], "1");
+    let bad = json!({"version":1,"scope":"project:a","objective":"narrow","actions":["workspace_read"],"resources":["file.txt"],"rollback":"manual removal","skill":pin});
+    error(
+        &run(
+            &root,
+            &[req(
+                "narrow",
+                json!({"type":"mission_propose","mission_id":"narrow","contract":bad}),
+            )],
+        )[0],
+        "permission_denied",
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn prepared_intent_is_never_replayed_and_skill_is_pinned() {
+    use sha2::{Digest, Sha256};
+    let root = TempDir::new().unwrap();
+    let skill = json!({"id":"helper","version":"1","scope":"project:a","provenance":"local manifest","tools":["artifact_create"],"permissions":["artifact_create"],"instructions":"Use approved creation."});
+    let registered = run(
+        &root,
+        &[req("s", json!({"type":"skill_register","skill":skill}))],
+    );
+    ok(&registered[0]);
+    let pin = json!({"scope":"project:a","id":"helper","version":"1","digest":registered[0]["result"]["digest"]});
+    approved_tool_mission(&root, "m", json!(["owned.txt", "pending.txt"]), Some(pin));
+    let out = run(
+        &root,
+        &[
+            tool("read-denied", "m", "read", "owned.txt", None),
+            tool("owned", "m", "create", "owned.txt", Some("data")),
+        ],
+    );
+    error(&out[0], "permission_denied");
+    ok(&out[1]);
+    assert_eq!(out[1]["result"]["skill"]["version"], "1");
+    let request = tool("pending-effect", "m", "create", "pending.txt", Some("data"));
+    let parsed: synapse_core::Request = serde_json::from_value(request.clone()).unwrap();
+    let digest = Sha256::digest(serde_json::to_vec(&parsed).unwrap())
+        .iter()
+        .map(|x| format!("{x:02x}"))
+        .collect::<String>();
+    let target = root
+        .path()
+        .canonicalize()
+        .unwrap()
+        .join("pending.txt")
+        .to_string_lossy()
+        .into_owned();
+    let db = rusqlite::Connection::open(root.path().join("state/core.sqlite3")).unwrap();
+    db.execute("INSERT INTO tool_intents(request_id,request_digest,mission_id,target,content_digest,status) VALUES(?1,?2,'m',?3,'fixture','prepared')",rusqlite::params!["pending-effect",digest,target]).unwrap();
+    drop(db);
+    let out = run(
+        &root,
+        &[
+            request.clone(),
+            tool("another", "m", "create", "pending.txt", Some("data")),
+            tool(
+                "pending-effect",
+                "m",
+                "create",
+                "pending.txt",
+                Some("changed"),
+            ),
+            req("pending-effect", json!({"type":"health"})),
+        ],
+    );
+    error(&out[0], "recovery_required");
+    error(&out[1], "recovery_required");
+    error(&out[2], "idempotency_conflict");
+    error(&out[3], "idempotency_conflict");
+    assert!(!root.path().join("pending.txt").exists());
+}
+
+#[cfg(all(windows, feature = "test-fault-injection"))]
+#[test]
+fn tool_crash_after_durable_prepare_does_not_apply_or_replay() {
+    let root = TempDir::new().unwrap();
+    approved_tool_mission(&root, "m", json!(["crash.txt"]), None);
+    let request = tool("crash-request", "m", "create", "crash.txt", Some("data"));
+    let mut child = Command::new(env!("CARGO_BIN_EXE_synapse-backend"))
+        .args([
+            "--state-dir",
+            root.path().join("state").to_str().unwrap(),
+            "--workspace",
+            root.path().to_str().unwrap(),
+        ])
+        .env("SYNAPSE_TEST_CRASH_AFTER_TOOL_PREPARE", "1")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    writeln!(child.stdin.take().unwrap(), "{request}").unwrap();
+    assert_eq!(child.wait().unwrap().code(), Some(86));
+    assert!(!root.path().join("crash.txt").exists());
+    let out = run(
+        &root,
+        &[
+            request,
+            tool("new-id", "m", "create", "crash.txt", Some("data")),
+        ],
+    );
+    error(&out[0], "recovery_required");
+    error(&out[1], "recovery_required");
+    assert!(!root.path().join("crash.txt").exists());
+}
+
 #[test]
 fn strict_protocol_and_bounds_recover_for_next_request() {
     let root = TempDir::new().unwrap();
@@ -595,7 +989,7 @@ fn newer_storage_and_different_workspace_are_rejected_at_startup() {
         .unwrap();
     assert_eq!(journal.to_lowercase(), "wal");
     assert_eq!(synchronous, 2);
-    db.pragma_update(None, "user_version", 3).unwrap();
+    db.pragma_update(None, "user_version", 4).unwrap();
     drop(db);
     let newer = Command::new(binary)
         .args([

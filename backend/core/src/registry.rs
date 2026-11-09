@@ -217,6 +217,7 @@ pub(crate) fn capabilities() -> Value {
         {"id":"model_registry","status":"operational"},
         {"id":"skill_registry","status":"operational"},
         {"id":"inference","status":"implemented","requires":"registered lm_studio chat model and configured Python executable"},
+        {"id":"workspace_tools","status":"implemented","requires":"Windows and an approved exact mission; create-new only"},
         {"id":"mission_execution","status":"unavailable"}
     ]})
 }

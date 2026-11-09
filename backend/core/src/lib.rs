@@ -6,6 +6,7 @@ mod memory;
 mod missions;
 mod registry;
 mod store;
+mod tools;
 mod worker;
 pub use contracts::{Command, CoreError, CoreResult, Request, Response};
 pub use core::Core;
