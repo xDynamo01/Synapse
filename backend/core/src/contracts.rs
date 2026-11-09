@@ -3,6 +3,7 @@ use serde_json::Value;
 
 pub const PROTOCOL_VERSION: u32 = 1;
 pub const MAX_REQUEST_BYTES: usize = 65_536;
+pub const MAX_RESULT_BYTES: usize = 240_000;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -27,6 +28,10 @@ pub enum Command {
     },
     ChatGet {
         chat_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        after: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        limit: Option<u32>,
     },
     MessageAppend {
         chat_id: String,
@@ -47,6 +52,10 @@ pub enum Command {
         scope: String,
         context_reference: String,
         key: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        after_revision: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        limit: Option<u32>,
     },
     MissionPropose {
         mission_id: String,

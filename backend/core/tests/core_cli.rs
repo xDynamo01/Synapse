@@ -1,6 +1,6 @@
 use serde_json::{Value, json};
 use std::{
-    io::Write,
+    io::{BufRead, BufReader, Write},
     process::{Command, Stdio},
 };
 use tempfile::TempDir;
@@ -24,13 +24,11 @@ fn raw(root: &TempDir, input: &str) -> Vec<Value> {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(input.as_bytes())
-        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let input = input.as_bytes().to_vec();
+    let writer = std::thread::spawn(move || stdin.write_all(&input));
     let output = child.wait_with_output().unwrap();
+    writer.join().unwrap().unwrap();
     assert!(
         output.status.success(),
         "{}",
@@ -275,6 +273,134 @@ fn request_limit_counts_payload_not_line_ending() {
     let output = raw(&root, &line);
     assert_eq!(output.len(), 1);
     ok(&output[0]);
+    let crlf = format!("{}{}\r\n", request, " ".repeat(65_536 - request.len()));
+    let output = raw(&root, &crlf);
+    assert_eq!(output.len(), 1);
+    ok(&output[0]);
+}
+
+#[test]
+fn state_directory_has_one_live_process_owner() {
+    let root = TempDir::new().unwrap();
+    let state = root.path().join("state");
+    let binary = env!("CARGO_BIN_EXE_synapse-backend");
+    let mut owner = Command::new(binary)
+        .args([
+            "--state-dir",
+            state.to_str().unwrap(),
+            "--workspace",
+            root.path().to_str().unwrap(),
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    owner
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(format!("{}\n", req("owner", json!({"type":"health"}))).as_bytes())
+        .unwrap();
+    owner.stdin.as_mut().unwrap().flush().unwrap();
+    let mut owner_output = String::new();
+    BufReader::new(owner.stdout.take().unwrap())
+        .read_line(&mut owner_output)
+        .unwrap();
+    ok(&serde_json::from_str::<Value>(&owner_output).unwrap());
+    let alias = state.join("..").join("state");
+    let refused = Command::new(binary)
+        .args([
+            "--state-dir",
+            alias.to_str().unwrap(),
+            "--workspace",
+            root.path().to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("state_in_use"));
+    owner.kill().unwrap();
+    owner.wait().unwrap();
+    let reopened = run(&root, &[req("after-death", json!({"type":"health"}))]);
+    ok(&reopened[0]);
+}
+
+#[test]
+fn large_chat_and_memory_histories_page_after_restart() {
+    let root = TempDir::new().unwrap();
+    let content = "x".repeat(20_000);
+    let mut writes = vec![req(
+        "create",
+        json!({"type":"chat_create","chat_id":"paged","title":"History","scope":"project:a"}),
+    )];
+    for n in 0..12 {
+        writes.push(req(&format!("message-{n}"),json!({"type":"message_append","chat_id":"paged","message_id":format!("msg-{n}"),"role":"user","content":content})));
+        writes.push(req(&format!("memory-{n}"),json!({"type":"memory_put","scope":"project:a","key":"history","kind":"fact","content":content,"expected_revision":n,"provenance":{"source_type":"human","source_id":"review","evidence":"Large record"},"status":"active"})));
+    }
+    run(&root, &writes).iter().for_each(ok);
+    let first_request = req(
+        "chat-page-0",
+        json!({"type":"chat_get","chat_id":"paged","limit":100}),
+    );
+    let first = run(&root, &[first_request.clone()]);
+    ok(&first[0]);
+    assert_eq!(first[0]["result"]["has_more"], true);
+    assert!(first[0]["result"]["messages"].as_array().unwrap().len() < 12);
+    assert_eq!(run(&root, &[first_request])[0], first[0]);
+    let mut cursor = 0;
+    let mut seen = Vec::new();
+    for page in 0..12 {
+        let out = run(
+            &root,
+            &[req(
+                &format!("chat-page-{}", page + 1),
+                json!({"type":"chat_get","chat_id":"paged","after":cursor,"limit":100}),
+            )],
+        );
+        ok(&out[0]);
+        assert!(out[0].to_string().len() <= 242_000);
+        seen.extend(
+            out[0]["result"]["messages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|m| m["message_id"].as_str().unwrap().to_owned()),
+        );
+        cursor = out[0]["result"]["next_cursor"].as_u64().unwrap();
+        if out[0]["result"]["has_more"] == false {
+            break;
+        }
+    }
+    assert_eq!(
+        seen,
+        (0..12).map(|n| format!("msg-{n}")).collect::<Vec<_>>()
+    );
+    let mut revision = 0;
+    let mut seen_revisions = Vec::new();
+    for page in 0..12 {
+        let out = run(
+            &root,
+            &[req(
+                &format!("memory-page-{page}"),
+                json!({"type":"memory_get","scope":"project:a","context_reference":"project:a","key":"history","after_revision":revision,"limit":100}),
+            )],
+        );
+        ok(&out[0]);
+        assert!(out[0].to_string().len() <= 242_000);
+        seen_revisions.extend(
+            out[0]["result"]["revisions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|r| r["revision"].as_u64().unwrap()),
+        );
+        revision = out[0]["result"]["next_revision"].as_u64().unwrap();
+        if out[0]["result"]["has_more"] == false {
+            break;
+        }
+    }
+    assert_eq!(seen_revisions, (1..=12).collect::<Vec<_>>());
 }
 
 #[test]

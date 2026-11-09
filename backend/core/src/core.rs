@@ -54,24 +54,44 @@ impl Core {
         }
         let digest = store::digest(request)?;
         let tx = self.store.transaction()?;
-        let receipt: Option<(String, String)> = tx
+        let receipt: Option<(String, i64)> = tx
             .query_row(
-                "SELECT digest,response FROM receipts WHERE request_id=?1",
+                "SELECT digest,LENGTH(response) FROM receipts WHERE request_id=?1",
                 [&request.request_id],
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .optional()?;
-        if let Some((prior, response)) = receipt {
+        if let Some((prior, response_len)) = receipt {
             if prior != digest {
                 return Err(CoreError::new(
                     "idempotency_conflict",
                     "Request ID already binds a different payload",
                 ));
             }
+            if response_len < 0 || response_len as usize > MAX_RESULT_BYTES + 2_000 {
+                return Err(CoreError::new(
+                    "response_too_large",
+                    "Stored response exceeds byte budget",
+                ));
+            }
+            let response: String = tx.query_row(
+                "SELECT response FROM receipts WHERE request_id=?1",
+                [&request.request_id],
+                |r| r.get(0),
+            )?;
             return Ok(serde_json::from_str(&response)?);
         }
         tx.execute_batch("SAVEPOINT domain_request")?;
-        let outcome = dispatch_tx(&tx, &request.command, &self.workspace_root);
+        let outcome = dispatch_tx(&tx, &request.command, &self.workspace_root).and_then(|result| {
+            if serde_json::to_vec(&result)?.len() > MAX_RESULT_BYTES {
+                Err(CoreError::new(
+                    "response_too_large",
+                    "Result exceeds response byte budget",
+                ))
+            } else {
+                Ok(result)
+            }
+        });
         if outcome.is_err() {
             tx.execute_batch("ROLLBACK TO domain_request")?;
         }
@@ -146,7 +166,11 @@ fn dispatch_tx(
             title,
             scope,
         } => chats::create(tx, chat_id, title, scope),
-        Command::ChatGet { chat_id } => chats::get(tx, chat_id),
+        Command::ChatGet {
+            chat_id,
+            after,
+            limit,
+        } => chats::get(tx, chat_id, after.unwrap_or(0), limit.unwrap_or(50)),
         Command::MessageAppend {
             chat_id,
             message_id,
@@ -175,7 +199,16 @@ fn dispatch_tx(
             scope,
             context_reference,
             key,
-        } => memory::get(tx, scope, context_reference, key),
+            after_revision,
+            limit,
+        } => memory::get(
+            tx,
+            scope,
+            context_reference,
+            key,
+            after_revision.unwrap_or(0),
+            limit.unwrap_or(50),
+        ),
         Command::MissionPropose {
             mission_id,
             contract,

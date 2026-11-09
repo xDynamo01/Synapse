@@ -33,7 +33,11 @@ fn validate(contract: &MissionContract) -> CoreResult<()> {
     Ok(())
 }
 
-pub fn propose(tx: &Transaction<'_>, id: &str, contract: &MissionContract) -> CoreResult<Value> {
+pub(crate) fn propose(
+    tx: &Transaction<'_>,
+    id: &str,
+    contract: &MissionContract,
+) -> CoreResult<Value> {
     bounded(id, "mission_id", 128)?;
     validate(contract)?;
     let duplicate: bool = tx.query_row(
@@ -60,7 +64,7 @@ pub fn propose(tx: &Transaction<'_>, id: &str, contract: &MissionContract) -> Co
     Ok(json!({"mission_id":id,"contract":contract,"contract_digest":digest,"state":"proposed"}))
 }
 
-pub fn approve(tx: &Transaction<'_>, id: &str, contract_digest: &str) -> CoreResult<Value> {
+pub(crate) fn approve(tx: &Transaction<'_>, id: &str, contract_digest: &str) -> CoreResult<Value> {
     bounded(id, "mission_id", 128)?;
     bounded(contract_digest, "contract_digest", 64)?;
     let (recorded, state) = read_status(tx, id)?;
@@ -85,7 +89,12 @@ pub fn approve(tx: &Transaction<'_>, id: &str, contract_digest: &str) -> CoreRes
     Ok(json!({"mission_id":id,"contract_digest":recorded,"state":"approved"}))
 }
 
-pub fn stop(tx: &Transaction<'_>, id: &str, target: &str, reason: &str) -> CoreResult<Value> {
+pub(crate) fn stop(
+    tx: &Transaction<'_>,
+    id: &str,
+    target: &str,
+    reason: &str,
+) -> CoreResult<Value> {
     bounded(id, "mission_id", 128)?;
     bounded(reason, "reason", 2048)?;
     let (_, state) = read_status(tx, id)?;
@@ -126,7 +135,7 @@ fn read_status(tx: &Transaction<'_>, id: &str) -> CoreResult<(String, String)> {
     .ok_or_else(|| CoreError::new("not_found", "Mission not found"))
 }
 
-pub fn get(tx: &Transaction<'_>, id: &str) -> CoreResult<Value> {
+pub(crate) fn get(tx: &Transaction<'_>, id: &str) -> CoreResult<Value> {
     bounded(id, "mission_id", 128)?;
     let row: Option<(String, String, String, Option<String>)> = tx
         .query_row(

@@ -51,7 +51,8 @@ fn serve(core: &mut Core) -> io::Result<()> {
         let take = end.map_or(available.len(), |pos| pos + 1);
         let content_len = end.unwrap_or(take);
         if !too_large {
-            let remaining = MAX_REQUEST_BYTES.saturating_sub(line.len());
+            // Reserve one byte for a possible CR in a CRLF line ending.
+            let remaining = (MAX_REQUEST_BYTES + 1).saturating_sub(line.len());
             line.extend_from_slice(&available[..content_len.min(remaining)]);
             if content_len > remaining {
                 too_large = true;

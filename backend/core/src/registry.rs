@@ -5,7 +5,7 @@ use crate::{
 use rusqlite::{Transaction, params};
 use serde_json::{Value, json};
 
-pub fn model_register(tx: &Transaction<'_>, model: &ModelManifest) -> CoreResult<Value> {
+pub(crate) fn model_register(tx: &Transaction<'_>, model: &ModelManifest) -> CoreResult<Value> {
     bounded(&model.id, "model_id", 128)?;
     bounded(&model.provider, "provider", 128)?;
     bounded(&model.endpoint, "endpoint", 1024)?;
@@ -34,7 +34,7 @@ pub fn model_register(tx: &Transaction<'_>, model: &ModelManifest) -> CoreResult
     Ok(json!({"model":model,"operational":false}))
 }
 
-pub fn models_list(tx: &Transaction<'_>) -> CoreResult<Value> {
+pub(crate) fn models_list(tx: &Transaction<'_>) -> CoreResult<Value> {
     let mut q = tx.prepare("SELECT manifest FROM models ORDER BY id")?;
     let rows = q.query_map([], |r| r.get::<_, String>(0))?;
     let mut models = Vec::new();
@@ -44,7 +44,7 @@ pub fn models_list(tx: &Transaction<'_>) -> CoreResult<Value> {
     Ok(json!({"models":models}))
 }
 
-pub fn skill_register(tx: &Transaction<'_>, skill: &SkillManifest) -> CoreResult<Value> {
+pub(crate) fn skill_register(tx: &Transaction<'_>, skill: &SkillManifest) -> CoreResult<Value> {
     bounded(&skill.id, "skill_id", 128)?;
     bounded(&skill.version, "skill_version", 64)?;
     scope(&skill.scope)?;
@@ -89,7 +89,7 @@ pub fn skill_register(tx: &Transaction<'_>, skill: &SkillManifest) -> CoreResult
     Ok(json!({"skill":skill,"digest":digest,"operational":false}))
 }
 
-pub fn skills_list(tx: &Transaction<'_>, project_scope: &str) -> CoreResult<Value> {
+pub(crate) fn skills_list(tx: &Transaction<'_>, project_scope: &str) -> CoreResult<Value> {
     scope(project_scope)?;
     let mut q =
         tx.prepare("SELECT manifest,digest FROM skills WHERE scope=?1 ORDER BY id,version")?;
@@ -104,7 +104,7 @@ pub fn skills_list(tx: &Transaction<'_>, project_scope: &str) -> CoreResult<Valu
     Ok(json!({"scope":project_scope,"skills":skills}))
 }
 
-pub fn capabilities() -> Value {
+pub(crate) fn capabilities() -> Value {
     json!({"capabilities":[
         {"id":"core_storage","status":"operational"},
         {"id":"chats","status":"operational"},

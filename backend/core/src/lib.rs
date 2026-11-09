@@ -1,9 +1,9 @@
-pub mod chats;
+mod chats;
 pub mod contracts;
-pub mod core;
-pub mod memory;
-pub mod missions;
-pub mod registry;
+mod core;
+mod memory;
+mod missions;
+mod registry;
 mod store;
 pub use contracts::{Command, CoreError, CoreResult, Request, Response};
 pub use core::Core;

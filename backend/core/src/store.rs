@@ -3,17 +3,37 @@ use rusqlite::{Connection, Transaction, TransactionBehavior, params};
 use serde::Serialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use std::{path::Path, time::Duration};
+use std::{
+    fs::{File, OpenOptions},
+    path::Path,
+    time::Duration,
+};
 
 /// Sole authoritative SQLite connection. Workers must never receive it or its path.
-pub struct Store {
+pub(crate) struct Store {
     connection: Connection,
+    _ownership_lock: File,
 }
 impl Store {
-    pub fn open(state_dir: &Path, workspace_root: &Path) -> CoreResult<Self> {
+    pub(crate) fn open(state_dir: &Path, workspace_root: &Path) -> CoreResult<Self> {
         std::fs::create_dir_all(state_dir)
             .map_err(|_| CoreError::new("storage_error", "Cannot create state directory"))?;
-        let mut connection = Connection::open(state_dir.join("core.sqlite3"))?;
+        let canonical_state = state_dir
+            .canonicalize()
+            .map_err(|_| CoreError::new("storage_error", "Cannot resolve state directory"))?;
+        let ownership_lock = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(canonical_state.join(".synapse-core.lock"))
+            .map_err(|_| CoreError::new("storage_error", "Cannot open state lock"))?;
+        ownership_lock.try_lock().map_err(|_| {
+            CoreError::new(
+                "state_in_use",
+                "State directory is owned by another Core process",
+            )
+        })?;
+        let mut connection = Connection::open(canonical_state.join("core.sqlite3"))?;
         connection.busy_timeout(Duration::from_secs(5))?;
         connection.pragma_update(None, "foreign_keys", "ON")?;
         connection.pragma_update(None, "journal_mode", "WAL")?;
@@ -54,39 +74,42 @@ PRAGMA user_version=1;")?;
             ));
         }
         tx.commit()?;
-        Ok(Self { connection })
+        Ok(Self {
+            connection,
+            _ownership_lock: ownership_lock,
+        })
     }
     /// Domain extensions share this writer and one transaction per dispatcher request.
-    pub fn transaction(&mut self) -> CoreResult<Transaction<'_>> {
+    pub(crate) fn transaction(&mut self) -> CoreResult<Transaction<'_>> {
         Ok(self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?)
     }
-    pub fn event_cursor(&self) -> CoreResult<u64> {
+    pub(crate) fn event_cursor(&self) -> CoreResult<u64> {
         cursor(&self.connection)
     }
 }
-pub fn digest<T: Serialize>(value: &T) -> CoreResult<String> {
+pub(crate) fn digest<T: Serialize>(value: &T) -> CoreResult<String> {
     Ok(Sha256::digest(serde_json::to_vec(value)?)
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect())
 }
-pub fn cursor(conn: &Connection) -> CoreResult<u64> {
+pub(crate) fn cursor(conn: &Connection) -> CoreResult<u64> {
     Ok(
         conn.query_row("SELECT COALESCE(MAX(cursor),0) FROM events", [], |r| {
             r.get::<_, i64>(0)
         })? as u64,
     )
 }
-pub fn event(tx: &Transaction<'_>, kind: &str, payload: Value) -> CoreResult<u64> {
+pub(crate) fn event(tx: &Transaction<'_>, kind: &str, payload: Value) -> CoreResult<u64> {
     tx.execute(
         "INSERT INTO events(kind,payload) VALUES(?1,?2)",
         params![kind, payload.to_string()],
     )?;
     Ok(tx.last_insert_rowid() as u64)
 }
-pub fn events_read(tx: &Transaction<'_>, after: u64, limit: u32) -> CoreResult<Value> {
+pub(crate) fn events_read(tx: &Transaction<'_>, after: u64, limit: u32) -> CoreResult<Value> {
     if after > i64::MAX as u64 || !(1..=200).contains(&limit) {
         return Err(CoreError::invalid("Invalid event cursor or limit (1..200)"));
     }

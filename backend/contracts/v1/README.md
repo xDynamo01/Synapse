@@ -17,10 +17,10 @@ The available command shapes are:
 | `health` | none |
 | `events_read` | `after` (cursor), `limit` (1–200) |
 | `chat_create` | `chat_id`, `title`, `scope` |
-| `chat_get` | `chat_id` |
+| `chat_get` | `chat_id`; optional `after` (message sequence cursor, default 0), `limit` (1–100, default 50) |
 | `message_append` | `chat_id`, `message_id`, `role` (`user`, `assistant`, `system`), `content` |
 | `memory_put` | `scope`, `key`, `kind`, `content`, `expected_revision`, `provenance`, `status` |
-| `memory_get` | `scope`, `context_reference`, `key` |
+| `memory_get` | `scope`, `context_reference`, `key`; optional `after_revision` (default 0), `limit` (1–100, default 50) |
 | `mission_propose` | `mission_id`, `contract` |
 | `mission_approve` | `mission_id`, `contract_digest` |
 | `mission_cancel`, `mission_revoke` | `mission_id`, `reason` |
@@ -35,8 +35,10 @@ The available command shapes are:
 
 Scopes use exact `project:<id>` strings. Memory reads require an explicit `context_reference` equal to the stored scope. `memory_put` requires a current `expected_revision` (zero for a new key), `kind` of `constraint`, `decision`, `fact`, `reproduced_issue`, `root_cause`, or `recovery`, `status` of `active`, `resolved`, or `superseded`, and a provenance object containing `source_type`, `source_id`, and `evidence`. Each update creates a new revision.
 
+`chat_get` returns `messages`, `next_cursor`, and `has_more`; `memory_get` returns `revisions`, `next_revision`, and `has_more`. Supply the returned cursor with a new request ID while `has_more` is true. Pages stop at the requested count or a 220,000-byte record budget, whichever comes first. Responses have a 240,000-byte result budget; oversized results fail with `response_too_large`. A repeated request ID returns its original page snapshot even if new records have since arrived.
+
 A mission contract has `version:1`, `scope`, `objective`, nonempty `actions` and `resources`, and `rollback`. `mission_propose` returns its SHA-256 `contract_digest`. Approval requires the exact digest. Only a proposed mission can be approved; approved missions can be revoked; proposed or approved missions can be cancelled. Terminal states cannot transition. This version does not execute effects.
 
 A model manifest has `id`, `provider`, `endpoint`, `capabilities`, and `memory_bytes`. Registration is catalog data only: it does not activate a provider. A Skill manifest has `id`, `version`, `scope`, `provenance`, `tools`, `permissions`, and `instructions`. Each registered version is immutable; registration does not grant tool authority.
 
-State uses one SQLite Core connection with WAL and FULL synchronous transactions. Domain state, events, and the request receipt commit together. A repeated request ID with the same payload returns its original response, including after restart. A changed payload with that ID returns `idempotency_conflict`. `events_read` supports ordered replay by cursor. The state directory is bound to the canonical workspace path and rejects a different workspace.
+State uses one SQLite Core connection with WAL and FULL synchronous transactions. A process-held exclusive lock on the canonical state directory refuses a second live Core process with `state_in_use` and releases on process exit. Domain state, events, and the request receipt commit together. A repeated request ID with the same payload returns its original response, including after restart. A changed payload with that ID returns `idempotency_conflict`. `events_read` supports ordered replay by cursor. The state directory is bound to the canonical workspace path and rejects a different workspace.

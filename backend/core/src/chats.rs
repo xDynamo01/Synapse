@@ -5,7 +5,7 @@ use crate::{
 use rusqlite::{OptionalExtension, Transaction, params};
 use serde_json::{Value, json};
 
-pub fn create(
+pub(crate) fn create(
     tx: &Transaction<'_>,
     id: &str,
     title: &str,
@@ -34,8 +34,11 @@ pub fn create(
     Ok(json!({"chat_id":id,"title":title,"scope":project_scope}))
 }
 
-pub fn get(tx: &Transaction<'_>, id: &str) -> CoreResult<Value> {
+pub(crate) fn get(tx: &Transaction<'_>, id: &str, after: u64, limit: u32) -> CoreResult<Value> {
     bounded(id, "chat_id", 128)?;
+    if after > i64::MAX as u64 || !(1..=100).contains(&limit) {
+        return Err(CoreError::invalid("Invalid chat cursor or limit (1..100)"));
+    }
     let chat: Option<(String, String)> = tx
         .query_row("SELECT title,scope FROM chats WHERE id=?1", [id], |r| {
             Ok((r.get(0)?, r.get(1)?))
@@ -43,14 +46,48 @@ pub fn get(tx: &Transaction<'_>, id: &str) -> CoreResult<Value> {
         .optional()?;
     let (title, project_scope) =
         chat.ok_or_else(|| CoreError::new("not_found", "Chat not found"))?;
-    let mut q =
-        tx.prepare("SELECT id,role,content FROM messages WHERE chat_id=?1 ORDER BY sequence")?;
-    let rows = q.query_map([id], |r| Ok(json!({"message_id":r.get::<_,String>(0)?,"role":r.get::<_,String>(1)?,"content":r.get::<_,String>(2)?})))?;
-    let messages: Result<Vec<_>, _> = rows.collect();
-    Ok(json!({"chat_id":id,"title":title,"scope":project_scope,"messages":messages?}))
+    let mut q = tx.prepare("SELECT sequence,id,role,content FROM messages WHERE chat_id=?1 AND sequence>?2 ORDER BY sequence LIMIT ?3")?;
+    let rows = q.query_map(params![id, after as i64, (limit + 1) as i64], |r| {
+        Ok((
+            r.get::<_, i64>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, String>(2)?,
+            r.get::<_, String>(3)?,
+        ))
+    })?;
+    let mut messages = Vec::new();
+    let mut bytes = 0;
+    let mut next_cursor = after;
+    let mut has_more = false;
+    for row in rows {
+        let (sequence, message_id, role, content) = row?;
+        if messages.len() >= limit as usize {
+            has_more = true;
+            break;
+        }
+        let message =
+            json!({"sequence":sequence,"message_id":message_id,"role":role,"content":content});
+        let size = serde_json::to_vec(&message)?.len();
+        if bytes + size > 220_000 {
+            if messages.is_empty() {
+                return Err(CoreError::new(
+                    "response_too_large",
+                    "A stored message exceeds page byte budget",
+                ));
+            }
+            has_more = true;
+            break;
+        }
+        bytes += size;
+        next_cursor = sequence as u64;
+        messages.push(message);
+    }
+    Ok(
+        json!({"chat_id":id,"title":title,"scope":project_scope,"messages":messages,"next_cursor":next_cursor,"has_more":has_more}),
+    )
 }
 
-pub fn append(
+pub(crate) fn append(
     tx: &Transaction<'_>,
     chat_id: &str,
     id: &str,
