@@ -25,6 +25,45 @@ def frame(raw):
     return struct.pack(">I", len(raw)) + raw
 
 
+class OwnedWindowsProcess:
+    """Capture identity while the fixture is live; never reopen its PID for cleanup."""
+    def __init__(self, pid):
+        self.kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        self.kernel.OpenProcess.argtypes = [ctypes.c_ulong, ctypes.c_int, ctypes.c_ulong]
+        self.kernel.OpenProcess.restype = ctypes.c_void_p
+        self.kernel.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+        self.kernel.WaitForSingleObject.restype = ctypes.c_ulong
+        self.kernel.TerminateProcess.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+        self.kernel.TerminateProcess.restype = ctypes.c_int
+        self.kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+        self.kernel.CloseHandle.restype = ctypes.c_int
+        self.handle = self.kernel.OpenProcess(0x101001, False, pid)
+        assert self.handle
+        try:
+            assert self.alive(), "fixture exited before identity capture"
+        except BaseException:
+            self.close()
+            raise
+
+    def alive(self):
+        assert self.handle is not None
+        result = self.kernel.WaitForSingleObject(self.handle, 0)
+        assert result in (0, 258), ctypes.get_last_error()
+        return result == 258
+
+    def terminate_and_wait(self):
+        if self.alive():
+            terminated = self.kernel.TerminateProcess(self.handle, 73)
+            # Natural exit can race termination; the retained identity remains safe.
+            assert terminated or not self.alive(), ctypes.get_last_error()
+        assert self.kernel.WaitForSingleObject(self.handle, int(TIMEOUT * 1000)) == 0
+
+    def close(self):
+        if self.handle is not None:
+            assert self.kernel.CloseHandle(self.handle)
+            self.handle = None
+
+
 class Driver:
     def __init__(self, candidate):
         self.started = time.perf_counter()
@@ -48,6 +87,7 @@ class Driver:
         self.ready = self.recv(START)
         assert self.ready["kind"] == "ready"
         self.start_ms = round((time.perf_counter() - self.started) * 1000, 3)
+        self.worker_process = OwnedWindowsProcess(self.ready["pid"]) if candidate == "worker" and os.name == "nt" else None
         self.n = 0
 
     def recv(self, budget):
@@ -67,32 +107,27 @@ class Driver:
         return result, elapsed
 
     def close(self):
-        if self.p.poll() is None:
-            self.p.stdin.close()
-            try:
-                self.p.wait(timeout=TIMEOUT)
-            except subprocess.TimeoutExpired:
-                self.p.kill()
-                self.p.wait(timeout=TIMEOUT)
-                raise
-
-
-def alive(pid):
-    if os.name != "nt":
         try:
-            os.kill(pid, 0)
+            if self.p.poll() is None:
+                self.p.stdin.close()
+                try:
+                    self.p.wait(timeout=TIMEOUT)
+                except subprocess.TimeoutExpired:
+                    self.p.kill()
+                    self.p.wait(timeout=TIMEOUT)
+                    raise
+        finally:
+            if self.worker_process is not None:
+                self.worker_process.close()
+
+    def worker_alive(self):
+        if self.worker_process is not None:
+            return self.worker_process.alive()
+        try:
+            os.kill(self.ready["pid"], 0)
             return True
         except ProcessLookupError:
             return False
-    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
-    kernel.OpenProcess.restype = ctypes.c_void_p
-    handle = kernel.OpenProcess(0x1000, False, pid)
-    if not handle:
-        return False
-    code = ctypes.c_ulong()
-    kernel.GetExitCodeProcess(ctypes.c_void_p(handle), ctypes.byref(code))
-    kernel.CloseHandle(ctypes.c_void_p(handle))
-    return code.value == 259
 
 
 def working_set(pid):
@@ -116,19 +151,6 @@ def working_set(pid):
         kernel.CloseHandle(ctypes.c_void_p(handle))
 
 
-def terminate_owned_windows_child(pid):
-    """External probe cleanup for the specific PID reported by our owned worker."""
-    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
-    kernel.OpenProcess.restype = ctypes.c_void_p
-    handle = kernel.OpenProcess(0x100001, False, pid)
-    assert handle
-    try:
-        assert kernel.TerminateProcess(ctypes.c_void_p(handle), 73)
-        assert kernel.WaitForSingleObject(ctypes.c_void_p(handle), int(TIMEOUT * 1000)) == 0
-    finally:
-        kernel.CloseHandle(ctypes.c_void_p(handle))
-
-
 def run(candidate):
     results = dict(candidate=candidate)
     d = Driver(candidate)
@@ -141,14 +163,19 @@ def run(candidate):
             results["combined_working_set_bytes"] = results["host_working_set_bytes"] + (
                 results["python_working_set_bytes"] if candidate == "worker" else 0)
             assert results["combined_working_set_bytes"] <= RSS_CEILING
-        for raw in [b"{", b'{"v":2,"id":1,"op":"status","job":null}',
-                    b'{"v":1,"id":1,"op":"status","job":null,"extra":1}',
+        # Positive control: all targeted negatives below differ from a valid status.
+        valid, _ = d.raw(b'{"v":1,"id":1,"op":"status","job":"a"}')
+        assert valid == dict(v=1, id=1, kind="event", state="unknown", value=None)
+        for raw in [b"{", b'{"v":2,"id":1,"op":"status","job":"a"}',
+                    b'{"v":1,"id":1,"op":"status","job":"a","extra":1}',
                     b'{"v":1,"id":1,"op":"unknown","job":null}',
                     b'{"v":1,"id":1,"op":"status"}',
-                    b'{"v":1,"id":1,"id":2,"op":"status","job":null}']:
+                    b'{"v":1,"id":1,"id":2,"op":"status","job":"a"}',
+                    b'{"v":1,"id":1,"op":"status","job":null}']:
             response, _ = d.raw(raw)
-            assert response["kind"] == "error", response
-        results["strict_negative_count"] = 6
+            assert response == dict(v=1, id=0, kind="error", state="invalid_schema", value=None), (raw, response)
+        results["strict_negative_count"] = 7
+        results["schema_negatives_have_valid_status_control"] = True
         assert d.cmd("start", "a")[0]["state"] == "running"
         assert d.cmd("start", "a")[0]["state"] == "running"
         assert d.cmd("start", "b")[0]["kind"] == "error"
@@ -178,7 +205,7 @@ def run(candidate):
         if candidate == "worker":
             assert response["kind"] == "error" and response["state"] == "worker_lost"
             assert d.p.poll() is None  # real Rust host survived Python exit
-            assert not alive(d.ready["pid"])
+            assert not d.worker_alive()
             assert d.cmd("start", "forbidden-retry")[0]["state"] == "worker_lost"
         else:
             assert response is None
@@ -196,7 +223,7 @@ def run(candidate):
         if candidate == "worker":
             r = d.recv(TIMEOUT)
             assert r["state"] == "worker_timeout"
-            assert not alive(d.ready["pid"])
+            assert not d.worker_alive()
             results["timeout_ms"] = round((time.perf_counter() - started) * 1000, 3)
             assert d.cmd("start", "forbidden-retry")[0]["state"] == "worker_lost"
         else:
@@ -217,15 +244,16 @@ def run(candidate):
             d.p.stdin.flush()
             assert d.p.wait(timeout=TIMEOUT) == 72
             started = time.perf_counter()
-            while alive(d.ready["pid"]) and time.perf_counter() - started < TIMEOUT:
+            while d.worker_alive() and time.perf_counter() - started < TIMEOUT:
                 time.sleep(0.01)
-            assert not alive(d.ready["pid"]), "worker orphaned"
+            assert not d.worker_alive(), "worker orphaned"
             results["rust_crash_worker_eof_exit_ms"] = round((time.perf_counter() - started) * 1000, 3)
         finally:
             d.close()
         if os.name == "nt":
             d = Driver(candidate)
-            child_pid = d.ready["pid"]
+            owned_worker = d.worker_process
+            captured_handle = owned_worker.handle
             try:
                 d.p.stdin.write(frame(b'{"v":1,"id":1,"op":"hang","job":null}'))
                 d.p.stdin.flush()
@@ -233,13 +261,19 @@ def run(candidate):
                 d.p.kill()  # abrupt host death while its worker deadline cannot execute
                 d.p.wait(timeout=TIMEOUT)
                 time.sleep(0.1)
-                results["rust_death_during_hang_orphans_worker"] = alive(child_pid)
+                results["rust_death_during_hang_orphans_worker"] = owned_worker.alive()
                 assert results["rust_death_during_hang_orphans_worker"]
             finally:
-                if alive(child_pid):
-                    terminate_owned_windows_child(child_pid)
-                d.close()
-            assert not alive(child_pid)
+                try:
+                    assert owned_worker.handle == captured_handle
+                    owned_worker.terminate_and_wait()
+                    assert not owned_worker.alive()
+                    assert owned_worker.handle == captured_handle
+                    results["orphan_cleanup_retained_handle"] = True
+                finally:
+                    d.close()
+            assert owned_worker.handle is None
+            results["orphan_cleanup_handle_closed"] = True
             results["orphan_cleaned_by_external_probe"] = True
     # Oversized and truncated framing fail closed in Rust before dispatch.
     for payload in [struct.pack(">I", 4097), struct.pack(">I", 10) + b"{}"]:

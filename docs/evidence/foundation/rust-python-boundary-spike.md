@@ -98,31 +98,42 @@ The first real `cargo build` exited 0 in 32.06 s. Final verification:
 toolchain reports `cargo-clippy.exe` is not installed; it was not installed for
 this spike. No unit tests substitute for the real-process probes below.
 
-Final recorded run (fresh processes, warm OS/dependency caches, dev build,
+Latest recorded run after first independent-review corrections (fresh processes,
+warm OS/dependency caches, unchanged dev executable,
 single timing sample per row; not statistically significant or disk-cold):
 
 | Observation | Child worker | PyO3 embedded |
 |---|---:|---:|
-| Launch to ready | 998.205 ms | 40.316 ms |
-| Healthy status round trip | 0.490 ms | 0.284 ms |
-| Cooperative cancel acknowledgement | 0.143 ms | 0.120 ms |
-| Combined instantaneous working set | 20,410,368 bytes | 15,167,488 bytes |
-| Python abrupt exit detection | 2.182 ms | 1.922 ms |
+| Launch to ready | 59.054 ms | 39.566 ms |
+| Healthy status round trip | 0.361 ms | 0.323 ms |
+| Cooperative cancel acknowledgement | 0.147 ms | 0.110 ms |
+| Combined instantaneous working set | 20,430,848 bytes | 14,864,384 bytes |
+| Python abrupt exit detection | 1.955 ms | 1.937 ms |
 | Rust survives Python abrupt exit | yes | **no** |
-| Worker hung-call timeout + kill/wait | 2005.858 ms | unavailable |
-| Rust hard exit during cooperative job: child exits on EOF | 10.541 ms | same process |
+| Worker hung-call timeout + kill/wait | 2003.292 ms | unavailable |
+| Rust hard exit during cooperative job: child exits on EOF | 10.083 ms | same process |
 
 Working set is a post-ready snapshot, not peak, private memory or unique RSS;
 the worker sum may double-count shared pages. Synthetic startup varied between
 runs (~60–1002 ms worker and ~39–222 ms embedding), so the table cannot select
 a winner on startup performance.
 
-Both modes passed six malformed/schema negatives: invalid JSON, foreign major,
-unknown field, unknown operation, missing required `job`, duplicate `id`; plus
+Both modes passed seven malformed/schema negatives: invalid JSON, foreign major,
+unknown field, unknown operation, missing required `job`, duplicate `id`, and
+invalid null job for status; plus
 oversized and truncated frame rejection. Both ran a real threaded synthetic job
 to value 42; duplicate starts preserved state; another active identity was
 rejected; cancel remained cancelled after 1.15 s, beyond the nominal 1 s job
 duration, and a repeated start could not revive the cancelled identity.
+
+The first independent review found that the original foreign-major,
+unknown-field and duplicate-ID fixtures also had an invalid null status job,
+which could hide a regressed guard. Corrected fixtures each change an otherwise
+valid `status/job:"a"` request, whose positive control returns exact
+`v=1,id=1,kind=event,state=unknown,value=null`. Every negative requires the exact
+`v=1,id=0,kind=error,state=invalid_schema,value=null` response; a separate null-job
+fixture proves that rejection independently. Both candidates pass these updated
+checks. No Rust source or executable changed for this review correction.
 
 Python `os._exit(71)` was invoked during in-flight synthetic work. Worker loss
 produced a structured `worker_lost`, the Python PID was dead, Rust stayed alive,
@@ -136,8 +147,13 @@ abrupt exits are not native segmentation-fault or arbitrary-extension tests.
 Rust `process::exit(72)` during a cooperative job bypassed normal Rust Drop;
 the child observed pipe EOF and exited. **Important negative:** externally
 killing Rust while Python was blocked in the 60 s call left the Python worker
-alive. The probe detected that exact owned PID and terminated/waited it using
-an external Windows process handle. This is **observed missing containment**,
+alive. The corrected probe captures and retains an external Windows process
+HANDLE immediately after the live worker's ready response. Every subsequent
+worker liveness observation, orphan termination and wait uses that same HANDLE;
+it never reopens the recorded PID after Rust death. The orphan fixture asserts
+handle identity before/after cleanup and closes it in `finally`, reporting
+`orphan_cleanup_retained_handle=true` and `orphan_cleanup_handle_closed=true`.
+This fixes the first review's PID-reuse cleanup race. This is still **observed missing containment**,
 not product recovery. No Windows kill-on-close Job Object or descendant tree
 containment is implemented, and no descendants are spawned by the fixture.
 
@@ -186,7 +202,7 @@ Cargo.lock 9c2c73c070441092a487af6211e0b375424b3d5c397c168a02424363a9e43b12
 Cargo.toml cf32e9777f6eb85e46546c87aa2fb0a249e4d01c5f0c20aa91c9790f06f4ebab
 src/main.rs d11ec5e20eaf311d9f7db579a6ad65df7e0eadb7193a7253290381ae22e132cf
 engine.py 83afab166d25e96924b4b303c7a4e499f11e9992d4431dc743bdc52b1aab5611
-probe.py 64f54cc6789cc3ec58ab2ec910fae05cb67ef89c605d9eeba04372465911340f
+probe.py b0fe68e22a580cf662c7de56343f57c582420b848472714a7ba3fb42775b7d09
 python.exe cce21c0e8710e304273e98ac4b2b0f5aceb639acbcd2343cbaa5c4e81619c45b
 python314.dll 1ac15e2224581fc678bbd17728b9aa538d47b891b72c76499ef07e54cd74f151
 python314.lib 94ef1b8c9ba2cae9c66841fa7a6d1495ad9f475e2669e736817b35961e433127
