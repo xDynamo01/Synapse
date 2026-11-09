@@ -11,3 +11,4 @@ runtime/
 data/
 logs/
 secrets/
+/target/
