@@ -6,7 +6,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $requirements = [ordered]@{
     'docs/security/foundation-threat-model.md' = @('Scope and status', 'Assets', 'Trust boundaries', 'Entry points', 'Attacker capabilities', 'Threats and mitigations', 'Verification owners', 'Residual risks', 'Mandatory extensions', 'Decision Charter Compliance')
-    'docs/security/authority-invariants.md' = @('Scope and status', 'Authority invariants', 'Verification owners', 'Residual risks', 'Decision Charter Compliance')
+    'docs/security/authority-invariants.md' = @('Scope and status', 'Authority invariants', 'Context consumer tests', 'Verification owners', 'Residual risks', 'Decision Charter Compliance')
     'docs/evidence/foundation/security-review.md' = @('Scope and status', 'Review method', 'Validation', 'Residual risks', 'Decision Charter Compliance')
 }
 
@@ -53,7 +53,8 @@ function Get-DocumentErrors([hashtable] $Documents) {
         @{ Path='docs/security/foundation-threat-model.md'; Section='Threats and mitigations'; Prefix='T'; Count=9; Columns=7 },
         @{ Path='docs/security/foundation-threat-model.md'; Section='Mandatory extensions'; Prefix='E'; Count=5; Columns=4 },
         @{ Path='docs/security/foundation-threat-model.md'; Section='Residual risks'; Prefix='R'; Count=4; Columns=5 },
-        @{ Path='docs/security/authority-invariants.md'; Section='Authority invariants'; Prefix='AI'; Count=10; Columns=5 }
+        @{ Path='docs/security/authority-invariants.md'; Section='Authority invariants'; Prefix='AI'; Count=10; Columns=5 },
+        @{ Path='docs/security/authority-invariants.md'; Section='Context consumer tests'; Prefix='PC'; Count=4; Columns=5 }
     )
     foreach ($rule in $tableRules) {
         if (-not $Documents.ContainsKey($rule.Path)) { continue }
@@ -68,6 +69,19 @@ function Get-DocumentErrors([hashtable] $Documents) {
             $cells = @($rows[0].Value.Trim().Trim('|').Split('|') | ForEach-Object { $_.Trim() })
             if ($cells.Count -ne $rule.Columns -or @($cells | Where-Object { $_.Length -eq 0 -or $_ -match '^(TODO|TBD|N/A|-)$' }).Count -gt 0) {
                 $errors.Add("Incomplete $id row in $($rule.Path).")
+            }
+        }
+    }
+    # Redaction must preserve authorized local context, not erase all private data.
+    foreach ($privacyRule in @(
+        @{ Path='docs/security/authority-invariants.md'; Id='AI-07' },
+        @{ Path='docs/security/foundation-threat-model.md'; Id='T-09' }
+    )) {
+        if (-not $Documents.ContainsKey($privacyRule.Path)) { continue }
+        $row = [regex]::Match($Documents[$privacyRule.Path], '(?m)^\| ' + $privacyRule.Id + ' \|.*$').Value
+        foreach ($consumer in 'Authorized local consumer:', 'Unauthorized consumer:') {
+            if (-not $row.Contains($consumer)) {
+                $errors.Add("Missing '$consumer' obligation in $($privacyRule.Id).")
             }
         }
     }
@@ -125,4 +139,10 @@ $case = $documents.Clone(); $case[$evidencePath] += "`n``docs/adr/0003-foundatio
 Assert-Rejected 'citation outside source range' $case 'Invalid citation range'
 $case = $documents.Clone(); $case[$evidencePath] = $case[$evidencePath].Replace('docs/specs/2026-11-06-synapse-0.3-decision-charter.md', 'charter-unspecified.md')
 Assert-Rejected 'missing binding charter' $case 'Missing binding charter path'
-Write-Output 'PASS 10 negative cases; document structure is not runtime security validation.'
+$case = $documents.Clone(); $case[$invariantPath] = $case[$invariantPath] -replace '(?m)^\| PC-01 \|.*\r?\n', ''
+Assert-Rejected 'missing authorized local context positive test' $case 'Expected one PC-01 row'
+$case = $documents.Clone(); $case[$invariantPath] = $case[$invariantPath] -replace '(?m)(^\| AI-07 \|.*)Authorized local consumer:', '$1Consumer:'
+Assert-Rejected 'redaction invariant missing authorized consumer obligation' $case "Missing 'Authorized local consumer:' obligation in AI-07"
+$case = $documents.Clone(); $case[$threatPath] = $case[$threatPath] -replace '(?m)(^\| T-09 \|.*)Unauthorized consumer:', '$1Consumer:'
+Assert-Rejected 'leakage threat missing unauthorized consumer obligation' $case "Missing 'Unauthorized consumer:' obligation in T-09"
+Write-Output 'PASS 13 negative cases; document structure is not runtime security validation.'

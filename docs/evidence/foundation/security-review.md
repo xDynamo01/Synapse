@@ -60,11 +60,13 @@ one complete row per nine threat hypotheses, five mandatory extensions, four
 residual risks and ten authority invariants, explicit risk-acceptance status,
 binding-charter paths and local citation existence/ranges.
 
-The same command also exercises ten mutations entirely in memory: missing
+The same command also exercises thirteen mutations entirely in memory: missing
 document; empty assets; missing replay scenario; invariant missing enforcement
 owner; duplicated owner-approval invariant; missing remote extension; missing
 explicit risk acceptance; absent citation source; out-of-range citation; missing
-binding charter. Each must produce its specific diagnostic. No source document
+binding charter; missing authorized-local-context positive test; redaction rule
+missing its authorized-consumer obligation; leakage scenario missing its
+unauthorized-consumer obligation. Each must produce its specific diagnostic. No source document
 is modified by the negative tests. The validator reads local files only.
 
 The check is a document contract gate: it cannot establish semantic correctness
@@ -73,6 +75,16 @@ were also manually checked against source consumers; line-range validation
 alone is not claim validation. Exact RED/GREEN command receipts, self-review
 and commit are recorded in the local Task 5 execution report. Consuming slices
 still require independent QA and real composition/negative evidence.
+
+Fix round 1 clarified the private-context boundary: authorized local project
+inference and canonical memory preserve policy-approved private fields.
+Diagnostics/public evidence, unauthorized exports and cross-context/global
+promotion exclude them; credentials remain opaque at model/prompt/memory/log
+consumers. PC-01–PC-04 specify a positive authorized-local-consumer test and
+separate negative unauthorized-consumer/diagnostic/credential tests. The revised
+checker first failed on the missing section/rows and consumer obligations,
+then passed with all thirteen mutation cases. These are downstream runtime test
+requirements, not a claim that the document check ran local inference/memory.
 
 ## Residual risks
 
