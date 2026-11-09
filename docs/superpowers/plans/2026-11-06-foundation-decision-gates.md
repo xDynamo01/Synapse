@@ -1,5 +1,13 @@
 # Foundation Decision Gates Implementation Plan
 
+Status: **REOPENED / BLOCKED — 2026-11-09 owner-approved PL-001/PL-006 amendment**.
+
+The original Tasks 1–6 below are preserved as historical experiment instructions.
+Their Node/TypeScript/Electron choices and PASS handoff have no product authority.
+Execute [Rust/Python foundation revalidation](2026-11-09-rust-python-foundation-revalidation.md)
+as the active foundation plan. Python/storage receipts remain scoped evidence;
+no historical check or completed task may authorize product scaffolding.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use
 > superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use
@@ -14,7 +22,7 @@ any product scaffold is created.
 fixtures compare candidates, ADRs record evidence, and Gate 00 blocks the first
 product plan until every decision passes.
 
-**Tech Stack:** Markdown ADRs; PowerShell 7.6+ foundation checks; `uv` 0.10+ for
+**Historical Tech Stack:** Markdown ADRs; PowerShell 7.6+ foundation checks; `uv` 0.10+ for
 isolated Python 3.13/3.14 experiments; TypeScript clients run with the selected
 Node/pnpm toolchain; Protocol Buffers/gRPC and HTTP/WebSocket are transport
 candidates; SQLite WAL is the initial persistence candidate.

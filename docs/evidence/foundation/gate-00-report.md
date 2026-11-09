@@ -2,17 +2,30 @@
 
 Prepared 2026-11-09; approved decision filenames retain 2026-11-06.
 
-Gate result: **PASS** — selected Windows foundation experiments and document
-contracts only. Capability status: **TESTED**. This report is consumed together
-with exact-HEAD clean-clone receipts; without those receipts the aggregate
-checker fails. Final independent whole-branch review and any later integration
-regression remain separate obligations.
+Gate result: **BLOCKED** — **REOPENED 2026-11-09** by the owner-approved
+Charter PL-001/PL-006 Rust native + Python amendment. Rust toolchain/native UI,
+Rust/Python communication/packaging, actual authority/storage ownership and the
+updated threat model have **NOT RUN**. Historical Windows experiments retain
+their scoped TESTED/PASS evidence but cannot approve the amended product.
 
-Scaffolding: **AUTHORIZED within Plan 01 scope**, after independent review of
-this handoff. No product implementation, shared merge, push, publication,
-credential boundary or additional risk acceptance occurs in Task 6.
+Scaffolding: **NOT AUTHORIZED**. Electron Plan 01 specification and plan are
+**SUPERSEDED / NOT EXECUTABLE**. Complete the
+[Rust/Python foundation revalidation plan](../../superpowers/plans/2026-11-09-rust-python-foundation-revalidation.md)
+and reviewed fresh-clone evidence before a replacement Plan 01 may authorize
+native product scaffolding. No shared merge/push/publication is authorized.
 
 ## Decisions
+
+Current binding stack: native Rust application/device integration with Python
+AI; no JS/TS product dependencies, Electron, Tauri or web application UI.
+Exact UI crate, toolchain versions, transport/binding and authoritative
+Core/storage split remain unselected. ADR 0001 retains Python evidence only;
+ADR 0002 gRPC is a candidate; ADR 0003 requires actual owner/binding proof.
+
+The remaining table, measurements and reproduction narrative record the
+**superseded historical foundation**. They confer no current scaffolding
+authority. The amended checker refuses PL-006 before reading legacy receipts;
+the old aggregate below its guard is unreachable pending R5 replacement review.
 
 | Task | Exact reviewed commit | Accepted output |
 |---|---|---|
@@ -61,6 +74,11 @@ do not establish sustained throughput; the sub-ms reconnect difference is within
 sample spread. No model memory allocation or GPU budget was inferred.
 
 ## Reproduction
+
+**Historical reproduction only:** commands and receipt names below reproduce
+original Node/Python evidence, not Rust/Python acceptance. Current refusal test:
+`pwsh -NoProfile -File tools/foundation/test-rust-python-amendment.ps1`.
+The aggregate must exit 1 with `BLOCKED PL-006` until revalidation passes.
 
 Start with a fresh local clone of the committed Gate 00 artifact, not an archive
 export or a copied working directory. Provision the verified pinned tools per
@@ -119,6 +137,11 @@ compiler option, test assertion or OS setting was weakened to work around it.
 
 ## Limitations
 
+- All Rust-native presentation/toolchain, actual Rust/Python boundary, packaging,
+  authority/storage ownership and replacement security evidence: **NOT RUN**.
+- Historical Electron/embedded-Node obligations below are superseded; they do
+  not authorize an implementation or replace native boundary validation.
+
 - Linux/macOS selected suite execution and CI: **NOT RUN** in Gate 00.
   Plan 01 must run Windows 11 x64 (or separately labelled Server 2025 CI),
   Ubuntu 24.04 x64/glibc and macOS 14+ arm64; availability metadata is not proof.
@@ -148,22 +171,22 @@ compiler option, test assertion or OS setting was weakened to work around it.
 
 Specification: `docs/specs/subprojects/01-repository-and-skeleton.md`.
 Detailed plan: `docs/superpowers/plans/2026-11-06-repository-and-cross-platform-skeleton.md`.
-The handoff selects exact foundation pins and semantics and leaves Electron/React
-pin selection as an explicit first-task provenance/security gate. Plan 01 builds
-an inert bootstrap and separate non-release synthetic packaged test, not the
-Plan 02 product service, owner authentication or durable journal. No root product
-directories exist in Gate 00. Missing downstream evidence blocks its own gate;
-it does not invalidate the narrower Windows foundation result or waive a control.
+Both linked files retain historical Electron instructions under explicit
+SUPERSEDED / NOT EXECUTABLE notices. This handoff is withdrawn. No native or
+Electron product source roots may be created from it. R1–R5 revalidation must
+produce reviewed Rust/Python ADRs, threat model, exact fresh-clone evidence and
+a passing replacement aggregate before writing/authorizing replacement Plan 01.
 
 ## Decision Charter Compliance
 
 **Charter:** `docs/specs/2026-11-06-synapse-0.3-decision-charter.md`
 
 **Binding decisions:** CR-001, CR-002, CR-003, CR-004, MI-003, MI-004,
-SE-005, SE-006, PL-001, PL-002, PL-003, PL-004, QA-001, QA-002, QA-003.
+SE-005, SE-006, PL-001, PL-002, PL-003, PL-004, PL-006, QA-001, QA-002, QA-003.
 
 | Decision | Implementation obligation | Test/evidence owner |
 |---|---|---|
+| PL-001, PL-006 | Rust native + Python; reject historical receipt authority and revalidate before scaffolding | Amended aggregate negative; R1–R5 |
 | CR-001–CR-004 | New experiments only, preserve history, isolated branch and redacted evidence | Host gate, aggregate root/clean check and exact clone |
 | MI-003, MI-004 | Experiments confer no product authority or preflight expansion | Task 5 threat model; Plan 01/02 refusal requirements |
 | SE-005, SE-006 | Client-only CLI, formal security prerequisites | Security document validator and downstream E-01–E-05 gates |

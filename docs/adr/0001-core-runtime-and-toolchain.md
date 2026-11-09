@@ -2,7 +2,15 @@
 
 Date: 2026-11-06
 
-Status: **ACCEPTED — Windows compatibility evidence TESTED / PASS**.
+Status: **PARTIALLY SUPERSEDED — 2026-11-09 owner-approved PL-001/PL-006 amendment**.
+
+Python compatibility/import evidence remains TESTED / PASS for the original
+Windows experiment. Node/pnpm/TypeScript/client/Electron selections below are
+historical and have no product authority or dependency approval. Python pins
+remain evidence candidates subject to the actual Rust/Python composition.
+Rust toolchain/native UI and the authority boundary are **NOT RUN / BLOCKED**;
+follow [foundation revalidation](../superpowers/plans/2026-11-09-rust-python-foundation-revalidation.md).
+The original decision text below is retained as experiment history.
 Independent review and integration regression remain Gate 00 obligations.
 No product capability is VALIDATED or OPERATIONAL by this ADR.
 
@@ -15,7 +23,7 @@ Windows x64, 12 logical processors, about 15.9 GiB OS-visible RAM and an AMD GPU
 whose dedicated memory is unverified. This experiment therefore uses CPU import
 surfaces only, never allocates model weights and makes no GPU claim.
 
-## Decision
+## Historical decision — Python evidence retained; client portion superseded
 
 Use **standard-GIL CPython 3.14**, initially pinned to **3.14.10**, for the Core.
 Use **Node.js 24**, initially **24.22.2**, and **pnpm 11**, initially **11.25.0**,

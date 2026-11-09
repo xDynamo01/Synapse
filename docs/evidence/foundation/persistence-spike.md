@@ -1,5 +1,9 @@
 # Foundation persistence spike evidence
 
+**Retained evidence after 2026-11-09 PL-001/PL-006:** Original Python/SQLite
+results remain scoped evidence. Product use requires revalidation against the
+actual Rust/Python authority/storage owner and selected binding. Gate 00 BLOCKED.
+
 Date 2026-11-06
 
 Result **TESTED / PASS on Windows**. This spike supports

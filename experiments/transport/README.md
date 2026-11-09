@@ -1,5 +1,9 @@
 # Client/Core transport spike
 
+**Historical evidence — 2026-11-09 PL-001/PL-006 amendment:** These Node/Python
+results do not validate a Rust client or select its transport. gRPC remains a
+candidate pending Rust/Python revalidation; no JS/TS product dependencies follow.
+
 Gate 00 Task 3 compares a Python gRPC service with HTTP unary calls and a
 WebSocket event stream. Both use the same effect-free lifecycle and a disposable
 SQLite journal to exercise process-death recovery. The contract, platform gates

@@ -2,6 +2,17 @@
 
 ## Scope and status
 
+**2026-11-09 amendment — revalidation REQUIRED / BLOCKED:** Charter PL-001 and
+PL-006 now require native Rust application/device integration plus Python AI.
+This model's Node/Electron topology, B-08/main/preload, T-01 renderer scenario
+and original line citations describe the pre-amendment source baseline below;
+they are historical evidence, not the native security design. Native UI event
+handling, Python worker/FFI/IPC, browser engine isolation without Synapse JS,
+device/audio, packaging/update and sole storage/authority owners require the
+[R4 threat-model revision](../superpowers/plans/2026-11-09-rust-python-foundation-revalidation.md)
+before product implementation. The generic denial/owner/privacy invariants
+remain binding; document-check PASS cannot validate the amended boundaries.
+
 Date: 2026-11-09. Source baseline: `009fe94f71b711af3a4cb688d9da6b8cbdfae538`.
 This model consumes the approved architecture, the binding
 `docs/specs/2026-11-06-synapse-0.3-decision-charter.md` and ADRs 0001–0003.
@@ -23,10 +34,11 @@ See `experiments/transport/server/lifecycle.py:1-17` and
 The target is a personal local-first A.R.T.E.M.I.S. Assistant and universal
 Workspace/CLI sharing a headless modular Core and independent clients. Core
 owns authoritative state, mission policy and execution. Initial operation is
-co-located, with future remote clients separately gated. ADR 0001 selects
-standard-GIL CPython 3.14.10 and pinned Node 24/pnpm 11 tooling, ADR 0002 selects
-versioned gRPC/Protobuf, and ADR 0003 selects Core-owned local SQLite WAL/FULL.
-These choices do not qualify Electron packaging, personal-data protection or
+co-located, with future remote clients separately gated. Historically ADR 0001
+selected CPython plus Node tooling and ADR 0002 selected Node/Python gRPC; those
+client choices are superseded, gRPC is now a Rust/Python candidate and ADR 0003
+storage evidence requires the chosen owner/binding revalidation.
+These historical choices do not qualify native Rust packaging, personal-data protection or
 physical Linux/macOS operation. Sources: `docs/adr/0001-core-runtime-and-toolchain.md:18-27`,
 `docs/adr/0002-client-core-transport.md:10-26`,
 `docs/adr/0003-foundation-persistence.md:8-25`,

@@ -1,5 +1,9 @@
 # Runtime compatibility experiment
 
+**Historical evidence — 2026-11-09 PL-001/PL-006 amendment:** Python results are
+retained; Node/pnpm/TypeScript selections are superseded and never product
+dependencies. Rust/Python foundation revalidation is required before scaffolding.
+
 Gate 00 Task 2. This is disposable compatibility evidence, not product runtime.
 It implements no voice identity, model catalogue, transport, mission authority,
 or persistence policy. No weights are downloaded or models instantiated.

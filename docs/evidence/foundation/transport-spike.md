@@ -1,5 +1,9 @@
 # Client/Core transport spike evidence
 
+**Historical scope after 2026-11-09 PL-001/PL-006:** This Node/Python comparison
+does not approve a Rust transport. gRPC remains a candidate pending actual
+Rust/Python lifecycle/packaging proof; old PASS receipts cannot reopen Gate 00.
+
 Captured 2026-11-06. **Windows experiment TESTED / PASS** for both candidates.
 [ADR 0002](../../adr/0002-client-core-transport.md) selects gRPC/Protobuf.
 Linux/macOS, packaged Electron and remote TLS/pairing are **NOT RUN**.

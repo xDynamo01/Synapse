@@ -1,5 +1,14 @@
 # Repository and Cross-platform Skeleton Implementation Plan
 
+Status: **SUPERSEDED / NOT EXECUTABLE — 2026-11-09 PL-001/PL-006 amendment**.
+
+All tasks below are historical Electron/Node/TypeScript instructions. They must
+not be dispatched or used to scaffold a product. The owner selected native Rust
+application/device integration plus Python AI; Gate 00 is **BLOCKED / REOPENED**.
+Complete the [foundation revalidation plan](2026-11-09-rust-python-foundation-revalidation.md)
+before writing a replacement Plan 01. This notice overrides every execution
+directive, technology choice and checkbox below; preserve them as history only.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build a reproducible three-platform repository and inert Core/client

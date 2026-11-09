@@ -5,6 +5,23 @@ param([string] $ReceiptPath = '.local/gate-00/receipts.json')
 $ErrorActionPreference = 'Stop'
 $root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 Set-Location -LiteralPath $root
+$charterPath = 'docs/specs/2026-11-06-synapse-0.3-decision-charter.md'
+if (-not (Test-Path -LiteralPath $charterPath -PathType Leaf)) {
+    Write-Output 'BLOCKED: Missing binding Decision Charter; legacy evidence cannot authorize scaffolding.'
+    exit 1
+}
+$charter = Get-Content -LiteralPath $charterPath -Raw
+if ($charter -notmatch '(?m)^### PL-006 — Rust and Python product only\r?$') {
+    Write-Output 'BLOCKED: Missing current PL-006 stack requirement; legacy Charter cannot authorize scaffolding.'
+    exit 1
+}
+# Deliberately fail closed before parsing any historical receipts. This checker
+# implements only the superseded Node/Python aggregate below. Replace its receipt
+# contract after the measured revalidation plan; no editable PASS label bypasses it.
+Write-Output 'BLOCKED PL-006: Rust/Python foundation revalidation is NOT RUN; historical Node/Electron receipts cannot authorize product scaffolding.'
+exit 1
+
+# Historical aggregate retained for provenance only; unreachable under PL-006.
 $reportPath = 'docs/evidence/foundation/gate-00-report.md'
 $required = @{
     host = 'PASS'; 'runtime-python' = '12 passed'; 'runtime-typescript' = '(?:#|ℹ)\s+pass 3(?:\r?\n|$)'

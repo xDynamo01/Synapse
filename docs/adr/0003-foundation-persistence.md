@@ -2,8 +2,16 @@
 
 Date 2026-11-06
 
-Status **ACCEPTED — Windows persistence experiment TESTED / PASS**. Gate 00
-independent review and integration regression remain pending.
+Status **RETAINED EXPERIMENT EVIDENCE — product ownership/binding revalidation REQUIRED**.
+
+2026-11-09 owner amendment PL-001/PL-006 reopens Gate 00. Original Python/SQLite
+durability/recovery results remain Windows TESTED / PASS evidence. They do not
+choose the authoritative Rust/Python Core owner or validate a Rust SQLite
+binding. The actual single writer, linked library, admission/ACK and crash
+boundary, backup and packaging must pass
+[R3 revalidation](../superpowers/plans/2026-11-09-rust-python-foundation-revalidation.md).
+Product acceptance is **BLOCKED**; the original decision below is conditional
+on that proof and cannot independently authorize a scaffold.
 
 ## Decision
 

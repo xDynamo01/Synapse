@@ -1,7 +1,15 @@
 # Plan 01 — Repository and cross-platform skeleton
 
 Date: 2026-11-06. Execution handoff prepared: 2026-11-09.
-Status: **PROPOSED — requires independent review of Gate 00 and this handoff**.
+Status: **SUPERSEDED / NOT EXECUTABLE — 2026-11-09 owner-approved PL-001/PL-006 amendment**.
+
+This entire Electron/Node/TypeScript specification is preserved as history and
+confers no implementation authority. Gate 00 is **BLOCKED / REOPENED**. Do not
+execute its tasks, select Electron pins, or create product scaffolding. Native
+Rust application/device integration with Python AI replaces its stack. A new
+Plan 01 specification/plan may be written only after the
+[Rust/Python foundation revalidation plan](../../superpowers/plans/2026-11-09-rust-python-foundation-revalidation.md)
+passes with reviewed exact-commit evidence. All remaining text is historical.
 
 ## Purpose and scope
 

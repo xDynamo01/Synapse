@@ -1,5 +1,9 @@
 # Runtime compatibility evidence
 
+**Historical scope after 2026-11-09 PL-001/PL-006:** Python measurements remain
+evidence; Node/pnpm/TypeScript selections are superseded and confer no product
+dependency approval. These receipts do not validate Rust/Python composition.
+
 Captured: 2026-11-06. Status: **TESTED / PASS on Windows x64** for the selected
 experiment. Linux/macOS: **NOT RUN**. Product validation/operation: **NOT RUN**.
 

@@ -2,6 +2,15 @@
 
 ## Scope and status
 
+**2026-11-09 amendment:** This is pre-amendment architecture evidence. Its
+Electron/Node boundary and original line anchors are historical. Charter
+PL-001/PL-006 now requires native Rust plus Python; Gate 00 is BLOCKED and this
+review supplies no native security acceptance. Preserve authority/privacy
+requirements and complete the
+[R4 review](../../superpowers/plans/2026-11-09-rust-python-foundation-revalidation.md)
+with the actual Rust/Python/device/browser/storage owners before product code.
+Any document-validator PASS below concerns structure and the old baseline only.
+
 Gate 00 Task 5, reviewed 2026-11-09 against source baseline
 `009fe94f71b711af3a4cb688d9da6b8cbdfae538`. Inputs are the approved architecture,
 ADRs 0001–0003 and the binding

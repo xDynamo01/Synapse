@@ -1,5 +1,11 @@
 # Foundation host capabilities
 
+2026-11-09 Charter PL-001/PL-006 amendment: Gate 00 is **BLOCKED / REOPENED**.
+Historical Node/Electron evidence grants no native product approval. Follow the
+[Rust/Python revalidation plan](../../superpowers/plans/2026-11-09-rust-python-foundation-revalidation.md)
+before creating product scaffolding; retain host/Python/storage results within
+their measured scope only.
+
 Gate 00 Task 1 records a Windows host inventory to support later decisions
 about the runtime and resource budget. The binding decisions are `CR-001`,
 `CR-004`, `QA-001`, `QA-002` and `QA-003` from the

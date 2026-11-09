@@ -2,12 +2,20 @@
 
 Date: 2026-11-06
 
-Status: **ACCEPTED — Windows transport experiment TESTED / PASS**.
+Status: **SUPERSEDED AS PRODUCT SELECTION — 2026-11-09 PL-001/PL-006 amendment**.
+
+Node/Python transport comparison remains historical Windows TESTED / PASS
+evidence. gRPC/Protobuf is a **candidate**, pending actual Rust/Python lifecycle,
+cancellation/crash, authority and packaging validation in the
+[revalidation plan](../superpowers/plans/2026-11-09-rust-python-foundation-revalidation.md).
+The schema/lifecycle semantics remain useful design inputs; neither this ADR
+nor old receipts select a Rust binding or authorize product scaffolding. All
+Electron renderer/main/preload requirements below are superseded assumptions.
 The independent review and aggregate regression are Gate 00 obligations.
 Product, packaged Electron, Linux/macOS execution and remote pairing are
 **NOT RUN**.
 
-## Decision
+## Historical decision — Rust/Python transport selection reopened
 
 Use **gRPC over HTTP/2 with Protocol Buffers** at the independent client/Core
 boundary. Start with package `synapse.foundation.v1` in the
