@@ -175,6 +175,9 @@ prints the same allowlisted object. Unknown actions exit 2 with `UNKNOWN_ACTION`
 validates actual OS/architecture, tool versions, frozen installs, policies,
 generation, build, tests and selected foundation checks; exits nonzero on any
 failure and emits allowlisted JSON receipts with commit/commands/exit codes.
+Receipts use `.local/skeleton/<lane>/receipt.json`, with `commit`, `lane`,
+`os`, `architecture`, `tools`, `artifact_sha256`, `checks` (command/exit/log hash)
+and `limitations`; never include credentials or private absolute paths.
 Packaged tests are added to the same verifier by Task 5, not silently omitted.
 
 - [ ] **Step 1:** Add verifier tests in `tools/repository/test-policy.mjs` for
@@ -234,6 +237,9 @@ and development guide. Add receipt negatives to `tools/repository/test-policy.mj
 **Interfaces:** Gate 01 consumes exact commit/artifact and all three lane
 receipts plus Windows 11 receipt; produces PASS/FAIL/BLOCKED and an explicit
 Plan 02 prerequisite list, never product-operation or sensitive-boundary approval.
+`node tools/repository/verify.mjs --gate --receipts .local/skeleton` reads the
+required lane subdirectories and Windows 11 receipt, checks they identify the
+current exact HEAD, and exits nonzero for missing/failed/stale evidence.
 
 - [ ] **Step 1:** Add negative assertions: one missing lane, wrong commit,
   altered artifact hash, missing packaged test, skipped selected suite or
