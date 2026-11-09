@@ -170,18 +170,78 @@ fn conversation_fixture_persists_once_and_replays_across_restart() {
     let done = poll(&mut session, "turn-1");
     assert_eq!(done["status"], "succeeded", "{done}");
     assert_eq!(done["content"], "Olá, ação");
+    let first_payload: Value =
+        serde_json::from_slice(&std::fs::read(&fixture.marker).unwrap()).unwrap();
+    assert_eq!(
+        first_payload["messages"],
+        json!([{"role":"user","content":"Olá, ação?"}])
+    );
     let replay = session.call(start.clone());
     assert_eq!(first, replay);
     drop(session);
     let mut session = Session::new(&root, None);
     assert_eq!(session.call(start)["result"], first["result"]);
+    assert_eq!(
+        session.call(req(
+            "other-chat",
+            json!({"type":"chat_create","chat_id":"other","title":"Other","scope":"project:other"})
+        ))["ok"],
+        true
+    );
+    assert_eq!(session.call(req("other-msg",json!({"type":"message_append","chat_id":"other","message_id":"secret-other","role":"user","content":"other project secret"})))["ok"],true);
+    assert_eq!(session.call(req("manual-assistant",json!({"type":"message_append","chat_id":"one","message_id":"manual-assistant","role":"assistant","content":"manual answer"})))["ok"],true);
+    assert_eq!(session.call(req("manual-system",json!({"type":"message_append","chat_id":"one","message_id":"manual-system","role":"system","content":"system instruction"})))["ok"],true);
+    let second=session.call(req("turn-2",json!({"type":"conversation_start","chat_id":"one","model_id":"selected","content":"E agora?"})));
+    assert_eq!(second["ok"], true, "{second}");
+    assert_eq!(poll(&mut session, "turn-2")["status"], "succeeded");
+    let second_payload: Value =
+        serde_json::from_slice(&std::fs::read(&fixture.marker).unwrap()).unwrap();
+    assert_eq!(
+        second_payload["messages"],
+        json!([{"role":"user","content":"Olá, ação?"},{"role":"assistant","content":"Olá, ação"},{"role":"assistant","content":"manual answer"},{"role":"system","content":"system instruction"},{"role":"user","content":"E agora?"}])
+    );
+    assert!(!second_payload.to_string().contains("other project secret"));
     let chat = session.call(req("read", json!({"type":"chat_get","chat_id":"one"})));
     let messages = chat["result"]["messages"].as_array().unwrap();
-    assert_eq!(messages.len(), 2, "{chat}");
+    assert_eq!(messages.len(), 6, "{chat}");
     assert_eq!(messages[0]["role"], "user");
     assert_eq!(messages[1]["role"], "assistant");
     assert_eq!(messages[0]["content"], "Olá, ação?");
     assert_eq!(messages[1]["content"], "Olá, ação");
+    assert_eq!(messages[2]["content"], "manual answer");
+    assert_eq!(messages[3]["content"], "system instruction");
+    assert_eq!(messages[4]["content"], "E agora?");
+    assert_eq!(messages[5]["content"], "Olá, ação");
+}
+
+#[test]
+fn oversized_conversation_is_rejected_without_appending_new_user() {
+    let _guard = TEST_LOCK.lock().unwrap();
+    let root = TempDir::new().unwrap();
+    let mut session = Session::new(&root, None);
+    register(&mut session, "http://127.0.0.1:65534");
+    assert_eq!(
+        session.call(req(
+            "chat",
+            json!({"type":"chat_create","chat_id":"one","title":"One","scope":"project:test"})
+        ))["ok"],
+        true
+    );
+    for n in 0..2 {
+        let message=session.call(req(&format!("old-{n}"),json!({"type":"message_append","chat_id":"one","message_id":format!("old-{n}"),"role":"user","content":"a".repeat(30_000)})));
+        assert_eq!(message["ok"], true, "{message}");
+    }
+    let rejected=session.call(req("too-much",json!({"type":"conversation_start","chat_id":"one","model_id":"selected","content":"new message"})));
+    assert_eq!(rejected["error"]["code"], "invalid_request", "{rejected}");
+    let chat = session.call(req("read", json!({"type":"chat_get","chat_id":"one"})));
+    assert_eq!(chat["result"]["messages"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        chat["result"]["messages"][1]["content"]
+            .as_str()
+            .unwrap()
+            .len(),
+        30_000
+    );
 }
 
 #[test]

@@ -31,7 +31,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         assert request["model"] == "selected" and request["stream"] is False
-        marker.write_text("POST", encoding="utf-8")
+        marker.write_text(json.dumps(request,ensure_ascii=False), encoding="utf-8")
         while held and not release.exists():
             time.sleep(.01)
         try:

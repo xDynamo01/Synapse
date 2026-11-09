@@ -17,7 +17,7 @@ def main():
         validate(request)
         response["request_id"] = request["request_id"]
         response["digest"] = digest(request)
-        response["content"] = infer(request["endpoint"], request["model_id"], request["prompt"])
+        response["content"] = infer(request["endpoint"], request["model_id"], request["messages"])
         response["ok"] = True
         response["error"] = None
     except ProviderError as error:

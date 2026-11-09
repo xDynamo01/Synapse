@@ -56,14 +56,14 @@ def _json(url, payload=None):
         raise ProviderError("provider_malformed") from None
 
 
-def infer(endpoint, model_id, prompt):
+def infer(endpoint, model_id, messages):
     base = validate_endpoint(endpoint)
     models = _json(base + "/models")
     if not isinstance(models, dict) or not isinstance(models.get("data"), list):
         raise ProviderError("provider_malformed")
     if not any(isinstance(item, dict) and item.get("id") == model_id for item in models["data"]):
         raise ProviderError("model_unavailable")
-    result = _json(base + "/chat/completions", {"model": model_id, "messages": [{"role": "user", "content": prompt}], "stream": False, "max_tokens": 1024})
+    result = _json(base + "/chat/completions", {"model": model_id, "messages": messages, "stream": False, "max_tokens": 1024})
     try:
         choices = result["choices"]
         if not isinstance(choices, list) or len(choices) != 1:

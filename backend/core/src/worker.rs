@@ -40,7 +40,7 @@ fn digest(request: &Value) -> CoreResult<String> {
 }
 
 pub(crate) fn run(launch: Launch, stop: Arc<Stop>) -> Result<String, String> {
-    let bare = json!({"version":1,"request_id":launch.id,"model_id":launch.model_id,"endpoint":launch.endpoint,"prompt":launch.prompt});
+    let bare = json!({"version":1,"request_id":launch.id,"model_id":launch.model_id,"endpoint":launch.endpoint,"messages":launch.messages});
     let digest = digest(&bare).map_err(|_| "worker_protocol".to_string())?;
     let mut request = bare.clone();
     request["digest"] = json!(digest);

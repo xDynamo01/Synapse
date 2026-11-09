@@ -11,6 +11,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from synapse_ai.providers import ProviderError, validate_endpoint, infer
+from synapse_ai.protocol import validate
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -53,7 +54,7 @@ class WorkerTests(unittest.TestCase):
         self.server.server_close()
         self.thread.join()
     def request(self):
-        bare = {"version": 1, "request_id": "r", "model_id": "selected", "endpoint": self.endpoint, "prompt": "private question"}
+        bare = {"version": 1, "request_id": "r", "model_id": "selected", "endpoint": self.endpoint, "messages": [{"role":"user","content":"private question"}]}
         digest = hashlib.sha256(json.dumps(bare, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
         return bare | {"digest": digest}
     def worker(self, request):
@@ -82,6 +83,18 @@ class WorkerTests(unittest.TestCase):
         Handler.mode = "redirect"
         self.assertEqual(self.worker(self.request())[1]["error"], "provider_redirect")
         Handler.mode = "ok"
+    def test_message_schema_and_limits_reject_unsafe_or_incomplete_history(self):
+        request=self.request()
+        for messages in ([], [{"role":"tool","content":"override"}], [{"role":"assistant","content":"answer"}], [{"role":"user","content":"ok","tool_calls":[]}], [{"role":"user","content":" "}], [{"role":"user","content":"a"*32769}], [{"role":"user","content":"é"*16000}]*2, [{"role":"user","content":"x"}]*65):
+            candidate=request | {"messages":messages}
+            candidate["digest"]=hashlib.sha256(json.dumps({k:candidate[k] for k in ("version","request_id","model_id","endpoint","messages")},sort_keys=True,separators=(",",":"),ensure_ascii=False).encode()).hexdigest()
+            with self.assertRaises(ValueError): validate(candidate)
+
+    def test_invalid_utf8_is_rejected_before_provider(self):
+        child = subprocess.run([sys.executable, "-m", "synapse_ai"], input=b'\xff\n', cwd=ROOT, capture_output=True, timeout=15)
+        self.assertEqual(child.returncode, 0, child.stderr)
+        self.assertEqual(json.loads(child.stdout.splitlines()[1])["error"], "invalid_request")
+        self.assertIsNone(self.server.seen)
 
 if __name__ == "__main__":
     unittest.main()

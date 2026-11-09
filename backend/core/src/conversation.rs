@@ -11,7 +11,7 @@ pub(crate) struct Launch {
     pub id: String,
     pub model_id: String,
     pub endpoint: String,
-    pub prompt: String,
+    pub messages: Vec<Value>,
 }
 
 fn message_id(job_id: &str, role: &str) -> String {
@@ -55,6 +55,35 @@ pub(crate) fn start(
         user_message_id = Some(user);
         assistant_message_id = Some(message_id(id, "assistant"));
     }
+    let messages = if let Some(chat_id) = chat_id {
+        let mut statement = tx.prepare(
+            "SELECT role,content FROM messages WHERE chat_id=?1 ORDER BY sequence LIMIT 65",
+        )?;
+        let rows = statement.query_map([chat_id], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        })?;
+        let mut messages = Vec::new();
+        let mut bytes = 2usize;
+        for row in rows {
+            let (role, content) = row?;
+            let message = json!({"role":role,"content":content});
+            bytes += serde_json::to_vec(&message)?.len() + usize::from(!messages.is_empty());
+            messages.push(message);
+            if messages.len() > 64 || bytes > 48_000 {
+                return Err(CoreError::invalid(
+                    "Conversation context exceeds 64 messages or 48000 bytes",
+                ));
+            }
+        }
+        messages
+    } else {
+        vec![json!({"role":"user","content":prompt})]
+    };
+    if serde_json::to_vec(&messages)?.len() > 48_000 {
+        return Err(CoreError::invalid(
+            "Conversation context exceeds 64 messages or 48000 bytes",
+        ));
+    }
     tx.execute("INSERT INTO ai_jobs(id,kind,chat_id,model_id,status,user_message_id,assistant_message_id) VALUES(?1,?2,?3,?4,'running',?5,?6)", params![id, if chat_id.is_some() {"conversation"} else {"inference"}, chat_id, model_id, user_message_id, assistant_message_id])?;
     store::event(
         tx,
@@ -67,7 +96,7 @@ pub(crate) fn start(
             id: id.into(),
             model_id: model_id.into(),
             endpoint: manifest.endpoint,
-            prompt: prompt.into(),
+            messages,
         },
     ))
 }
