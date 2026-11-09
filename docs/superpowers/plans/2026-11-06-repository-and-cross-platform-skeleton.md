@@ -104,6 +104,11 @@ is the permanent policy-negative entry point. No product process runs yet.
   install => nonzero; wrong Python/Node/pnpm patches => `TOOLCHAIN_VERSION`.
   An allowed new-source fixture returns `[]` and canary values never appear in
   diagnostics. Inspect actual import/configuration edges, not prose matches.
+
+  ```ts
+  assert.deepEqual(await checkRepository(allowedFixtureRoot), []);
+  assert.deepEqual(await checkRepository(archiveImportFixtureRoot), ['ARCHIVE_IMPORT']);
+  ```
 - [ ] **Step 2:** Run `node tools/repository/test-policy.mjs`; expect missing
   implementation failure and record RED.
 - [ ] **Step 3:** Implement `checkRepository` and exact workspaces from Task 1.
@@ -137,6 +142,16 @@ prints the same allowlisted object. Unknown actions exit 2 with `UNKNOWN_ACTION`
   creation by Core check; generated types reject wrong identifier/cursor types.
   Compare schema field numbers/names/service signatures to ADR 0002; deletions
   must reserve tags/names and breaking change must require a new major.
+
+  ```python
+  assert check() == {"healthy": True, "contractVersion": "1.0"}
+  ```
+
+  ```ts
+  assert.deepEqual(parseStatus({ healthy: true, contractVersion: '1.0' }),
+    { healthy: true, contractVersion: '1.0' });
+  assert.throws(() => parseStatus({ healthy: true, contractVersion: '2.0' }), /INVALID_STATUS/);
+  ```
 - [ ] **Step 2:** Run `uv run --locked pytest tests/skeleton/test_bootstrap.py -q`
   and `pnpm test:skeleton:contracts`; expect missing bootstrap/parser/generation RED.
 - [ ] **Step 3:** Implement the exact interfaces. Publish the approved schema

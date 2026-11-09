@@ -75,7 +75,7 @@ its README; use `TRANSPORT=grpc` for selected transport commands.
 
 ```powershell
 pwsh -NoProfile -File tools/foundation/test-host-capabilities.ps1
-uv run --locked --no-build --python 3.14.10 --project experiments/runtime-compatibility pytest -q -p no:cacheprovider
+uv run --locked --no-build --python 3.14.10 --directory experiments/runtime-compatibility pytest -q -p no:cacheprovider
 pnpm --dir experiments/runtime-compatibility install --frozen-lockfile --ignore-scripts
 pnpm --dir experiments/runtime-compatibility test
 uv sync --locked --no-build --python 3.14.10 --project experiments/transport
@@ -84,7 +84,7 @@ pnpm --dir experiments/transport install --frozen-lockfile --ignore-scripts
 $env:TRANSPORT = 'grpc'
 uv run --locked --python 3.14.10 --project experiments/transport pytest experiments/transport/tests -q -ra -p no:cacheprovider
 pnpm --dir experiments/transport test
-uv run --locked --no-build --python 3.14.10 --project experiments/persistence python -u -B -m pytest -q -s -p no:cacheprovider
+uv run --locked --no-build --python 3.14.10 --directory experiments/persistence python -u -B -m pytest -q -s -p no:cacheprovider
 pwsh -NoProfile -File tools/foundation/test-security-docs.ps1
 pwsh -NoProfile -File tools/foundation/test-gate-00.ps1 -ReceiptPath .local/gate-00/receipts.json
 git status --porcelain
@@ -99,6 +99,14 @@ and `checks`. Required names: `host`, `runtime-python`, `runtime-typescript`,
 `transport-python`, `transport-typescript`, `persistence`, `security`.
 The aggregate verifies actual successful-suite output (12/3, 3/2 and 10 tests,
 including all 120 crash iterations), not just an editable PASS label.
+
+Use `--directory` for the runtime/persistence pytest invocations: `--project`
+alone selects the environment but leaves pytest at the repository root, where
+the experiments' independent `tests` packages collide. The first fresh-clone
+attempt reproduced that collection failure (exit 2); it is retained in the
+execution report and is not counted as a passing selected-suite run. Keep
+`UV_PYTHON_BIN_DIR` local while provisioning managed Python to avoid touching
+user-level executable shims.
 
 ## Limitations
 
