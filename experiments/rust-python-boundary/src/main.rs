@@ -4,10 +4,28 @@ use pyo3::types::PyModule;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::ffi::CString;
+use std::fs::File;
 use std::io::{self, Read, Write};
-use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{self, Receiver};
 use std::time::Duration;
+
+#[cfg(windows)]
+mod containment;
+#[cfg(not(windows))]
+mod containment {
+    use std::{ffi::OsString, fs::File, io};
+    pub struct Process;
+    impl Process {
+        pub fn launch(_: OsString, _: &str) -> io::Result<(Self, File, File)> {
+            Err(io::Error::other(
+                "OS containment NOT IMPLEMENTED on this platform",
+            ))
+        }
+        pub fn stop(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+}
 
 const ENGINE: &str = include_str!("../engine.py");
 const LIMIT: usize = 4096;
@@ -104,8 +122,8 @@ fn validate_event(raw: Vec<u8>, id: u32) -> io::Result<Vec<u8>> {
 }
 
 struct Worker {
-    child: Child,
-    stdin: Option<ChildStdin>,
+    child: containment::Process,
+    stdin: Option<File>,
     rx: Receiver<io::Result<Vec<u8>>>,
     dead: bool,
 }
@@ -114,20 +132,7 @@ impl Worker {
         let executable = std::env::var_os("SYNAPSE_SPIKE_PYTHON").ok_or_else(|| {
             io::Error::other("set SYNAPSE_SPIKE_PYTHON to measured absolute interpreter")
         })?;
-        let mut command = Command::new(executable);
-        command
-            .args(["-I", "-S", "-u", "-c", ENGINE])
-            .env_clear()
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null());
-        // Windows' loader may require SystemRoot; no user Python environment is inherited.
-        if let Some(root) = std::env::var_os("SystemRoot") {
-            command.env("SystemRoot", root);
-        }
-        let mut child = command.spawn()?;
-        let stdin = child.stdin.take();
-        let mut stdout = child.stdout.take().unwrap();
+        let (child, stdin, mut stdout) = containment::Process::launch(executable, ENGINE)?;
         let (tx, rx) = mpsc::sync_channel(1);
         std::thread::spawn(move || {
             loop {
@@ -144,7 +149,7 @@ impl Worker {
         });
         Ok(Self {
             child,
-            stdin,
+            stdin: Some(stdin),
             rx,
             dead: false,
         })
@@ -156,8 +161,9 @@ impl Worker {
     }
     fn stop(&mut self) {
         self.stdin.take();
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        if let Err(error) = self.child.stop() {
+            eprintln!("{error}");
+        }
         self.dead = true;
     }
     fn dispatch(&mut self, raw: &[u8], id: u32) -> Vec<u8> {

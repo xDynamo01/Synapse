@@ -2,6 +2,7 @@
 import json
 import os
 import struct
+import subprocess
 import sys
 import threading
 import time
@@ -84,12 +85,28 @@ def write_frame(raw):
 
 if __name__ == "__main__":
     engine = Engine()
-    write_frame(engine.hello())
+    # Explicit synthetic lifetime fixture, absent from the compared protocol.
+    fixture = sys.argv[1] if len(sys.argv) == 2 else None
+    descendant = None
+    hello = json.loads(engine.hello())
+    if fixture in ("fixture-hang", "fixture-busy"):
+        descendant = subprocess.Popen(
+            [sys.executable, "-I", "-S", "-c", "import time; time.sleep(60)"],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL, close_fds=True)
+        hello["fixture_descendant_pid"] = descendant.pid
+    write_frame(json.dumps(hello))
     try:
         while True:
             size = struct.unpack(">I", read_exact(sys.stdin.buffer, 4))[0]
             if not 1 <= size <= LIMIT:
                 sys.exit(65)
             write_frame(engine.dispatch(read_exact(sys.stdin.buffer, size).decode("utf-8")))
+            if fixture == "fixture-hang":
+                time.sleep(60)
+            elif fixture == "fixture-busy":
+                end = time.monotonic() + 60
+                while time.monotonic() < end:
+                    pass
     except EOFError:
-        pass  # Rust death closes owned stdin; daemon fixture thread cannot keep worker alive.
+        pass  # Cooperative exit only; Windows Job Object owns abrupt-death cleanup.
