@@ -108,11 +108,13 @@ execution report and is not counted as a passing selected-suite run. Keep
 `UV_PYTHON_BIN_DIR` local while provisioning managed Python to avoid touching
 user-level executable shims.
 
-Keep Windows clone paths short enough for the selected native TypeScript/pnpm
-layout. A deeply nested `.superpowers` clone reproduced `TS2688` for `node`
+Use a Windows clone root no longer than the tested 48 characters for this
+TypeScript/pnpm layout. A 119-character nested `.superpowers` root reproduced `TS2688` for `node`
 types after a successful frozen install despite the type junction existing;
-that attempt is a FAIL, not a passing receipt. The final execution report
-identifies the short clean-clone root and its measured result. No dependency,
+that attempt is a FAIL, not a passing receipt. Identical type-file hashes passed
+at the short root; path sensitivity is inferred, but the exact threshold and
+compiler/resolver cause are unmeasured. The final execution report identifies
+the short clean-clone root and its measured result. No dependency,
 compiler option, test assertion or OS setting was weakened to work around it.
 
 ## Limitations

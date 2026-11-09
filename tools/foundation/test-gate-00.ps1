@@ -7,8 +7,8 @@ $root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 Set-Location -LiteralPath $root
 $reportPath = 'docs/evidence/foundation/gate-00-report.md'
 $required = @{
-    host = 'PASS'; 'runtime-python' = '12 passed'; 'runtime-typescript' = '# pass 3'
-    'transport-python' = '3 passed'; 'transport-typescript' = '# pass 2'
+    host = 'PASS'; 'runtime-python' = '12 passed'; 'runtime-typescript' = '(?:#|ℹ)\s+pass 3(?:\r?\n|$)'
+    'transport-python' = '3 passed'; 'transport-typescript' = '(?:#|ℹ)\s+pass 2(?:\r?\n|$)'
     persistence = '120 pre_commit=60 acknowledged=60 acknowledged_loss=0 partial_visibility=0 integrity_pass=120'
     security = 'PASS 13 negative cases'
 }
@@ -45,7 +45,7 @@ function Get-GateErrors([hashtable] $State) {
             $errors.Add("Failed/incomplete receipt: $name.")
         }
         if (-not $State.logs.ContainsKey($name) -or $State.logs[$name].hash -cne $row.sha256 -or
-            $State.logs[$name].text -notmatch [regex]::Escape($required[$name])) { $errors.Add("Invalid log evidence: $name.") }
+            $State.logs[$name].text -notmatch $required[$name]) { $errors.Add("Invalid log evidence: $name.") }
         if ($name -eq 'persistence' -and $State.logs[$name].text -notmatch '10 passed') { $errors.Add('Incomplete persistence suite.') }
     }
     return $errors.ToArray()
