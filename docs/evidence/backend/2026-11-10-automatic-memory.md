@@ -19,6 +19,8 @@ Human source: `Meu projeto utiliza Rust no núcleo e Python nos componentes de I
 The conversation succeeded. Automatic learning produced one active canonical
 record, key `projeto`, kind `decision`, revision1. Its content exactly matched
 the source and its provenance named the real human message and source job.
+The model selected `decision` for a descriptive statement; this demonstrates
+fallible semantic typing rather than proof of correct fact classification.
 The client retrieved it with the explicit matching project context, restarted
 Core, and retrieved the identical record with no extra revision.
 
@@ -52,6 +54,8 @@ Ignored controller artifacts are retained under the parent program's
 The controller built/copied the executable from the stated source. Model identity
 is the observed local server alias; neither constitutes cryptographic attestation
 of the model or a reproducible independent binary rebuild.
+An independent scoped reviewer checked the helper, hashes, receipt and server
+log and accepted the observed extraction, restart and provider preemption evidence.
 
 ## Verification and limits
 
