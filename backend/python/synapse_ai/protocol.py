@@ -1,7 +1,7 @@
 import hashlib
 import json
 
-VERSION = 2
+VERSION = 3
 MAX_LINE = 65536
 MAX_CONTENT = 32768
 MAX_MESSAGES = 64
@@ -9,15 +9,17 @@ MAX_CONTEXT_BYTES = 48000
 
 
 def digest(request):
-    payload = {key: request[key] for key in ("version", "request_id", "model_id", "endpoint", "messages", "generation")}
+    payload = {key: request[key] for key in ("version", "request_id", "model_id", "endpoint", "messages", "generation", "purpose")}
     return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
 
 
 def validate(request):
-    if not isinstance(request, dict) or set(request) != {"version", "request_id", "model_id", "endpoint", "messages", "generation", "digest"}:
+    if not isinstance(request, dict) or set(request) != {"version", "request_id", "model_id", "endpoint", "messages", "generation", "purpose", "digest"}:
         raise ValueError("invalid_request")
     if type(request["version"]) is not int or request["version"] != VERSION:
         raise ValueError("unsupported_version")
+    if request["purpose"] not in ("conversation", "learning"):
+        raise ValueError("invalid_request")
     generation = request['generation']
     if (not isinstance(generation, dict) or set(generation) != {'max_output_tokens', 'timeout_ms', 'reasoning_effort'}
             or type(generation['max_output_tokens']) is not int or not 1 <= generation['max_output_tokens'] <= 4096

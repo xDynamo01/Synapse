@@ -41,10 +41,14 @@ pub(crate) fn put(
     let provenance_json = serde_json::to_string(provenance)?;
     let result = json!({"scope":project_scope,"key":key,"revision":revision,"kind":kind,"content":content,"status":status,"provenance":provenance});
     tx.execute("INSERT INTO memory(scope,key,revision,kind,content,status,provenance) VALUES(?1,?2,?3,?4,?5,?6,?7)",params![project_scope,key,revision,kind,content,status,provenance_json])?;
-    store::event(
+    let origin = store::event(
         tx,
         "memory_revision_created",
         json!({"scope":project_scope,"key":key,"revision":revision,"kind":kind,"status":status}),
+    )?;
+    tx.execute(
+        "UPDATE memory SET origin_cursor=?4 WHERE scope=?1 AND key=?2 AND revision=?3",
+        params![project_scope, key, revision, origin as i64],
     )?;
     Ok(result)
 }

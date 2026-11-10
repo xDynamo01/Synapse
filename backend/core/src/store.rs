@@ -41,7 +41,7 @@ impl Store {
         connection.pragma_update(None, "synchronous", "FULL")?;
         let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let version: u32 = tx.pragma_query_value(None, "user_version", |r| r.get(0))?;
-        if version > 5 {
+        if version > 6 {
             return Err(CoreError::new(
                 "unsupported_storage_version",
                 "Database schema is newer than this Core",
@@ -75,6 +75,16 @@ PRAGMA user_version=1;")?;
         if version < 5 {
             tx.execute_batch("ALTER TABLE ai_jobs ADD COLUMN generation TEXT NOT NULL DEFAULT '{\"max_output_tokens\":1024,\"timeout_ms\":10000,\"reasoning_effort\":\"provider_default\"}'; PRAGMA user_version=5;")?;
         }
+        if version < 6 {
+            tx.execute_batch("ALTER TABLE ai_jobs ADD COLUMN endpoint TEXT NOT NULL DEFAULT ''; ALTER TABLE ai_jobs ADD COLUMN source_cursor INTEGER NOT NULL DEFAULT 0; ALTER TABLE memory ADD COLUMN origin_cursor INTEGER NOT NULL DEFAULT 0; CREATE TABLE learning_jobs(source_job_id TEXT PRIMARY KEY REFERENCES ai_jobs(id), status TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, error TEXT); CREATE TABLE learning_conflicts(source_job_id TEXT NOT NULL, scope TEXT NOT NULL, key TEXT NOT NULL, reason TEXT NOT NULL, PRIMARY KEY(source_job_id,scope,key)); PRAGMA user_version=6;")?;
+            // Existing manual records predate origin tracking; place them after all
+            // existing source events rather than allowing an old extraction to win.
+            tx.execute(
+                "UPDATE memory SET origin_cursor=(SELECT COALESCE(MAX(cursor),0) FROM events)",
+                [],
+            )?;
+        }
+        tx.execute("UPDATE learning_jobs SET status=CASE WHEN attempts<3 THEN 'queued' ELSE 'failed' END,error='worker_interrupted' WHERE status='running'", [])?;
         let recorded: String = tx.query_row(
             "SELECT value FROM metadata WHERE key='workspace_root'",
             [],

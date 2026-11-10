@@ -116,6 +116,9 @@ pub enum Command {
     JobGet {
         job_id: String,
     },
+    LearningGet {
+        source_job_id: String,
+    },
     JobCancel {
         job_id: String,
     },

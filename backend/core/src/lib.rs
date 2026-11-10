@@ -2,6 +2,7 @@ mod chats;
 pub mod contracts;
 mod conversation;
 mod core;
+mod learning;
 mod memory;
 mod missions;
 mod registry;

@@ -1,7 +1,7 @@
 use crate::{
     chats,
     contracts::*,
-    conversation, memory, missions, registry,
+    conversation, learning, memory, missions, registry,
     store::{self, Store},
     tools, worker,
 };
@@ -17,6 +17,7 @@ struct Active {
     id: String,
     stop: Arc<worker::Stop>,
     result: Receiver<Result<String, String>>,
+    learning: bool,
 }
 
 /// Local human client entrypoint. Never expose dispatch to worker output.
@@ -44,9 +45,27 @@ impl Core {
         if let Err(error) = self.drain() {
             return Response::failure(Some(request.request_id), self.event_cursor(), error);
         }
+        if matches!(
+            &request.command,
+            Command::ConversationStart { .. } | Command::Inference { .. }
+        ) && self.active.as_ref().is_some_and(|a| a.learning)
+        {
+            let active = self.active.take().unwrap();
+            active.stop.cancel();
+            let _ = active.result.recv();
+            let outcome = (|| -> CoreResult<()> {
+                let tx = self.store.transaction()?;
+                learning::requeue(&tx, &active.id)?;
+                tx.commit()?;
+                Ok(())
+            })();
+            if let Err(error) = outcome {
+                return Response::failure(Some(request.request_id), self.event_cursor(), error);
+            }
+        }
         let id = Some(request.request_id.clone());
         let result = self.dispatch_durable(&request);
-        match result {
+        let response = match result {
             Ok(response) => {
                 if response.ok {
                     if let Command::JobCancel { job_id } = &request.command {
@@ -60,7 +79,19 @@ impl Core {
                 response
             }
             Err(error) => Response::failure(id, self.store.event_cursor().unwrap_or(0), error),
+        };
+        if self.active.is_none() {
+            let next = (|| -> CoreResult<Option<conversation::Launch>> {
+                let tx = self.store.transaction()?;
+                let next = learning::start(&tx)?;
+                tx.commit()?;
+                Ok(next)
+            })();
+            if let Ok(Some(launch)) = next {
+                self.launch(launch);
+            }
         }
+        response
     }
     pub fn event_cursor(&self) -> u64 {
         self.store.event_cursor().unwrap_or(0)
@@ -835,13 +866,19 @@ impl Core {
     }
     fn launch(&mut self, launch: conversation::Launch) {
         let id = launch.id.clone();
+        let learning = launch.learning;
         let stop = Arc::new(worker::Stop::default());
         let (sender, result) = mpsc::sync_channel(1);
         let worker_stop = stop.clone();
         std::thread::spawn(move || {
             let _ = sender.send(worker::run(launch, worker_stop));
         });
-        self.active = Some(Active { id, stop, result });
+        self.active = Some(Active {
+            id,
+            stop,
+            result,
+            learning,
+        });
     }
     fn drain(&mut self) -> CoreResult<()> {
         let Some(active) = &self.active else {
@@ -854,7 +891,11 @@ impl Core {
         };
         let id = active.id.clone();
         let tx = self.store.transaction()?;
-        conversation::complete(&tx, &id, outcome)?;
+        if active.learning {
+            learning::complete(&tx, &id, outcome)?;
+        } else {
+            conversation::complete(&tx, &id, outcome)?;
+        }
         tx.commit()?;
         self.active = None;
         Ok(())
@@ -909,7 +950,7 @@ fn dispatch_tx(
 ) -> CoreResult<Value> {
     match command {
         Command::Health => Ok(
-            json!({"identity":"A.R.T.E.M.I.S.","protocol_version":1,"storage_schema":5,"journal_mode":"wal","synchronous":"full"}),
+            json!({"identity":"A.R.T.E.M.I.S.","protocol_version":1,"storage_schema":6,"journal_mode":"wal","synchronous":"full"}),
         ),
         Command::EventsRead { after, limit } => store::events_read(tx, *after, *limit),
         Command::ChatCreate {
@@ -1020,6 +1061,7 @@ fn dispatch_tx(
             Ok(result)
         }
         Command::JobGet { job_id } => conversation::get(tx, job_id),
+        Command::LearningGet { source_job_id } => learning::get(tx, source_job_id),
         Command::JobCancel { job_id } => conversation::cancel(tx, job_id),
         Command::MissionExecute { .. } => Err(CoreError::new(
             "capability_unavailable",

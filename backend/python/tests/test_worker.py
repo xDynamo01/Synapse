@@ -45,7 +45,7 @@ class Handler(BaseHTTPRequestHandler):
 class WorkerTests(unittest.TestCase):
     def test_generation_mapping_and_validation(self):
         request = self.request()
-        request['version'] = 2
+        request['version'] = 3
         request['generation'] = {'max_output_tokens': 32, 'timeout_ms': 2000, 'reasoning_effort': 'none'}
         request['digest'] = hashlib.sha256(json.dumps({k:v for k,v in request.items() if k != 'digest'}, sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode()).hexdigest()
         self.assertTrue(self.worker(request)[1]['ok'])
@@ -73,7 +73,7 @@ class WorkerTests(unittest.TestCase):
         self.server.server_close()
         self.thread.join()
     def request(self):
-        bare = {"version": 2, "request_id": "r", "model_id": "selected", "endpoint": self.endpoint, "messages": [{"role":"user","content":"private question"}], "generation": {"max_output_tokens":1024,"timeout_ms":10000,"reasoning_effort":"provider_default"}}
+        bare = {"version": 3, "request_id": "r", "model_id": "selected", "endpoint": self.endpoint, "messages": [{"role":"user","content":"private question"}], "generation": {"max_output_tokens":1024,"timeout_ms":10000,"reasoning_effort":"provider_default"}, "purpose":"conversation"}
         digest = hashlib.sha256(json.dumps(bare, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
         return bare | {"digest": digest}
     def worker(self, request):
@@ -82,7 +82,7 @@ class WorkerTests(unittest.TestCase):
         return [json.loads(line) for line in child.stdout.splitlines()]
     def test_handshake_real_loopback_and_bound_request(self):
         hello, answer = self.worker(self.request())
-        self.assertEqual(hello, {"type": "hello", "version": 2})
+        self.assertEqual(hello, {"type": "hello", "version": 3})
         self.assertTrue(answer["ok"])
         self.assertEqual(answer["content"], "answer")
         self.assertEqual(self.server.seen, {"model": "selected", "messages": [{"role": "user", "content": "private question"}], "stream": False, "max_tokens": 1024})
@@ -92,6 +92,19 @@ class WorkerTests(unittest.TestCase):
         request = self.request(); request["version"] = 1
         self.assertEqual(self.worker(request)[1]["error"], "unsupported_version")
         self.assertIsNone(self.server.seen)
+    def test_learning_purpose_maps_only_to_static_structured_schema(self):
+        request = self.request()
+        request['purpose'] = 'learning'
+        request['digest'] = hashlib.sha256(json.dumps({k:v for k,v in request.items() if k != 'digest'}, sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode()).hexdigest()
+        self.assertTrue(self.worker(request)[1]['ok'])
+        schema = self.server.seen['response_format']['json_schema']['schema']
+        self.assertEqual(schema['additionalProperties'], False)
+        self.assertEqual(schema['properties']['candidates']['maxItems'], 8)
+        self.assertNotIn('$ref', json.dumps(schema))
+        request['purpose'] = 'other'
+        with self.assertRaises(ValueError): validate(request)
+        request['version'] = 2
+        with self.assertRaises(ValueError): validate(request)
     def test_endpoint_and_model_and_malformed_are_distinct(self):
         for url in ("https://127.0.0.1:1", "http://localhost:1", "http://127.0.0.1:1/v1/other", "http://user@127.0.0.1:1"):
             with self.assertRaises(ProviderError): validate_endpoint(url)
@@ -106,7 +119,7 @@ class WorkerTests(unittest.TestCase):
         request=self.request()
         for messages in ([], [{"role":"tool","content":"override"}], [{"role":"assistant","content":"answer"}], [{"role":"user","content":"ok","tool_calls":[]}], [{"role":"user","content":" "}], [{"role":"user","content":"a"*32769}], [{"role":"user","content":"é"*16000}]*2, [{"role":"user","content":"x"}]*65):
             candidate=request | {"messages":messages}
-            candidate["digest"]=hashlib.sha256(json.dumps({k:candidate[k] for k in ("version","request_id","model_id","endpoint","messages","generation")},sort_keys=True,separators=(",",":"),ensure_ascii=False).encode()).hexdigest()
+            candidate["digest"]=hashlib.sha256(json.dumps({k:v for k,v in candidate.items() if k != "digest"},sort_keys=True,separators=(",",":"),ensure_ascii=False).encode()).hexdigest()
             with self.assertRaises(ValueError): validate(candidate)
 
     def test_invalid_utf8_is_rejected_before_provider(self):

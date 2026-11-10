@@ -146,6 +146,275 @@ fn poll(session: &mut Session, job: &str) -> Value {
     }
 }
 
+fn poll_learning(session: &mut Session, job: &str) -> Value {
+    let started = Instant::now();
+    for i in 0..1000 {
+        let value = session.call(req(
+            &format!("learn-poll-{job}-{i}"),
+            json!({"type":"learning_get","source_job_id":job}),
+        ));
+        assert_eq!(value["ok"], true, "{value}");
+        if value["result"]["status"] == "succeeded" || value["result"]["status"] == "failed" {
+            return value["result"].clone();
+        }
+        assert!(started.elapsed() < Duration::from_secs(18));
+        thread::sleep(Duration::from_millis(25));
+    }
+    panic!("learning did not finish")
+}
+
+#[test]
+fn automatic_memory_is_source_backed_versioned_and_batch_validated() {
+    let _guard = TEST_LOCK.lock().unwrap();
+    let root = TempDir::new().unwrap();
+    let fixture = Fixture::new(false);
+    let mut session = Session::new(&root, None);
+    register(&mut session, &fixture.address);
+    assert_eq!(
+        session.call(req(
+            "chat",
+            json!({"type":"chat_create","chat_id":"one","title":"One","scope":"project:a"})
+        ))["ok"],
+        true
+    );
+    let scripted = fixture.marker.parent().unwrap().join("learning-response");
+    let run = |session: &mut Session, job: &str, content: &str, candidates: Value| {
+        std::fs::write(&scripted, json!({"candidates":candidates}).to_string()).unwrap();
+        assert_eq!(session.call(req(job,json!({"type":"conversation_start","chat_id":"one","model_id":"selected","content":content})))["ok"],true);
+        assert_eq!(poll(session, job)["status"], "succeeded");
+        poll_learning(session, job)
+    };
+    let a = json!([{"key":"color","kind":"fact","content":"I prefer blue"}]);
+    assert_eq!(
+        run(&mut session, "auto1", "I prefer blue", a.clone())["status"],
+        "succeeded"
+    );
+    let sent: Value = serde_json::from_slice(
+        &std::fs::read(fixture.marker.parent().unwrap().join("learning-post")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(sent["messages"].as_array().unwrap().len(), 2);
+    assert_eq!(sent["messages"][1]["content"], "I prefer blue");
+    assert!(sent.get("response_format").is_some());
+    assert_eq!(
+        run(&mut session, "auto2", "I prefer blue", a)["status"],
+        "succeeded"
+    );
+    assert_eq!(
+        run(
+            &mut session,
+            "auto3",
+            "I prefer green",
+            json!([{"key":"color","kind":"fact","content":"I prefer green"}])
+        )["status"],
+        "succeeded"
+    );
+    let read = |session: &mut Session, id: &str, ctx: &str| {
+        session.call(req(
+            id,
+            json!({"type":"memory_get","scope":"project:a","context_reference":ctx,"key":"color"}),
+        ))
+    };
+    let memory = read(&mut session, "read", "project:a");
+    assert_eq!(memory["result"]["revisions"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        memory["result"]["revisions"][1]["content"],
+        "I prefer green"
+    );
+    assert_eq!(
+        memory["result"]["revisions"][1]["provenance"]["source_job_id"],
+        "auto3"
+    );
+    assert_eq!(
+        read(&mut session, "denied", "project:b")["error"]["code"],
+        "context_denied"
+    );
+    assert_eq!(
+        run(
+            &mut session,
+            "bad",
+            "I prefer red",
+            json!([{"key":"color","kind":"fact","content":"I prefer red"},{"key":"other","kind":"fact","content":"invented"}])
+        )["error"],
+        "invalid_candidates"
+    );
+    assert_eq!(
+        run(
+            &mut session,
+            "secret",
+            "password=abc",
+            json!([{"key":"password","kind":"fact","content":"password=abc"}])
+        )["error"],
+        "invalid_candidates"
+    );
+    assert_eq!(
+        run(
+            &mut session,
+            "scope-injection",
+            "I prefer red",
+            json!([{"key":"color","kind":"fact","content":"I prefer red","scope":"global"}])
+        )["error"],
+        "invalid_candidates"
+    );
+    assert_eq!(
+        run(
+            &mut session,
+            "duplicate-key",
+            "I prefer red",
+            json!([{"key":"color","kind":"fact","content":"I prefer red"},{"key":"color","kind":"fact","content":"I prefer red"}])
+        )["error"],
+        "invalid_candidates"
+    );
+    let long = "x".repeat(513);
+    assert_eq!(
+        run(
+            &mut session,
+            "oversize",
+            &long,
+            json!([{"key":"long","kind":"fact","content":long}])
+        )["error"],
+        "invalid_candidates"
+    );
+    assert_eq!(
+        run(&mut session, "greeting", "Hello", json!([]))["status"],
+        "succeeded"
+    );
+    let conflict = run(
+        &mut session,
+        "kind-conflict",
+        "I prefer red",
+        json!([{"key":"color","kind":"decision","content":"I prefer red"}]),
+    );
+    assert_eq!(conflict["conflicts"], 1);
+    assert_eq!(conflict["pending_conflicts"][0]["reason"], "kind_conflict");
+    drop(session);
+    let mut session = Session::new(&root, None);
+    assert_eq!(
+        read(&mut session, "restart", "project:a")["result"]["revisions"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+}
+
+#[test]
+fn interrupted_learning_restarts_and_publishes_once() {
+    let _guard = TEST_LOCK.lock().unwrap();
+    let root = TempDir::new().unwrap();
+    let fixture = Fixture::new(false);
+    let folder = fixture.marker.parent().unwrap();
+    std::fs::write(folder.join("learning-hold"), "hold").unwrap();
+    std::fs::write(
+        folder.join("learning-response"),
+        json!({"candidates":[{"key":"color","kind":"fact","content":"I prefer blue"}]}).to_string(),
+    )
+    .unwrap();
+    let mut session = Session::new(&root, None);
+    register(&mut session, &fixture.address);
+    session.call(req(
+        "chat",
+        json!({"type":"chat_create","chat_id":"one","title":"One","scope":"project:a"}),
+    ));
+    session.call(req("source",json!({"type":"conversation_start","chat_id":"one","model_id":"selected","content":"I prefer blue"})));
+    assert_eq!(poll(&mut session, "source")["status"], "succeeded");
+    let start = Instant::now();
+    while !folder.join("learning-post").exists() {
+        assert!(start.elapsed() < Duration::from_secs(8));
+        thread::sleep(Duration::from_millis(20));
+    }
+    drop(session);
+    std::fs::remove_file(folder.join("learning-hold")).unwrap();
+    let mut session = Session::new(&root, None);
+    assert_eq!(poll_learning(&mut session, "source")["status"], "succeeded");
+    drop(session);
+    let mut session = Session::new(&root, None);
+    let read=session.call(req("read",json!({"type":"memory_get","scope":"project:a","context_reference":"project:a","key":"color"})));
+    assert_eq!(read["result"]["revisions"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn foreground_preempts_and_old_source_cannot_overwrite_manual_edit() {
+    let _guard = TEST_LOCK.lock().unwrap();
+    let root = TempDir::new().unwrap();
+    let fixture = Fixture::new(false);
+    let folder = fixture.marker.parent().unwrap();
+    std::fs::write(folder.join("learning-hold"), "hold").unwrap();
+    std::fs::write(
+        folder.join("learning-response"),
+        json!({"candidates":[{"key":"color","kind":"fact","content":"I prefer blue"}]}).to_string(),
+    )
+    .unwrap();
+    let mut session = Session::new(&root, None);
+    register(&mut session, &fixture.address);
+    session.call(req(
+        "chat",
+        json!({"type":"chat_create","chat_id":"one","title":"One","scope":"project:a"}),
+    ));
+    session.call(req("source",json!({"type":"conversation_start","chat_id":"one","model_id":"selected","content":"I prefer blue"})));
+    assert_eq!(poll(&mut session, "source")["status"], "succeeded");
+    let start = Instant::now();
+    while !folder.join("learning-post").exists() {
+        assert!(start.elapsed() < Duration::from_secs(8));
+        thread::sleep(Duration::from_millis(20));
+    }
+    let manual=session.call(req("manual",json!({"type":"memory_put","scope":"project:a","key":"color","kind":"fact","content":"I prefer green","expected_revision":0,"provenance":{"source_type":"human","source_id":"manual","evidence":"manual"},"status":"active"})));
+    assert_eq!(manual["ok"], true, "{manual}");
+    let now = Instant::now();
+    let foreground = session.call(req(
+        "foreground",
+        json!({"type":"inference","model_id":"selected","prompt":"hello"}),
+    ));
+    assert_eq!(foreground["ok"], true, "{foreground}");
+    assert!(now.elapsed() < Duration::from_secs(3));
+    assert_eq!(poll(&mut session, "foreground")["status"], "succeeded");
+    std::fs::remove_file(folder.join("learning-hold")).unwrap();
+    let result = poll_learning(&mut session, "source");
+    assert_eq!(result["status"], "succeeded");
+    assert_eq!(result["conflicts"], 1);
+    assert_eq!(result["pending_conflicts"][0]["reason"], "stale_source");
+    let memory=session.call(req("read",json!({"type":"memory_get","scope":"project:a","context_reference":"project:a","key":"color"})));
+    assert_eq!(memory["result"]["revisions"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        memory["result"]["revisions"][0]["content"],
+        "I prefer green"
+    );
+}
+
+#[test]
+fn later_source_wins_when_older_extraction_finishes_after_it_was_started() {
+    let _guard = TEST_LOCK.lock().unwrap();
+    let root = TempDir::new().unwrap();
+    let fixture = Fixture::new(false);
+    let folder = fixture.marker.parent().unwrap();
+    std::fs::write(folder.join("learning-hold"), "hold").unwrap();
+    std::fs::write(folder.join("learning-map"),json!({
+        "I prefer blue":{"candidates":[{"key":"color","kind":"fact","content":"I prefer blue"}]},
+        "I prefer green":{"candidates":[{"key":"color","kind":"fact","content":"I prefer green"}]}
+    }).to_string()).unwrap();
+    let mut session = Session::new(&root, None);
+    register(&mut session, &fixture.address);
+    session.call(req(
+        "chat",
+        json!({"type":"chat_create","chat_id":"one","title":"One","scope":"project:a"}),
+    ));
+    session.call(req("old",json!({"type":"conversation_start","chat_id":"one","model_id":"selected","content":"I prefer blue"})));
+    assert_eq!(poll(&mut session, "old")["status"], "succeeded");
+    let start = Instant::now();
+    while !folder.join("learning-post").exists() {
+        assert!(start.elapsed() < Duration::from_secs(8));
+        thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(session.call(req("new",json!({"type":"conversation_start","chat_id":"one","model_id":"selected","content":"I prefer green"})))["ok"],true);
+    assert_eq!(poll(&mut session, "new")["status"], "succeeded");
+    std::fs::remove_file(folder.join("learning-hold")).unwrap();
+    assert_eq!(poll_learning(&mut session, "old")["status"], "succeeded");
+    assert_eq!(poll_learning(&mut session, "new")["status"], "succeeded");
+    let read=session.call(req("read",json!({"type":"memory_get","scope":"project:a","context_reference":"project:a","key":"color"})));
+    assert_eq!(read["result"]["revisions"].as_array().unwrap().len(), 2);
+    assert_eq!(read["result"]["revisions"][1]["content"], "I prefer green");
+}
+
 #[test]
 fn generation_is_validated_pinned_sent_and_persisted() {
     let _guard = TEST_LOCK.lock().unwrap();
@@ -379,6 +648,13 @@ fn cancellation_is_durable_and_late_answer_is_suppressed() {
     assert_eq!(
         session.call(req("read-job", json!({"type":"job_get","job_id":"turn"})))["result"]["status"],
         "cancelled"
+    );
+    assert_eq!(
+        session.call(req(
+            "no-learning",
+            json!({"type":"learning_get","source_job_id":"turn"})
+        ))["error"]["code"],
+        "not_found"
     );
     let chat = session.call(req("read-chat", json!({"type":"chat_get","chat_id":"one"})));
     assert_eq!(

@@ -8,6 +8,15 @@ from .protocol import MAX_CONTENT
 
 MAX_PROVIDER_BYTES = 131072
 
+# Static schema only: model output is still independently validated by Core.
+LEARNING_FORMAT = {"type": "json_schema", "json_schema": {"name": "memory_candidates", "strict": True, "schema": {
+    "type": "object", "additionalProperties": False, "required": ["candidates"],
+    "properties": {"candidates": {"type": "array", "maxItems": 8, "items": {
+        "type": "object", "additionalProperties": False, "required": ["key", "kind", "content"],
+        "properties": {"key": {"type": "string", "maxLength": 64}, "kind": {"type": "string", "enum": ["fact", "constraint", "decision"]}, "content": {"type": "string", "maxLength": 512}}
+    }}}
+}}}
+
 
 class ProviderError(Exception):
     pass
@@ -56,7 +65,7 @@ def _json(url, payload=None, timeout=10):
         raise ProviderError("provider_malformed") from None
 
 
-def infer(endpoint, model_id, messages, generation):
+def infer(endpoint, model_id, messages, generation, purpose="conversation"):
     base = validate_endpoint(endpoint)
     timeout = generation['timeout_ms'] / 1000
     models = _json(base + "/models", timeout=timeout)
@@ -65,6 +74,8 @@ def infer(endpoint, model_id, messages, generation):
     if not any(isinstance(item, dict) and item.get("id") == model_id for item in models["data"]):
         raise ProviderError("model_unavailable")
     payload = {"model": model_id, "messages": messages, "stream": False, "max_tokens": generation['max_output_tokens']}
+    if purpose == "learning":
+        payload["response_format"] = LEARNING_FORMAT
     if generation['reasoning_effort'] != 'provider_default':
         payload['reasoning_effort'] = generation['reasoning_effort']
     result = _json(base + "/chat/completions", payload, timeout=timeout)

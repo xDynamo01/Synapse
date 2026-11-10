@@ -13,6 +13,7 @@ pub(crate) struct Launch {
     pub endpoint: String,
     pub messages: Vec<Value>,
     pub generation: Generation,
+    pub learning: bool,
 }
 
 fn message_id(job_id: &str, role: &str) -> String {
@@ -49,10 +50,12 @@ pub(crate) fn start(
     }
     let mut user_message_id = None;
     let mut assistant_message_id = None;
+    let mut source_cursor = 0;
     if let Some(chat_id) = chat_id {
         // The chat must already exist; append validates its ID and content.
         let user = message_id(id, "user");
         chats::append(tx, chat_id, &user, &MessageRole::User, prompt)?;
+        source_cursor = store::cursor(tx)?;
         user_message_id = Some(user);
         assistant_message_id = Some(message_id(id, "assistant"));
     }
@@ -87,7 +90,7 @@ pub(crate) fn start(
     }
     let generation = manifest.generation.unwrap_or_default();
     generation.validate()?;
-    tx.execute("INSERT INTO ai_jobs(id,kind,chat_id,model_id,status,user_message_id,assistant_message_id,generation) VALUES(?1,?2,?3,?4,'running',?5,?6,?7)", params![id, if chat_id.is_some() {"conversation"} else {"inference"}, chat_id, model_id, user_message_id, assistant_message_id, serde_json::to_string(&generation)?])?;
+    tx.execute("INSERT INTO ai_jobs(id,kind,chat_id,model_id,status,user_message_id,assistant_message_id,generation,endpoint,source_cursor) VALUES(?1,?2,?3,?4,'running',?5,?6,?7,?8,?9)", params![id, if chat_id.is_some() {"conversation"} else {"inference"}, chat_id, model_id, user_message_id, assistant_message_id, serde_json::to_string(&generation)?,manifest.endpoint,source_cursor as i64])?;
     store::event(
         tx,
         "ai_job_started",
@@ -101,6 +104,7 @@ pub(crate) fn start(
             endpoint: manifest.endpoint,
             messages,
             generation,
+            learning: false,
         },
     ))
 }
@@ -144,7 +148,7 @@ pub(crate) fn complete(
     }
     match outcome {
         Ok(content) => {
-            if let (Some(chat_id), Some(assistant_id)) = (chat_id, assistant_id) {
+            if let (Some(chat_id), Some(assistant_id)) = (&chat_id, &assistant_id) {
                 chats::append(
                     tx,
                     &chat_id,
@@ -158,6 +162,12 @@ pub(crate) fn complete(
                 params![id, content],
             )?;
             store::event(tx, "ai_job_succeeded", json!({"job_id":id}))?;
+            if chat_id.is_some() {
+                tx.execute(
+                    "INSERT INTO learning_jobs(source_job_id,status) VALUES(?1,'queued')",
+                    [id],
+                )?;
+            }
         }
         Err(code) => {
             tx.execute(

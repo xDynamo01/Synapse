@@ -31,11 +31,19 @@ class Handler(BaseHTTPRequestHandler):
             return
         request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         assert request["model"] == "selected" and request["stream"] is False
-        marker.write_text(json.dumps(request,ensure_ascii=False), encoding="utf-8")
+        (marker.parent / "learning-post" if "response_format" in request else marker).write_text(json.dumps(request,ensure_ascii=False), encoding="utf-8")
         while held and not release.exists():
             time.sleep(.01)
+        while "response_format" in request and (marker.parent / "learning-hold").exists():
+            time.sleep(.01)
         try:
-            self.reply({"choices": [{"message": {"role": "assistant", "content": "Olá, ação"}}]})
+            scripted = marker.parent / "learning-response"
+            mapping = marker.parent / "learning-map"
+            if "response_format" in request and mapping.exists():
+                content = json.dumps(json.loads(mapping.read_text(encoding="utf-8"))[request["messages"][-1]["content"]])
+            else:
+                content = (scripted.read_text(encoding="utf-8") if scripted.exists() else json.dumps({"candidates": []})) if "response_format" in request else "Olá, ação"
+            self.reply({"choices": [{"message": {"role": "assistant", "content": content}}]})
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
             pass
 
