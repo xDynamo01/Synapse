@@ -655,7 +655,7 @@ fn conversation_fixture_persists_once_and_replays_across_restart() {
     let mut session = Session::new(&root, None);
     assert_eq!(
         session.call(req("migrated-health", json!({"type":"health"})))["result"]["storage_schema"],
-        7
+        8
     );
     let migrated = session.call(req(
         "migrated-job",

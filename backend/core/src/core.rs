@@ -955,9 +955,12 @@ fn dispatch_tx(
     pending: &mut Option<conversation::Launch>,
 ) -> CoreResult<Value> {
     match command {
-        Command::Health => Ok(
-            json!({"identity":"A.R.T.E.M.I.S.","protocol_version":1,"storage_schema":7,"journal_mode":"wal","synchronous":"full"}),
-        ),
+        Command::Health => {
+            let storage_schema: u32 = tx.pragma_query_value(None, "user_version", |r| r.get(0))?;
+            Ok(
+                json!({"identity":"A.R.T.E.M.I.S.","protocol_version":1,"storage_schema":storage_schema,"journal_mode":"wal","synchronous":"full"}),
+            )
+        }
         Command::EventsRead { after, limit } => store::events_read(tx, *after, *limit),
         Command::ChatCreate {
             chat_id,
