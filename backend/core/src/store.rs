@@ -41,7 +41,7 @@ impl Store {
         connection.pragma_update(None, "synchronous", "FULL")?;
         let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let version: u32 = tx.pragma_query_value(None, "user_version", |r| r.get(0))?;
-        if version > 4 {
+        if version > 5 {
             return Err(CoreError::new(
                 "unsupported_storage_version",
                 "Database schema is newer than this Core",
@@ -71,6 +71,9 @@ PRAGMA user_version=1;")?;
         }
         if version < 4 {
             tx.execute_batch("CREATE TABLE replacement_backups(request_id TEXT PRIMARY KEY REFERENCES tool_intents(request_id), operation TEXT NOT NULL, identity TEXT NOT NULL, previous_digest TEXT NOT NULL, backup BLOB NOT NULL); CREATE TABLE intent_operations(request_id TEXT PRIMARY KEY REFERENCES tool_intents(request_id), operation TEXT NOT NULL); CREATE TABLE recovery_writes(request_id TEXT PRIMARY KEY, request_digest TEXT NOT NULL, intent_id TEXT NOT NULL REFERENCES tool_intents(request_id), expected_hash TEXT NOT NULL, status TEXT NOT NULL); PRAGMA user_version=4;")?;
+        }
+        if version < 5 {
+            tx.execute_batch("ALTER TABLE ai_jobs ADD COLUMN generation TEXT NOT NULL DEFAULT '{\"max_output_tokens\":1024,\"timeout_ms\":10000,\"reasoning_effort\":\"provider_default\"}'; PRAGMA user_version=5;")?;
         }
         let recorded: String = tx.query_row(
             "SELECT value FROM metadata WHERE key='workspace_root'",

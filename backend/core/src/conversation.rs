@@ -1,6 +1,6 @@
 use crate::{
     chats,
-    contracts::{CoreError, CoreResult, MessageRole, ModelManifest, bounded},
+    contracts::{CoreError, CoreResult, Generation, MessageRole, ModelManifest, bounded},
     store,
 };
 use rusqlite::{OptionalExtension, Transaction, params};
@@ -12,6 +12,7 @@ pub(crate) struct Launch {
     pub model_id: String,
     pub endpoint: String,
     pub messages: Vec<Value>,
+    pub generation: Generation,
 }
 
 fn message_id(job_id: &str, role: &str) -> String {
@@ -84,7 +85,9 @@ pub(crate) fn start(
             "Conversation context exceeds 64 messages or 48000 bytes",
         ));
     }
-    tx.execute("INSERT INTO ai_jobs(id,kind,chat_id,model_id,status,user_message_id,assistant_message_id) VALUES(?1,?2,?3,?4,'running',?5,?6)", params![id, if chat_id.is_some() {"conversation"} else {"inference"}, chat_id, model_id, user_message_id, assistant_message_id])?;
+    let generation = manifest.generation.unwrap_or_default();
+    generation.validate()?;
+    tx.execute("INSERT INTO ai_jobs(id,kind,chat_id,model_id,status,user_message_id,assistant_message_id,generation) VALUES(?1,?2,?3,?4,'running',?5,?6,?7)", params![id, if chat_id.is_some() {"conversation"} else {"inference"}, chat_id, model_id, user_message_id, assistant_message_id, serde_json::to_string(&generation)?])?;
     store::event(
         tx,
         "ai_job_started",
@@ -97,13 +100,16 @@ pub(crate) fn start(
             model_id: model_id.into(),
             endpoint: manifest.endpoint,
             messages,
+            generation,
         },
     ))
 }
 
 pub(crate) fn get(tx: &Transaction<'_>, id: &str) -> CoreResult<Value> {
     bounded(id, "job_id", 128)?;
-    tx.query_row("SELECT kind,chat_id,model_id,status,result,error,user_message_id,assistant_message_id FROM ai_jobs WHERE id=?1", [id], |r| Ok(json!({"job_id":id,"kind":r.get::<_,String>(0)?,"chat_id":r.get::<_,Option<String>>(1)?,"model_id":r.get::<_,String>(2)?,"status":r.get::<_,String>(3)?,"content":r.get::<_,Option<String>>(4)?,"error":r.get::<_,Option<String>>(5)?,"user_message_id":r.get::<_,Option<String>>(6)?,"assistant_message_id":r.get::<_,Option<String>>(7)?}))).optional()?.ok_or_else(|| CoreError::new("not_found", "AI job not found"))
+    let mut job = tx.query_row("SELECT kind,chat_id,model_id,status,result,error,user_message_id,assistant_message_id,generation FROM ai_jobs WHERE id=?1", [id], |r| Ok((json!({"job_id":id,"kind":r.get::<_,String>(0)?,"chat_id":r.get::<_,Option<String>>(1)?,"model_id":r.get::<_,String>(2)?,"status":r.get::<_,String>(3)?,"content":r.get::<_,Option<String>>(4)?,"error":r.get::<_,Option<String>>(5)?,"user_message_id":r.get::<_,Option<String>>(6)?,"assistant_message_id":r.get::<_,Option<String>>(7)?}), r.get::<_,String>(8)?))).optional()?.ok_or_else(|| CoreError::new("not_found", "AI job not found"))?;
+    job.0["generation"] = serde_json::from_str(&job.1)?;
+    Ok(job.0)
 }
 
 pub(crate) fn cancel(tx: &Transaction<'_>, id: &str) -> CoreResult<Value> {

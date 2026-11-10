@@ -1,7 +1,7 @@
 import hashlib
 import json
 
-VERSION = 1
+VERSION = 2
 MAX_LINE = 65536
 MAX_CONTENT = 32768
 MAX_MESSAGES = 64
@@ -9,15 +9,21 @@ MAX_CONTEXT_BYTES = 48000
 
 
 def digest(request):
-    payload = {key: request[key] for key in ("version", "request_id", "model_id", "endpoint", "messages")}
+    payload = {key: request[key] for key in ("version", "request_id", "model_id", "endpoint", "messages", "generation")}
     return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
 
 
 def validate(request):
-    if not isinstance(request, dict) or set(request) != {"version", "request_id", "model_id", "endpoint", "messages", "digest"}:
+    if not isinstance(request, dict) or set(request) != {"version", "request_id", "model_id", "endpoint", "messages", "generation", "digest"}:
         raise ValueError("invalid_request")
     if type(request["version"]) is not int or request["version"] != VERSION:
         raise ValueError("unsupported_version")
+    generation = request['generation']
+    if (not isinstance(generation, dict) or set(generation) != {'max_output_tokens', 'timeout_ms', 'reasoning_effort'}
+            or type(generation['max_output_tokens']) is not int or not 1 <= generation['max_output_tokens'] <= 4096
+            or type(generation['timeout_ms']) is not int or not 250 <= generation['timeout_ms'] <= 120000
+            or generation['reasoning_effort'] not in ('provider_default', 'none', 'low', 'medium', 'high')):
+        raise ValueError('invalid_request')
     for key, maximum in (("request_id", 128), ("model_id", 128), ("endpoint", 1024)):
         value = request[key]
         if not isinstance(value, str) or not value.strip() or len(value.encode()) > maximum or "\x00" in value:

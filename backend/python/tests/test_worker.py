@@ -43,6 +43,25 @@ class Handler(BaseHTTPRequestHandler):
 
 
 class WorkerTests(unittest.TestCase):
+    def test_generation_mapping_and_validation(self):
+        request = self.request()
+        request['version'] = 2
+        request['generation'] = {'max_output_tokens': 32, 'timeout_ms': 2000, 'reasoning_effort': 'none'}
+        request['digest'] = hashlib.sha256(json.dumps({k:v for k,v in request.items() if k != 'digest'}, sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode()).hexdigest()
+        self.assertTrue(self.worker(request)[1]['ok'])
+        self.assertEqual(self.server.seen['max_tokens'], 32)
+        self.assertEqual(self.server.seen['reasoning_effort'], 'none')
+        for effort in ('provider_default', 'low', 'medium', 'high'):
+            candidate = request | {'generation': request['generation'] | {'reasoning_effort': effort}}
+            candidate['digest'] = hashlib.sha256(json.dumps({k:v for k,v in candidate.items() if k != 'digest'}, sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode()).hexdigest()
+            self.assertTrue(self.worker(candidate)[1]['ok'])
+            if effort == 'provider_default':
+                self.assertNotIn('reasoning_effort', self.server.seen)
+            else:
+                self.assertEqual(self.server.seen['reasoning_effort'], effort)
+        for key, value in [('max_output_tokens', True), ('max_output_tokens', 0), ('timeout_ms', False), ('timeout_ms', 120001), ('reasoning_effort', 'invalid'), ('extra', 1)]:
+            candidate = request | {'generation': request['generation'] | {key: value}}
+            with self.assertRaises(ValueError): validate(candidate)
     def setUp(self):
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.server.seen = None
@@ -54,7 +73,7 @@ class WorkerTests(unittest.TestCase):
         self.server.server_close()
         self.thread.join()
     def request(self):
-        bare = {"version": 1, "request_id": "r", "model_id": "selected", "endpoint": self.endpoint, "messages": [{"role":"user","content":"private question"}]}
+        bare = {"version": 2, "request_id": "r", "model_id": "selected", "endpoint": self.endpoint, "messages": [{"role":"user","content":"private question"}], "generation": {"max_output_tokens":1024,"timeout_ms":10000,"reasoning_effort":"provider_default"}}
         digest = hashlib.sha256(json.dumps(bare, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
         return bare | {"digest": digest}
     def worker(self, request):
@@ -63,14 +82,14 @@ class WorkerTests(unittest.TestCase):
         return [json.loads(line) for line in child.stdout.splitlines()]
     def test_handshake_real_loopback_and_bound_request(self):
         hello, answer = self.worker(self.request())
-        self.assertEqual(hello, {"type": "hello", "version": 1})
+        self.assertEqual(hello, {"type": "hello", "version": 2})
         self.assertTrue(answer["ok"])
         self.assertEqual(answer["content"], "answer")
         self.assertEqual(self.server.seen, {"model": "selected", "messages": [{"role": "user", "content": "private question"}], "stream": False, "max_tokens": 1024})
     def test_digest_and_version_rejected_before_provider(self):
         request = self.request(); request["digest"] = "0" * 64
         self.assertEqual(self.worker(request)[1]["error"], "digest_mismatch")
-        request = self.request(); request["version"] = 2
+        request = self.request(); request["version"] = 1
         self.assertEqual(self.worker(request)[1]["error"], "unsupported_version")
         self.assertIsNone(self.server.seen)
     def test_endpoint_and_model_and_malformed_are_distinct(self):
@@ -87,7 +106,7 @@ class WorkerTests(unittest.TestCase):
         request=self.request()
         for messages in ([], [{"role":"tool","content":"override"}], [{"role":"assistant","content":"answer"}], [{"role":"user","content":"ok","tool_calls":[]}], [{"role":"user","content":" "}], [{"role":"user","content":"a"*32769}], [{"role":"user","content":"é"*16000}]*2, [{"role":"user","content":"x"}]*65):
             candidate=request | {"messages":messages}
-            candidate["digest"]=hashlib.sha256(json.dumps({k:candidate[k] for k in ("version","request_id","model_id","endpoint","messages")},sort_keys=True,separators=(",",":"),ensure_ascii=False).encode()).hexdigest()
+            candidate["digest"]=hashlib.sha256(json.dumps({k:candidate[k] for k in ("version","request_id","model_id","endpoint","messages","generation")},sort_keys=True,separators=(",",":"),ensure_ascii=False).encode()).hexdigest()
             with self.assertRaises(ValueError): validate(candidate)
 
     def test_invalid_utf8_is_rejected_before_provider(self):

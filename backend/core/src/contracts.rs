@@ -217,6 +217,52 @@ pub struct ModelManifest {
     pub endpoint: String,
     pub capabilities: Vec<String>,
     pub memory_bytes: u64,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "generation_if_present"
+    )]
+    pub generation: Option<Generation>,
+}
+fn generation_if_present<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<Generation>, D::Error> {
+    Generation::deserialize(deserializer).map(Some)
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Generation {
+    pub max_output_tokens: u32,
+    pub timeout_ms: u64,
+    pub reasoning_effort: ReasoningEffort,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReasoningEffort {
+    ProviderDefault,
+    None,
+    Low,
+    Medium,
+    High,
+}
+impl Default for Generation {
+    fn default() -> Self {
+        Self {
+            max_output_tokens: 1024,
+            timeout_ms: 10000,
+            reasoning_effort: ReasoningEffort::ProviderDefault,
+        }
+    }
+}
+impl Generation {
+    pub fn validate(&self) -> CoreResult<()> {
+        if !(1..=4096).contains(&self.max_output_tokens)
+            || !(250..=120000).contains(&self.timeout_ms)
+        {
+            return Err(CoreError::invalid("Invalid generation limits"));
+        }
+        Ok(())
+    }
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

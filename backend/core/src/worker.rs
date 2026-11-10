@@ -40,7 +40,8 @@ fn digest(request: &Value) -> CoreResult<String> {
 }
 
 pub(crate) fn run(launch: Launch, stop: Arc<Stop>) -> Result<String, String> {
-    let bare = json!({"version":1,"request_id":launch.id,"model_id":launch.model_id,"endpoint":launch.endpoint,"messages":launch.messages});
+    let timeout_ms = launch.generation.timeout_ms + 5000;
+    let bare = json!({"version":2,"request_id":launch.id,"model_id":launch.model_id,"endpoint":launch.endpoint,"messages":launch.messages,"generation":launch.generation});
     let digest = digest(&bare).map_err(|_| "worker_protocol".to_string())?;
     let mut request = bare.clone();
     request["digest"] = json!(digest);
@@ -52,7 +53,7 @@ pub(crate) fn run(launch: Launch, stop: Arc<Stop>) -> Result<String, String> {
         while watcher_done.load(Ordering::SeqCst) == 0
             && watcher_stop.state.load(Ordering::SeqCst) == 0
         {
-            if start.elapsed() >= Duration::from_secs(15) {
+            if start.elapsed() >= Duration::from_millis(timeout_ms) {
                 watcher_stop.stop(2);
                 break;
             }
@@ -335,7 +336,7 @@ mod windows {
         let mut reader = BufReader::new(File::from(parent_stdout));
         let result = (|| {
             let hello = read_line(&mut reader)?;
-            if hello != json!({"type":"hello","version":1}) {
+            if hello != json!({"type":"hello","version":2}) {
                 return Err("worker_protocol".into());
             }
             serde_json::to_writer(&mut writer, request)
@@ -346,7 +347,7 @@ mod windows {
                 .map_err(|_| "worker_protocol".to_string())?;
             drop(writer);
             let answer = read_line(&mut reader)?;
-            if answer.get("version") != Some(&json!(1))
+            if answer.get("version") != Some(&json!(2))
                 || answer.get("request_id") != bare.get("request_id")
                 || answer.get("digest") != Some(&json!(digest))
                 || answer.as_object().map(|o| o.len()) != Some(6)

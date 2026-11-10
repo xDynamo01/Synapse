@@ -1550,7 +1550,7 @@ fn newer_storage_and_different_workspace_are_rejected_at_startup() {
         .unwrap();
     assert_eq!(journal.to_lowercase(), "wal");
     assert_eq!(synchronous, 2);
-    db.pragma_update(None, "user_version", 5).unwrap();
+    db.pragma_update(None, "user_version", 6).unwrap();
     drop(db);
     let newer = Command::new(binary)
         .args([

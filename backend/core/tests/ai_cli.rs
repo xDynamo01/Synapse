@@ -147,6 +147,116 @@ fn poll(session: &mut Session, job: &str) -> Value {
 }
 
 #[test]
+fn generation_is_validated_pinned_sent_and_persisted() {
+    let _guard = TEST_LOCK.lock().unwrap();
+    let root = TempDir::new().unwrap();
+    let fixture = Fixture::new(true);
+    let mut session = Session::new(&root, None);
+    let generation = json!({"max_output_tokens":32,"timeout_ms":120000,"reasoning_effort":"none"});
+    let model = json!({"id":"selected","provider":"lm_studio","endpoint":fixture.address,"capabilities":["chat"],"memory_bytes":1024,"generation":generation});
+    for (i, bad) in [
+        Value::Null,
+        json!({"max_output_tokens":1,"timeout_ms":250}),
+        json!({"max_output_tokens":"1","timeout_ms":250,"reasoning_effort":"none"}),
+        json!({"max_output_tokens":1,"timeout_ms":true,"reasoning_effort":"none"}),
+        json!({"max_output_tokens":true,"timeout_ms":250,"reasoning_effort":"none"}),
+        json!({"max_output_tokens":0,"timeout_ms":250,"reasoning_effort":"none"}),
+        json!({"max_output_tokens":4097,"timeout_ms":250,"reasoning_effort":"none"}),
+        json!({"max_output_tokens":1,"timeout_ms":249,"reasoning_effort":"none"}),
+        json!({"max_output_tokens":1,"timeout_ms":120001,"reasoning_effort":"none"}),
+        json!({"max_output_tokens":1,"timeout_ms":250,"reasoning_effort":"invalid"}),
+        json!({"max_output_tokens":1,"timeout_ms":250,"reasoning_effort":"none","extra":1}),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut candidate = model.clone();
+        candidate["generation"] = bad;
+        assert_eq!(
+            session.call(req(
+                &format!("bad-{i}"),
+                json!({"type":"model_register","model":candidate})
+            ))["ok"],
+            false
+        );
+    }
+    assert_eq!(
+        session.call(req("reg", json!({"type":"model_register","model":model})))["ok"],
+        true
+    );
+    assert_eq!(
+        session.call(req(
+            "start",
+            json!({"type":"inference","model_id":"selected","prompt":"hi"})
+        ))["ok"],
+        true
+    );
+    fixture.wait_post();
+    let body: Value = serde_json::from_slice(&std::fs::read(&fixture.marker).unwrap()).unwrap();
+    assert_eq!(
+        body,
+        json!({"model":"selected","messages":[{"role":"user","content":"hi"}],"stream":false,"max_tokens":32,"reasoning_effort":"none"})
+    );
+    // Simulate a future registry update while this job is running; no public update API exists yet.
+    let db = rusqlite::Connection::open(root.path().join("state/core.sqlite3")).unwrap();
+    let mut changed = model.clone();
+    changed["generation"]["max_output_tokens"] = json!(99);
+    db.execute(
+        "UPDATE models SET manifest=?1 WHERE id='selected'",
+        [changed.to_string()],
+    )
+    .unwrap();
+    assert_eq!(
+        session.call(req("pinned", json!({"type":"job_get","job_id":"start"})))["result"]["generation"],
+        generation
+    );
+    let before = Instant::now();
+    assert_eq!(
+        session.call(req(
+            "cancel-long",
+            json!({"type":"job_cancel","job_id":"start"})
+        ))["result"]["status"],
+        "cancelled"
+    );
+    assert!(before.elapsed() < Duration::from_secs(3));
+    fixture.release();
+    drop(session);
+    let mut session = Session::new(&root, None);
+    assert_eq!(
+        session.call(req("read", json!({"type":"job_get","job_id":"start"})))["result"]["generation"],
+        generation
+    );
+    assert_eq!(
+        session.call(req(
+            "model-read",
+            json!({"type":"model_get","model_id":"selected"})
+        ))["result"]["model"]["generation"]["max_output_tokens"],
+        99
+    );
+}
+
+#[test]
+fn configured_short_deadline_is_honored() {
+    let _guard = TEST_LOCK.lock().unwrap();
+    let root = TempDir::new().unwrap();
+    let fixture = Fixture::new(true);
+    let mut session = Session::new(&root, None);
+    let model = json!({"id":"selected","provider":"lm_studio","endpoint":fixture.address,"capabilities":["chat"],"memory_bytes":1,"generation":{"max_output_tokens":1,"timeout_ms":250,"reasoning_effort":"provider_default"}});
+    assert_eq!(
+        session.call(req("reg", json!({"type":"model_register","model":model})))["ok"],
+        true
+    );
+    let start = Instant::now();
+    session.call(req(
+        "short",
+        json!({"type":"inference","model_id":"selected","prompt":"hi"}),
+    ));
+    let job = poll(&mut session, "short");
+    assert_eq!(job["error"], "provider_timeout", "{job}");
+    assert!(start.elapsed() < Duration::from_secs(7));
+}
+
+#[test]
 fn conversation_fixture_persists_once_and_replays_across_restart() {
     let _guard = TEST_LOCK.lock().unwrap();
     let root = TempDir::new().unwrap();

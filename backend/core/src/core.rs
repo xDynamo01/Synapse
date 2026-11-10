@@ -909,7 +909,7 @@ fn dispatch_tx(
 ) -> CoreResult<Value> {
     match command {
         Command::Health => Ok(
-            json!({"identity":"A.R.T.E.M.I.S.","protocol_version":1,"storage_schema":4,"journal_mode":"wal","synchronous":"full"}),
+            json!({"identity":"A.R.T.E.M.I.S.","protocol_version":1,"storage_schema":5,"journal_mode":"wal","synchronous":"full"}),
         ),
         Command::EventsRead { after, limit } => store::events_read(tx, *after, *limit),
         Command::ChatCreate {

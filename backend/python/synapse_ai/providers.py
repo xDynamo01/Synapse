@@ -35,11 +35,11 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
 
 
-def _json(url, payload=None):
+def _json(url, payload=None, timeout=10):
     data = None if payload is None else json.dumps(payload, separators=(",", ":")).encode()
     request = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"} if data else {}, method="POST" if data else "GET")
     try:
-        with OPENER.open(request, timeout=10) as response:
+        with OPENER.open(request, timeout=timeout) as response:
             raw = response.read(MAX_PROVIDER_BYTES + 1)
             if len(raw) > MAX_PROVIDER_BYTES:
                 raise ProviderError("provider_malformed")
@@ -56,14 +56,18 @@ def _json(url, payload=None):
         raise ProviderError("provider_malformed") from None
 
 
-def infer(endpoint, model_id, messages):
+def infer(endpoint, model_id, messages, generation):
     base = validate_endpoint(endpoint)
-    models = _json(base + "/models")
+    timeout = generation['timeout_ms'] / 1000
+    models = _json(base + "/models", timeout=timeout)
     if not isinstance(models, dict) or not isinstance(models.get("data"), list):
         raise ProviderError("provider_malformed")
     if not any(isinstance(item, dict) and item.get("id") == model_id for item in models["data"]):
         raise ProviderError("model_unavailable")
-    result = _json(base + "/chat/completions", {"model": model_id, "messages": messages, "stream": False, "max_tokens": 1024})
+    payload = {"model": model_id, "messages": messages, "stream": False, "max_tokens": generation['max_output_tokens']}
+    if generation['reasoning_effort'] != 'provider_default':
+        payload['reasoning_effort'] = generation['reasoning_effort']
+    result = _json(base + "/chat/completions", payload, timeout=timeout)
     try:
         choices = result["choices"]
         if not isinstance(choices, list) or len(choices) != 1:

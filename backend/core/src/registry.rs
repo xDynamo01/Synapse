@@ -6,6 +6,9 @@ use rusqlite::{OptionalExtension, Transaction, params};
 use serde_json::{Value, json};
 
 pub(crate) fn model_register(tx: &Transaction<'_>, model: &ModelManifest) -> CoreResult<Value> {
+    if let Some(generation) = &model.generation {
+        generation.validate()?;
+    }
     bounded(&model.id, "model_id", 128)?;
     bounded(&model.provider, "provider", 128)?;
     bounded(&model.endpoint, "endpoint", 1024)?;
