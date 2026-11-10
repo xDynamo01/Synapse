@@ -69,6 +69,8 @@ Interfaces:
   generation, validated artifacts/checks and fixed limits. Fixed initial limits:
   per-file8192UTF8 bytes, total24576UTF8 bytes, check30000ms,512MiB job memory,
   8 owned processes,32768bytes combined check output, one generation attempt.
+  Also preparation_timeout_ms120000 and max_tool_asset_bytes2147483648 cap trusted
+  runtime copying/ACL preparation separately from the check's execution timer.
   Fields are strict typed data. Absent execution must serialize omitted, preserving
   all existing mission request/contract digests and behavior.
 - Core derives contract actions `mission_generate`, `project_check`,
