@@ -42,7 +42,8 @@ class Handler(BaseHTTPRequestHandler):
             if "response_format" in request and mapping.exists():
                 content = json.dumps(json.loads(mapping.read_text(encoding="utf-8"))[request["messages"][-1]["content"]])
             else:
-                content = (scripted.read_text(encoding="utf-8") if scripted.exists() else json.dumps({"candidates": []})) if "response_format" in request else "Olá, ação"
+                conversation = marker.parent / "conversation-response"
+                content = (scripted.read_text(encoding="utf-8") if scripted.exists() else json.dumps({"candidates": []})) if "response_format" in request else (conversation.read_text(encoding="utf-8") if conversation.exists() else "Olá, ação")
             self.reply({"choices": [{"message": {"role": "assistant", "content": content}}]})
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
             pass

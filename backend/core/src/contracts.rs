@@ -114,6 +114,8 @@ pub enum Command {
         content: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         skill: Option<SkillPin>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        context: Vec<ContextReference>,
     },
     JobGet {
         job_id: String,
@@ -164,6 +166,13 @@ pub struct SkillPin {
     pub id: String,
     pub version: String,
     pub digest: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ContextReference {
+    pub scope: String,
+    pub key: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

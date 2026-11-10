@@ -2,7 +2,7 @@ use crate::{
     contracts::{CoreError, CoreResult, MemoryKind, MemoryStatus, Provenance, bounded, scope},
     store,
 };
-use rusqlite::{Transaction, params};
+use rusqlite::{OptionalExtension, Transaction, params};
 use serde_json::{Value, json};
 
 pub(crate) fn put(
@@ -61,18 +61,10 @@ pub(crate) fn get(
     after_revision: u64,
     limit: u32,
 ) -> CoreResult<Value> {
-    scope(project_scope)?;
-    scope(context_reference)?;
-    bounded(key, "key", 256)?;
+    explicit_gate(project_scope, context_reference, key)?;
     if after_revision > i64::MAX as u64 || !(1..=100).contains(&limit) {
         return Err(CoreError::invalid(
             "Invalid memory revision cursor or limit (1..100)",
-        ));
-    }
-    if project_scope != context_reference {
-        return Err(CoreError::new(
-            "context_denied",
-            "Explicit context does not match the memory scope",
         ));
     }
     let exists: bool = tx.query_row(
@@ -133,4 +125,41 @@ pub(crate) fn get(
     Ok(
         json!({"scope":project_scope,"key":key,"revisions":revisions,"next_revision":next_revision,"has_more":has_more}),
     )
+}
+
+fn explicit_gate(project_scope: &str, context_reference: &str, key: &str) -> CoreResult<()> {
+    scope(project_scope)?;
+    scope(context_reference)?;
+    bounded(key, "key", 256)?;
+    if project_scope != context_reference {
+        return Err(CoreError::new(
+            "context_denied",
+            "Explicit context does not match the memory scope",
+        ));
+    }
+    Ok(())
+}
+
+/// Exact, explicitly granted read; inactive latest revisions never fall back to history.
+pub(crate) fn latest_active(
+    tx: &Transaction<'_>,
+    project_scope: &str,
+    context_reference: &str,
+    key: &str,
+) -> CoreResult<Value> {
+    explicit_gate(project_scope, context_reference, key)?;
+    let record: Option<(i64, String, String, String)> = tx.query_row(
+        "SELECT revision,kind,content,status FROM memory WHERE scope=?1 AND key=?2 ORDER BY revision DESC LIMIT 1",
+        params![project_scope,key],
+        |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)),
+    ).optional()?;
+    let (revision, kind, content, status) =
+        record.ok_or_else(|| CoreError::new("not_found", "Memory key not found in context"))?;
+    if status != "active" {
+        return Err(CoreError::new(
+            "context_inactive",
+            "Latest memory revision is not active",
+        ));
+    }
+    Ok(json!({"scope":project_scope,"key":key,"revision":revision,"kind":kind,"content":content}))
 }

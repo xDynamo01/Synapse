@@ -910,7 +910,13 @@ impl Core {
             );
         }
         let parsed = serde_json::from_slice::<Request>(line).and_then(|request| {
-            let value = serde_json::from_slice::<Value>(line)?;
+            let mut value = serde_json::from_slice::<Value>(line)?;
+            // Empty explicit context is equivalent to its omitted wire form.
+            if matches!(&request.command, Command::ConversationStart { context, .. } if context.is_empty())
+                && value["command"]["context"] == json!([])
+            {
+                value["command"].as_object_mut().unwrap().remove("context");
+            }
             // Internally tagged unit variants can silently ignore extra fields.
             // Reconstructing the envelope rejects those fields at every depth.
             if serde_json::to_value(&request)? != value {
@@ -1041,7 +1047,7 @@ fn dispatch_tx(
                 ));
             }
             let (result, launch) =
-                conversation::start(tx, request_id, None, model_id, prompt, None)?;
+                conversation::start(tx, request_id, None, model_id, prompt, None, &[])?;
             *pending = Some(launch);
             Ok(result)
         }
@@ -1050,6 +1056,7 @@ fn dispatch_tx(
             model_id,
             content,
             skill,
+            context,
         } => {
             if busy {
                 return Err(CoreError::new(
@@ -1064,6 +1071,7 @@ fn dispatch_tx(
                 model_id,
                 content,
                 skill.as_ref(),
+                context,
             )?;
             *pending = Some(launch);
             Ok(result)

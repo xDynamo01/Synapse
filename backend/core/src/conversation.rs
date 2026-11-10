@@ -1,6 +1,9 @@
 use crate::{
-    chats,
-    contracts::{CoreError, CoreResult, Generation, MessageRole, ModelManifest, SkillPin, bounded},
+    chats, context,
+    contracts::{
+        ContextReference, CoreError, CoreResult, Generation, MessageRole, ModelManifest, SkillPin,
+        bounded,
+    },
     skills, store,
 };
 use rusqlite::{OptionalExtension, Transaction, params};
@@ -31,6 +34,7 @@ pub(crate) fn start(
     model_id: &str,
     prompt: &str,
     skill: Option<&SkillPin>,
+    references: &[ContextReference],
 ) -> CoreResult<(Value, Launch)> {
     bounded(id, "job_id", 128)?;
     bounded(model_id, "model_id", 128)?;
@@ -56,49 +60,49 @@ pub(crate) fn start(
         (Some(_), None) => return Err(CoreError::invalid("Skill guidance requires a chat")),
         (None, _) => None,
     };
-    let mut user_message_id = None;
-    let mut assistant_message_id = None;
-    let mut source_cursor = 0;
+    let selected = context::select(tx, references)?;
+    let mut messages: Vec<Value> = guidance.into_iter().collect();
+    messages.extend(selected.messages);
     if let Some(chat_id) = chat_id {
-        // The chat must already exist; append validates its ID and content.
-        let user = message_id(id, "user");
-        chats::append(tx, chat_id, &user, &MessageRole::User, prompt)?;
-        source_cursor = store::cursor(tx)?;
-        user_message_id = Some(user);
-        assistant_message_id = Some(message_id(id, "assistant"));
-    }
-    let messages = if let Some(chat_id) = chat_id {
         let mut statement = tx.prepare(
             "SELECT role,content FROM messages WHERE chat_id=?1 ORDER BY sequence LIMIT 65",
         )?;
         let rows = statement.query_map([chat_id], |r| {
             Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
         })?;
-        let mut messages: Vec<Value> = guidance.into_iter().collect();
-        let mut bytes = serde_json::to_vec(&messages)?.len();
         for row in rows {
             let (role, content) = row?;
-            let message = json!({"role":role,"content":content});
-            bytes += serde_json::to_vec(&message)?.len() + usize::from(!messages.is_empty());
-            messages.push(message);
-            if messages.len() > 64 || bytes > 48_000 {
-                return Err(CoreError::invalid(
-                    "Conversation context exceeds 64 messages or 48000 bytes",
-                ));
-            }
+            messages.push(json!({"role":role,"content":content}));
         }
-        messages
-    } else {
-        vec![json!({"role":"user","content":prompt})]
-    };
-    if serde_json::to_vec(&messages)?.len() > 48_000 {
+    }
+    messages.push(json!({"role":"user","content":prompt}));
+    for message in &messages {
+        bounded(message["content"].as_str().unwrap(), "message", 32_768)?;
+    }
+    if messages.len() > 64 || serde_json::to_vec(&messages)?.len() > 48_000 {
         return Err(CoreError::invalid(
             "Conversation context exceeds 64 messages or 48000 bytes",
         ));
     }
+    // Validate wrappers and the complete serialized worker context before the human append.
+    let mut user_message_id = None;
+    let mut assistant_message_id = None;
+    let mut source_cursor = 0;
+    if let Some(chat_id) = chat_id {
+        let user = message_id(id, "user");
+        chats::append(tx, chat_id, &user, &MessageRole::User, prompt)?;
+        source_cursor = store::cursor(tx)?;
+        user_message_id = Some(user);
+        assistant_message_id = Some(message_id(id, "assistant"));
+    }
+    let selected_metadata = if selected.metadata.is_empty() {
+        None
+    } else {
+        Some(serde_json::to_string(&selected.metadata)?)
+    };
     let generation = manifest.generation.unwrap_or_default();
     generation.validate()?;
-    tx.execute("INSERT INTO ai_jobs(id,kind,chat_id,model_id,status,user_message_id,assistant_message_id,generation,endpoint,source_cursor,skill) VALUES(?1,?2,?3,?4,'running',?5,?6,?7,?8,?9,?10)", params![id, if chat_id.is_some() {"conversation"} else {"inference"}, chat_id, model_id, user_message_id, assistant_message_id, serde_json::to_string(&generation)?,manifest.endpoint,source_cursor as i64,skill.map(serde_json::to_string).transpose()?])?;
+    tx.execute("INSERT INTO ai_jobs(id,kind,chat_id,model_id,status,user_message_id,assistant_message_id,generation,endpoint,source_cursor,skill,context) VALUES(?1,?2,?3,?4,'running',?5,?6,?7,?8,?9,?10,?11)", params![id, if chat_id.is_some() {"conversation"} else {"inference"}, chat_id, model_id, user_message_id, assistant_message_id, serde_json::to_string(&generation)?,manifest.endpoint,source_cursor as i64,skill.map(serde_json::to_string).transpose()?,selected_metadata])?;
     store::event(
         tx,
         "ai_job_started",
@@ -119,10 +123,13 @@ pub(crate) fn start(
 
 pub(crate) fn get(tx: &Transaction<'_>, id: &str) -> CoreResult<Value> {
     bounded(id, "job_id", 128)?;
-    let mut job = tx.query_row("SELECT kind,chat_id,model_id,status,result,error,user_message_id,assistant_message_id,generation,skill FROM ai_jobs WHERE id=?1", [id], |r| Ok((json!({"job_id":id,"kind":r.get::<_,String>(0)?,"chat_id":r.get::<_,Option<String>>(1)?,"model_id":r.get::<_,String>(2)?,"status":r.get::<_,String>(3)?,"content":r.get::<_,Option<String>>(4)?,"error":r.get::<_,Option<String>>(5)?,"user_message_id":r.get::<_,Option<String>>(6)?,"assistant_message_id":r.get::<_,Option<String>>(7)?}), r.get::<_,String>(8)?, r.get::<_,Option<String>>(9)?))).optional()?.ok_or_else(|| CoreError::new("not_found", "AI job not found"))?;
+    let mut job = tx.query_row("SELECT kind,chat_id,model_id,status,result,error,user_message_id,assistant_message_id,generation,skill,context FROM ai_jobs WHERE id=?1", [id], |r| Ok((json!({"job_id":id,"kind":r.get::<_,String>(0)?,"chat_id":r.get::<_,Option<String>>(1)?,"model_id":r.get::<_,String>(2)?,"status":r.get::<_,String>(3)?,"content":r.get::<_,Option<String>>(4)?,"error":r.get::<_,Option<String>>(5)?,"user_message_id":r.get::<_,Option<String>>(6)?,"assistant_message_id":r.get::<_,Option<String>>(7)?}), r.get::<_,String>(8)?, r.get::<_,Option<String>>(9)?, r.get::<_,Option<String>>(10)?))).optional()?.ok_or_else(|| CoreError::new("not_found", "AI job not found"))?;
     job.0["generation"] = serde_json::from_str(&job.1)?;
     if let Some(pin) = job.2 {
         job.0["skill"] = serde_json::from_str(&pin)?;
+    }
+    if let Some(context) = job.3 {
+        job.0["context"] = serde_json::from_str(&context)?;
     }
     Ok(job.0)
 }
