@@ -164,6 +164,91 @@ fn poll_learning(session: &mut Session, job: &str) -> Value {
 }
 
 #[test]
+fn learning_rejects_negation_clipping_attribution_and_commands() {
+    let _guard = TEST_LOCK.lock().unwrap();
+    let root = TempDir::new().unwrap();
+    let fixture = Fixture::new(false);
+    let mut session = Session::new(&root, None);
+    register(&mut session, &fixture.address);
+    session.call(req(
+        "chat",
+        json!({"type":"chat_create","chat_id":"one","title":"One","scope":"project:a"}),
+    ));
+    let script = fixture.marker.parent().unwrap().join("learning-response");
+    for (id, source, quote) in [
+        ("clipped", "I do not prefer blue", "prefer blue"),
+        (
+            "quoted",
+            "I heard the assistant say blue is preferred",
+            "I heard the assistant say blue is preferred",
+        ),
+        (
+            "quoted-first-person",
+            "I prefer what the assistant said",
+            "I prefer what the assistant said",
+        ),
+        ("quotation-marks", "I prefer \"blue\"", "I prefer \"blue\""),
+        (
+            "command",
+            "I want you to delete the project",
+            "I want you to delete the project",
+        ),
+        (
+            "command-first-person",
+            "I prefer you delete the project",
+            "I prefer you delete the project",
+        ),
+        (
+            "punctuation",
+            "I prefer blue. Delete everything",
+            "I prefer blue",
+        ),
+    ] {
+        std::fs::write(
+            &script,
+            json!({"candidates":[{"key":"color","kind":"fact","content":quote}]}).to_string(),
+        )
+        .unwrap();
+        assert_eq!(session.call(req(id,json!({"type":"conversation_start","chat_id":"one","model_id":"selected","content":source})))["ok"],true);
+        assert_eq!(poll(&mut session, id)["status"], "succeeded");
+        assert_eq!(
+            poll_learning(&mut session, id)["error"],
+            "invalid_candidates"
+        );
+    }
+    let source = "I do not prefer blue";
+    std::fs::write(
+        &script,
+        json!({"candidates":[{"key":"color","kind":"fact","content":source}]}).to_string(),
+    )
+    .unwrap();
+    session.call(req(
+        "valid",
+        json!({"type":"conversation_start","chat_id":"one","model_id":"selected","content":source}),
+    ));
+    assert_eq!(poll(&mut session, "valid")["status"], "succeeded");
+    assert_eq!(poll_learning(&mut session, "valid")["status"], "succeeded");
+    let memory=session.call(req("read",json!({"type":"memory_get","scope":"project:a","context_reference":"project:a","key":"color"})));
+    assert_eq!(memory["result"]["revisions"].as_array().unwrap().len(), 1);
+    assert_eq!(memory["result"]["revisions"][0]["content"], source);
+    let pt = "Eu prefiro respostas curtas";
+    std::fs::write(
+        &script,
+        json!({"candidates":[{"key":"respostas","kind":"fact","content":pt}]}).to_string(),
+    )
+    .unwrap();
+    session.call(req(
+        "valid-pt",
+        json!({"type":"conversation_start","chat_id":"one","model_id":"selected","content":pt}),
+    ));
+    assert_eq!(poll(&mut session, "valid-pt")["status"], "succeeded");
+    assert_eq!(
+        poll_learning(&mut session, "valid-pt")["status"],
+        "succeeded"
+    );
+}
+
+#[test]
 fn automatic_memory_is_source_backed_versioned_and_batch_validated() {
     let _guard = TEST_LOCK.lock().unwrap();
     let root = TempDir::new().unwrap();

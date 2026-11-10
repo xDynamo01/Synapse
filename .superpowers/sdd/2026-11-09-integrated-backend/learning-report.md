@@ -61,3 +61,34 @@ conservative heuristics, not comprehensive secret detection. Exact quotation is
 enforced, but the model's selection of a durable fact versus a transient or
 semantically incorrect statement cannot be guaranteed by syntactic validation.
 The pending conflict metadata does not itself provide a conflict resolution UI.
+
+## Fix round 1 — source meaning and attribution
+
+Review identified that arbitrary source substrings could reverse a negation or
+attribute a quoted statement or instruction to the human. Core now requires
+the candidate to equal the complete trimmed source message, with only one short
+sentence, a recognized first-person assertion starter, and conservative exclusion
+of quotation marks, attribution and command-like terms. The classifier prompt asks
+for complete source units and an empty result for ambiguous messages. The JSON
+schema and public API did not change. This intentionally rejects many legitimate
+statements; a lexical gate cannot prove meaning, attribution, durability or the
+absence of every possible command. The model's classification remains fallible.
+
+Covering file: `backend/core/tests/ai_cli.rs`. The actual-binary adversarial test
+checks clipped negation, attributed assistant content, quotation marks, a command,
+first-person command-like text, a clipped multi-sentence source, a whole negative
+assertion and a whole Portuguese assertion, and confirms no rejected value appears
+as a revision. The regression run also retains preemption and restart tests.
+
+* RED: `cargo test -p synapse-core --locked --test ai_cli learning_rejects_negation_clipping_attribution_and_commands -- --exact` — failed on the clipped-negation case, before the fix.
+* GREEN: `cargo fmt --all; cargo test -p synapse-core --locked` — passed: 14 AI binary tests and 22 Core binary tests.
+
+The requested scenario in which an older automatic extraction publishes *after*
+a newer automatic record cannot be produced through the current supported queue:
+there is one active worker, preemption joins and discards its result, queued jobs
+are selected in source-cursor order, and an exhausted failed job has no public
+requeue operation. The existing test does prove that a newer source survives an
+older publication whose completion event occurs after that newer source event;
+the existing manual-write test proves a genuinely stale source is rejected. An
+artificial database mutation or concurrent writer would not prove the supported
+single-worker path, so no such test is claimed here.

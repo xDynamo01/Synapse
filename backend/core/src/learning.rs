@@ -42,6 +42,109 @@ fn credential(s: &str) -> bool {
     .any(|p| s.contains(p))
 }
 
+// Conservative admission, not a natural-language understanding guarantee. A
+// whole, single source unit avoids clipping negation or surrounding context;
+// first-person assertion starters reduce the risk of promoting an instruction
+// or another speaker's statement as the user's own.
+fn unambiguous_source_unit(source: &str, content: &str) -> bool {
+    let source = source.trim();
+    if source != content
+        || source.is_empty()
+        || source.contains([
+            '\n', '\r', '?', '!', ':', ';', '"', '\'', '“', '”', '‘', '’', '«', '»', '`',
+        ])
+    {
+        return false;
+    }
+    let body = source.strip_suffix('.').unwrap_or(source);
+    if body.contains('.') {
+        return false;
+    }
+    let text = body.to_lowercase();
+    let starts = [
+        "i prefer ",
+        "i do not prefer ",
+        "i use ",
+        "i work ",
+        "i am ",
+        "i live ",
+        "my project ",
+        "my preference ",
+        "eu prefiro ",
+        "eu não prefiro ",
+        "eu nao prefiro ",
+        "eu uso ",
+        "eu trabalho ",
+        "eu sou ",
+        "meu projeto ",
+        "minha preferência ",
+        "minha preferencia ",
+    ];
+    if !starts
+        .iter()
+        .any(|prefix| text.starts_with(prefix) && text.len() > prefix.len())
+    {
+        return false;
+    }
+    let words = text
+        .split(|c: char| !c.is_alphanumeric() && c != '_')
+        .filter(|w| !w.is_empty());
+    let blocked = [
+        "assistant",
+        "assistente",
+        "chatbot",
+        "said",
+        "says",
+        "say",
+        "told",
+        "tells",
+        "according",
+        "ask",
+        "request",
+        "please",
+        "quoted",
+        "quote",
+        "disse",
+        "diz",
+        "falou",
+        "afirmou",
+        "afirma",
+        "relatou",
+        "sugeriu",
+        "escreveu",
+        "citação",
+        "citacao",
+        "delete",
+        "remove",
+        "execute",
+        "run",
+        "send",
+        "install",
+        "deletei",
+        "apague",
+        "apagar",
+        "exclua",
+        "excluir",
+        "rode",
+        "envie",
+        "instale",
+        "você",
+        "voce",
+        "you",
+        "rm",
+        "sudo",
+        "powershell",
+        "cmd",
+        "erase",
+        "destroy",
+        "remova",
+        "remover",
+        "publish",
+        "publique",
+    ];
+    !words.into_iter().any(|word| blocked.contains(&word))
+}
+
 pub(crate) fn start(tx: &Transaction<'_>) -> CoreResult<Option<Launch>> {
     let row: Option<(String,String,String,String,String,String)> = tx.query_row(
         "SELECT l.source_job_id,j.model_id,j.endpoint,j.generation,m.content,m.id FROM learning_jobs l JOIN ai_jobs j ON j.id=l.source_job_id JOIN messages m ON m.id=j.user_message_id WHERE l.status='queued' ORDER BY j.source_cursor LIMIT 1", [],
@@ -58,7 +161,7 @@ pub(crate) fn start(tx: &Transaction<'_>) -> CoreResult<Option<Launch>> {
         generation,
         learning: true,
         messages: vec![
-            json!({"role":"system","content":"Select up to eight durable facts, constraints or decisions stated by the human. Return JSON candidates with lowercase subject slug key, kind, and exact short source quote as content. Return an empty list when none. Exclude credentials, secrets, transient commands, failed attempts and assistant text. Never infer or paraphrase."}),
+            json!({"role":"system","content":"Select durable facts, constraints or decisions stated directly by the human. Return JSON candidates with lowercase subject slug key, kind, and the complete single source sentence as content, including negation and context. Return an empty list when the message has multiple sentences, quotes, attribution, commands, credentials, secrets, transient requests, failed attempts or no durable assertion. Never infer, clip or paraphrase."}),
             json!({"role":"user","content":content}),
         ],
     }))
@@ -109,7 +212,7 @@ pub(crate) fn complete(
                     && matches!(c.kind.as_str(), "fact" | "constraint" | "decision")
                     && !c.content.trim().is_empty()
                     && c.content.len() <= 512
-                    && source.contains(&c.content)
+                    && unambiguous_source_unit(&source, &c.content)
                     && !credential(&c.key)
                     && !credential(&c.content)
             })
