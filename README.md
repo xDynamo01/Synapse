@@ -1,5 +1,18 @@
 # Synapse 0.3 clean-room
 
+## Pasta oficial de desenvolvimento
+
+O trabalho atual está diretamente em `F:\Projetos\Synapse`, na branch local
+`0.3-cleanroom`. Código, decisões e documentação estão nesta mesma árvore.
+Não há uma área de desenvolvimento aninhada em `.worktrees`.
+
+As cópias e dependências históricas foram preservadas separadamente em
+`F:\Projetos\Synapse-Arquivo-Local\consolidacao-2026-11-10`.
+Veja o [registro de consolidação](docs/evidence/backend/2026-11-10-workspace-consolidation.md)
+para os destinos, verificações e testes executados após a mudança de pasta.
+
+## Estado do projeto
+
 Synapse0.3 is being rebuilt as one integrated Rust backend with supervised
 local Python AI, followed by a native Rust frontend. Product source is under
 `backend/`; historical prototypes remain under `experiments/`.
