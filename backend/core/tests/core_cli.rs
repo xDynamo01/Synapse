@@ -51,6 +51,43 @@ fn error(v: &Value, code: &str) {
     assert_eq!(v["error"]["code"], code, "{v}");
 }
 
+#[test]
+fn mission_previous_digests_are_optional_and_validate_resources_and_sha256() {
+    let root = TempDir::new().unwrap();
+    let base = json!({"version":1,"scope":"project:a","objective":"Replace a file","actions":["artifact_replace"],"resources":["file.txt"],"rollback":"verified backup"});
+    let mut valid = base.clone();
+    valid["artifact_previous_digests"] = json!({"file.txt":"0".repeat(64)});
+    let mut foreign = base.clone();
+    foreign["artifact_previous_digests"] = json!({"other.txt":"0".repeat(64)});
+    let mut malformed = base.clone();
+    malformed["artifact_previous_digests"] = json!({"file.txt":"A".repeat(64)});
+    let out = run(
+        &root,
+        &[
+            req(
+                "old",
+                json!({"type":"mission_propose","mission_id":"old","contract":base}),
+            ),
+            req(
+                "valid",
+                json!({"type":"mission_propose","mission_id":"valid","contract":valid}),
+            ),
+            req(
+                "foreign",
+                json!({"type":"mission_propose","mission_id":"foreign","contract":foreign}),
+            ),
+            req(
+                "malformed",
+                json!({"type":"mission_propose","mission_id":"malformed","contract":malformed}),
+            ),
+        ],
+    );
+    ok(&out[0]);
+    ok(&out[1]);
+    error(&out[2], "invalid_request");
+    error(&out[3], "invalid_request");
+}
+
 #[cfg(windows)]
 fn tool(id: &str, mission: &str, kind: &str, path: &str, content: Option<&str>) -> Value {
     let mut operation = json!({"type":kind,"path":path});
@@ -104,6 +141,183 @@ fn approved_tool_mission(root: &TempDir, mission: &str, resources: Value, skill:
         )],
     );
     ok(&approval[0]);
+}
+
+#[cfg(windows)]
+fn approve_replacement(root: &TempDir) {
+    use sha2::{Digest, Sha256};
+    let hash = |s: &str| {
+        Sha256::digest(s.as_bytes())
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>()
+    };
+    std::fs::write(root.path().join("file.txt"), "old").unwrap();
+    let contract = json!({"version":1,"scope":"project:a","objective":"Replace","actions":["artifact_replace"],"resources":["file.txt"],"rollback":"verified backup","artifact_digests":{"file.txt":hash("new")},"artifact_previous_digests":{"file.txt":hash("old")}});
+    let proposal = run(
+        root,
+        &[req(
+            "proposal",
+            json!({"type":"mission_propose","mission_id":"m","contract":contract}),
+        )],
+    );
+    ok(&proposal[0]);
+    let digest = proposal[0]["result"]["contract_digest"].as_str().unwrap();
+    ok(&run(
+        root,
+        &[req(
+            "approval",
+            json!({"type":"mission_approve","mission_id":"m","contract_digest":digest}),
+        )],
+    )[0]);
+}
+
+#[cfg(windows)]
+#[test]
+fn approved_replace_is_verified_and_replays_after_restart() {
+    let root = TempDir::new().unwrap();
+    approve_replacement(&root);
+    let request = tool("replace", "m", "replace", "file.txt", Some("new"));
+    let result = run(&root, &[request.clone()]);
+    ok(&result[0]);
+    assert_eq!(
+        std::fs::read_to_string(root.path().join("file.txt")).unwrap(),
+        "new"
+    );
+    assert_eq!(result, run(&root, &[request]));
+    std::fs::write(root.path().join("file.txt"), "changed by user").unwrap();
+    let restore = |id: &str| {
+        req(
+            id,
+            json!({"type":"tool_recovery","intent_id":"replace","mode":"restore"}),
+        )
+    };
+    error(&run(&root, &[restore("conflict")])[0], "recovery_required");
+    assert_eq!(
+        std::fs::read_to_string(root.path().join("file.txt")).unwrap(),
+        "changed by user"
+    );
+    std::fs::write(root.path().join("file.txt"), "new").unwrap();
+    let restored = run(&root, &[restore("restore")]);
+    ok(&restored[0]);
+    assert_eq!(
+        std::fs::read_to_string(root.path().join("file.txt")).unwrap(),
+        "old"
+    );
+    assert_eq!(restored, run(&root, &[restore("restore")]));
+    error(
+        &run(
+            &root,
+            &[req(
+                "restore",
+                json!({"type":"tool_recovery","intent_id":"replace","mode":"inspect"}),
+            )],
+        )[0],
+        "idempotency_conflict",
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn replacement_rejects_wrong_content_revocation_and_corrupt_backup() {
+    let root = TempDir::new().unwrap();
+    approve_replacement(&root);
+    error(
+        &run(
+            &root,
+            &[tool("wrong-new", "m", "replace", "file.txt", Some("wrong"))],
+        )[0],
+        "permission_denied",
+    );
+    std::fs::write(root.path().join("file.txt"), "wrong old").unwrap();
+    error(
+        &run(
+            &root,
+            &[tool("wrong-old", "m", "replace", "file.txt", Some("new"))],
+        )[0],
+        "permission_denied",
+    );
+    std::fs::write(root.path().join("file.txt"), "old").unwrap();
+    ok(&run(
+        &root,
+        &[tool("replace", "m", "replace", "file.txt", Some("new"))],
+    )[0]);
+    let db = rusqlite::Connection::open(root.path().join("state/core.sqlite3")).unwrap();
+    db.execute(
+        "UPDATE replacement_backups SET backup=?1 WHERE request_id='replace'",
+        [b"corrupted".as_slice()],
+    )
+    .unwrap();
+    drop(db);
+    let restore = |id: &str| {
+        req(
+            id,
+            json!({"type":"tool_recovery","intent_id":"replace","mode":"restore"}),
+        )
+    };
+    error(&run(&root, &[restore("corrupt")])[0], "recovery_required");
+    assert_eq!(
+        std::fs::read_to_string(root.path().join("file.txt")).unwrap(),
+        "new"
+    );
+    let db = rusqlite::Connection::open(root.path().join("state/core.sqlite3")).unwrap();
+    db.execute(
+        "UPDATE replacement_backups SET backup=?1 WHERE request_id='replace'",
+        [b"old".as_slice()],
+    )
+    .unwrap();
+    drop(db);
+    ok(&run(
+        &root,
+        &[req(
+            "revoke",
+            json!({"type":"mission_revoke","mission_id":"m","reason":"stop"}),
+        )],
+    )[0]);
+    error(
+        &run(&root, &[restore("revoked")])[0],
+        "mission_not_approved",
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn replacement_rejects_hardlinks_and_exchanged_target_on_restore() {
+    let root = TempDir::new().unwrap();
+    approve_replacement(&root);
+    std::fs::hard_link(root.path().join("file.txt"), root.path().join("alias.txt")).unwrap();
+    error(
+        &run(
+            &root,
+            &[tool("linked", "m", "replace", "file.txt", Some("new"))],
+        )[0],
+        "path_denied",
+    );
+    std::fs::remove_file(root.path().join("alias.txt")).unwrap();
+    ok(&run(
+        &root,
+        &[tool("replace", "m", "replace", "file.txt", Some("new"))],
+    )[0]);
+    std::fs::rename(
+        root.path().join("file.txt"),
+        root.path().join("displaced.txt"),
+    )
+    .unwrap();
+    std::fs::write(root.path().join("file.txt"), "new").unwrap();
+    error(
+        &run(
+            &root,
+            &[req(
+                "restore",
+                json!({"type":"tool_recovery","intent_id":"replace","mode":"restore"}),
+            )],
+        )[0],
+        "recovery_required",
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.path().join("file.txt")).unwrap(),
+        "new"
+    );
 }
 
 #[cfg(windows)]
@@ -246,7 +460,7 @@ fn tool_denies_unapproved_paths_state_links_overwrite_and_replace() {
     for i in 1..=4 {
         error(&out[i], "path_denied");
     }
-    error(&out[5], "capability_unavailable");
+    error(&out[5], "permission_denied");
     error(&out[6], "recovery_required");
     assert_eq!(
         std::fs::read_to_string(root.path().join("existing.txt")).unwrap(),
@@ -443,6 +657,160 @@ fn tool_crash_after_durable_prepare_does_not_apply_or_replay() {
     error(&out[0], "recovery_required");
     error(&out[1], "recovery_required");
     assert!(!root.path().join("crash.txt").exists());
+    ok(&run(
+        &root,
+        &[req(
+            "abandon",
+            json!({"type":"tool_recovery","intent_id":"crash-request","mode":"safe_abandon"}),
+        )],
+    )[0]);
+    ok(&run(
+        &root,
+        &[tool("released", "m", "create", "crash.txt", Some("data"))],
+    )[0]);
+}
+
+#[cfg(all(windows, feature = "test-fault-injection"))]
+fn crash_on(root: &TempDir, request: &Value, fault: &str) {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_synapse-backend"))
+        .args([
+            "--state-dir",
+            root.path().join("state").to_str().unwrap(),
+            "--workspace",
+            root.path().to_str().unwrap(),
+        ])
+        .env(fault, "1")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    writeln!(child.stdin.take().unwrap(), "{request}").unwrap();
+    assert_eq!(child.wait().unwrap().code(), Some(86));
+}
+
+#[cfg(all(windows, feature = "test-fault-injection"))]
+#[test]
+fn replacement_crashes_are_not_repeated_and_can_be_verified() {
+    for fault in [
+        "SYNAPSE_TEST_CRASH_BEFORE_REPLACE",
+        "SYNAPSE_TEST_CRASH_AFTER_REPLACE",
+        "SYNAPSE_TEST_CRASH_BEFORE_REPLACE_CONFIRM",
+    ] {
+        let root = TempDir::new().unwrap();
+        approve_replacement(&root);
+        let request = tool("replace", "m", "replace", "file.txt", Some("new"));
+        crash_on(&root, &request, fault);
+        let before = fault == "SYNAPSE_TEST_CRASH_BEFORE_REPLACE";
+        assert_eq!(
+            std::fs::read_to_string(root.path().join("file.txt")).unwrap(),
+            if before { "old" } else { "new" }
+        );
+        error(&run(&root, &[request.clone()])[0], "recovery_required");
+        if !before {
+            std::fs::write(root.path().join("file.txt"), "partial").unwrap();
+            error(
+                &run(
+                    &root,
+                    &[req(
+                        "partial-finalize",
+                        json!({"type":"tool_recovery","intent_id":"replace","mode":"finalize"}),
+                    )],
+                )[0],
+                "recovery_required",
+            );
+            error(
+                &run(
+                    &root,
+                    &[req(
+                        "partial-restore",
+                        json!({"type":"tool_recovery","intent_id":"replace","mode":"restore"}),
+                    )],
+                )[0],
+                "recovery_required",
+            );
+            assert_eq!(
+                std::fs::read_to_string(root.path().join("file.txt")).unwrap(),
+                "partial"
+            );
+            std::fs::write(root.path().join("file.txt"), "new").unwrap();
+        }
+        let finalize = req(
+            "finalize",
+            json!({"type":"tool_recovery","intent_id":"replace","mode":"finalize"}),
+        );
+        let result = run(&root, &[finalize]);
+        if before {
+            error(&result[0], "recovery_required");
+        } else {
+            ok(&result[0]);
+            ok(&run(&root, &[request])[0]);
+            ok(&run(
+                &root,
+                &[req(
+                    "restore",
+                    json!({"type":"tool_recovery","intent_id":"replace","mode":"restore"}),
+                )],
+            )[0]);
+            assert_eq!(
+                std::fs::read_to_string(root.path().join("file.txt")).unwrap(),
+                "old"
+            );
+        }
+    }
+}
+
+#[cfg(all(windows, feature = "test-fault-injection"))]
+#[test]
+fn restore_crash_never_repeats_write_blindly() {
+    for fault in [
+        "SYNAPSE_TEST_CRASH_BEFORE_RESTORE",
+        "SYNAPSE_TEST_CRASH_AFTER_RESTORE",
+    ] {
+        let root = TempDir::new().unwrap();
+        approve_replacement(&root);
+        ok(&run(
+            &root,
+            &[tool("replace", "m", "replace", "file.txt", Some("new"))],
+        )[0]);
+        let restore = req(
+            "restore",
+            json!({"type":"tool_recovery","intent_id":"replace","mode":"restore"}),
+        );
+        crash_on(&root, &restore, fault);
+        let out = run(&root, &[restore.clone()]);
+        if fault == "SYNAPSE_TEST_CRASH_BEFORE_RESTORE" {
+            error(&out[0], "recovery_required");
+            assert_eq!(
+                std::fs::read_to_string(root.path().join("file.txt")).unwrap(),
+                "new"
+            );
+            ok(&run(
+                &root,
+                &[req(
+                    "abandon-restore",
+                    json!({"type":"tool_recovery","intent_id":"restore","mode":"safe_abandon"}),
+                )],
+            )[0]);
+            ok(&run(
+                &root,
+                &[req(
+                    "retry-restore",
+                    json!({"type":"tool_recovery","intent_id":"replace","mode":"restore"}),
+                )],
+            )[0]);
+            assert_eq!(
+                std::fs::read_to_string(root.path().join("file.txt")).unwrap(),
+                "old"
+            );
+        } else {
+            ok(&out[0]);
+            assert_eq!(
+                std::fs::read_to_string(root.path().join("file.txt")).unwrap(),
+                "old"
+            );
+            assert_eq!(out, run(&root, &[restore]));
+        }
+    }
 }
 
 #[test]
@@ -989,7 +1357,7 @@ fn newer_storage_and_different_workspace_are_rejected_at_startup() {
         .unwrap();
     assert_eq!(journal.to_lowercase(), "wal");
     assert_eq!(synchronous, 2);
-    db.pragma_update(None, "user_version", 4).unwrap();
+    db.pragma_update(None, "user_version", 5).unwrap();
     drop(db);
     let newer = Command::new(binary)
         .args([

@@ -30,15 +30,21 @@ fn validate(contract: &MissionContract) -> CoreResult<()> {
     for resource in &contract.resources {
         bounded(resource, "resource", 512)?;
     }
-    if contract.artifact_digests.len() > 64
-        || contract.artifact_digests.iter().any(|(path, digest)| {
-            !contract.resources.contains(path)
-                || digest.len() != 64
-                || !digest
-                    .bytes()
-                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-        })
-    {
+    if [
+        &contract.artifact_digests,
+        &contract.artifact_previous_digests,
+    ]
+    .iter()
+    .any(|digests| {
+        digests.len() > 64
+            || digests.iter().any(|(path, digest)| {
+                !contract.resources.contains(path)
+                    || digest.len() != 64
+                    || !digest
+                        .bytes()
+                        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            })
+    }) {
         return Err(CoreError::invalid(
             "Artifact digests must bind approved resources to lowercase SHA-256",
         ));

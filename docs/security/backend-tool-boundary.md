@@ -43,8 +43,12 @@ overwritten. The final Core-generated receipt
 records observed hashes and is committed with the durable request response. A
 duplicate request returns that same receipt; a changed payload with the same ID
 is rejected. Recheck mission state before a new effect after any restart.
-Replacement needs separately owned backups and recovery; it remains unavailable
-until those invariants are implemented and tested. Delete, shell, browser,
+Replacement retains an exclusive no-follow target handle, commits its verified
+original bytes and identity in protected SQLite state, and writes and reads back
+through that handle. Recovery checks the original mission, target identity,
+current snapshot and backup digest. An interrupted restore has its own intent;
+ambiguous content stays reserved for inspection. These operations are not an
+atomic filesystem transaction. Delete, shell, browser,
 accounts and external Skill installation also remain unavailable in this stage.
 
 An attacker with OS-owner privileges can modify workspace files or Core state

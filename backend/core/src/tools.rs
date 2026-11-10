@@ -52,10 +52,10 @@ pub(crate) fn authorize(
             "Action or exact resource is not approved",
         ));
     }
-    if matches!(op, ToolOperation::Replace { .. }) {
+    if matches!(op, ToolOperation::Replace { .. }) && contract.rollback != "verified backup" {
         return Err(CoreError::new(
-            "capability_unavailable",
-            "Replacement needs backup and recovery",
+            "permission_denied",
+            "Replacement requires verified backup policy",
         ));
     }
     if matches!(op, ToolOperation::Create { .. }) && contract.rollback != "manual removal" {
@@ -64,7 +64,7 @@ pub(crate) fn authorize(
             "Create requires the manual removal rollback policy",
         ));
     }
-    if let ToolOperation::Create { content, .. } = op {
+    if let ToolOperation::Create { content, .. } | ToolOperation::Replace { content, .. } = op {
         if contract.artifact_digests.get(path).map(String::as_str)
             != Some(sha(content.as_bytes()).as_str())
         {
@@ -73,6 +73,14 @@ pub(crate) fn authorize(
                 "Artifact digest is not approved for this target",
             ));
         }
+    }
+    if matches!(op, ToolOperation::Replace { .. })
+        && !contract.artifact_previous_digests.contains_key(path)
+    {
+        return Err(CoreError::new(
+            "permission_denied",
+            "Previous artifact digest is not approved",
+        ));
     }
     let mut pin_result = Value::Null;
     if let Some(pin) = contract.skill {
@@ -107,6 +115,25 @@ pub(crate) fn authorize(
     Ok(pin_result)
 }
 
+pub(crate) fn previous_digest(
+    tx: &Transaction<'_>,
+    mission: &str,
+    op: &ToolOperation,
+) -> CoreResult<String> {
+    authorize(tx, mission, op)?;
+    let raw: String = tx.query_row(
+        "SELECT contract FROM missions WHERE id=?1",
+        [mission],
+        |r| r.get(0),
+    )?;
+    let contract: MissionContract = serde_json::from_str(&raw)?;
+    contract
+        .artifact_previous_digests
+        .get(details(op).1)
+        .cloned()
+        .ok_or_else(|| CoreError::new("permission_denied", "Previous digest missing"))
+}
+
 #[cfg(not(windows))]
 pub(crate) fn prepare(_root: &Path, _state: &Path, _op: &ToolOperation) -> CoreResult<Broker> {
     Err(CoreError::new(
@@ -122,6 +149,15 @@ impl Broker {
         String::new()
     }
     pub fn execute(&self, _: &ToolOperation) -> CoreResult<Value> {
+        Err(CoreError::new("capability_unavailable", "Windows required"))
+    }
+    pub fn replacement_snapshot(&mut self) -> CoreResult<(String, Vec<u8>)> {
+        Err(CoreError::new("capability_unavailable", "Windows required"))
+    }
+    pub fn replacement_write(&mut self, _: &[u8]) -> CoreResult<()> {
+        Err(CoreError::new("capability_unavailable", "Windows required"))
+    }
+    pub fn create_is_absent(&self) -> CoreResult<bool> {
         Err(CoreError::new("capability_unavailable", "Windows required"))
     }
 }
@@ -302,10 +338,70 @@ mod win {
         target: String,
         root: Vec<u16>,
         state: Vec<u16>,
+        replacement: Option<File>,
     }
     impl Broker {
         pub fn target(&self) -> String {
             self.target.clone()
+        }
+        pub fn create_is_absent(&self) -> CoreResult<bool> {
+            let leaf = self
+                .leaf
+                .as_ref()
+                .ok_or_else(|| fail("File path required"))?;
+            match std::fs::symlink_metadata(self.parent.join(leaf)) {
+                Ok(_) => Ok(false),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(true),
+                Err(_) => Err(fail("Cannot inspect create target")),
+            }
+        }
+        pub fn replacement_snapshot(&mut self) -> CoreResult<(String, Vec<u8>)> {
+            let f = self
+                .replacement
+                .as_mut()
+                .ok_or_else(|| fail("Replacement handle missing"))?;
+            info(f, false)?;
+            let mut i: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+            if unsafe { GetFileInformationByHandle(f.as_raw_handle() as HANDLE, &mut i) } == 0 {
+                return Err(fail("Cannot inspect file identity"));
+            }
+            let identity = format!(
+                "{:08x}:{:08x}{:08x}",
+                i.dwVolumeSerialNumber, i.nFileIndexHigh, i.nFileIndexLow
+            );
+            f.seek(SeekFrom::Start(0))
+                .map_err(|_| fail("Cannot seek file"))?;
+            let mut bytes = Vec::new();
+            (&mut *f)
+                .take(32769)
+                .read_to_end(&mut bytes)
+                .map_err(|_| fail("Cannot read file"))?;
+            if bytes.len() > 32768 || std::str::from_utf8(&bytes).is_err() {
+                return Err(fail("Only bounded UTF-8 files are supported"));
+            }
+            Ok((identity, bytes))
+        }
+        pub fn replacement_write(&mut self, bytes: &[u8]) -> CoreResult<()> {
+            let f = self
+                .replacement
+                .as_mut()
+                .ok_or_else(|| fail("Replacement handle missing"))?;
+            info(f, false)?;
+            f.seek(SeekFrom::Start(0))
+                .and_then(|_| f.write_all(bytes))
+                .and_then(|_| f.set_len(bytes.len() as u64))
+                .and_then(|_| f.sync_all())
+                .map_err(|_| {
+                    CoreError::new("effect_failed", "Cannot write and flush replacement")
+                })?;
+            let (_, actual) = self.replacement_snapshot()?;
+            if actual != bytes {
+                return Err(CoreError::new(
+                    "effect_failed",
+                    "Replacement readback differs",
+                ));
+            }
+            Ok(())
         }
         pub fn execute(&self, op: &ToolOperation) -> CoreResult<Value> {
             let path = self
@@ -454,6 +550,29 @@ mod win {
             }
             target.push_str(l);
         }
+        let replacement = if matches!(op, ToolOperation::Replace { .. }) {
+            let path = current.join(leaf.as_ref().unwrap());
+            let mut opts = OpenOptions::new();
+            opts.read(true)
+                .write(true)
+                .share_mode(0)
+                .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+            let file = opts
+                .open(&path)
+                .map_err(|_| fail("Cannot exclusively open replacement target"))?;
+            info(&file, false)?;
+            let actual = final_path(&file)?;
+            let expected: Vec<u16> = target.encode_utf16().collect();
+            if !same(&actual, &expected)
+                || !within(&actual, &root_real)
+                || within(&actual, &state_real)
+            {
+                return Err(fail("Alias, protected or outside workspace"));
+            }
+            Some(file)
+        } else {
+            None
+        };
         Ok(Broker {
             _dirs: dirs,
             parent: current,
@@ -461,6 +580,7 @@ mod win {
             target,
             root: root_real,
             state: state_real,
+            replacement,
         })
     }
 }

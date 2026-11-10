@@ -41,7 +41,7 @@ impl Store {
         connection.pragma_update(None, "synchronous", "FULL")?;
         let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let version: u32 = tx.pragma_query_value(None, "user_version", |r| r.get(0))?;
-        if version > 3 {
+        if version > 4 {
             return Err(CoreError::new(
                 "unsupported_storage_version",
                 "Database schema is newer than this Core",
@@ -68,6 +68,9 @@ PRAGMA user_version=1;")?;
         }
         if version < 3 {
             tx.execute_batch("CREATE TABLE tool_intents(request_id TEXT PRIMARY KEY, request_digest TEXT NOT NULL, mission_id TEXT NOT NULL, target TEXT NOT NULL, content_digest TEXT NOT NULL, status TEXT NOT NULL); CREATE UNIQUE INDEX active_tool_target ON tool_intents(target) WHERE status='prepared'; PRAGMA user_version=3;")?;
+        }
+        if version < 4 {
+            tx.execute_batch("CREATE TABLE replacement_backups(request_id TEXT PRIMARY KEY REFERENCES tool_intents(request_id), operation TEXT NOT NULL, identity TEXT NOT NULL, previous_digest TEXT NOT NULL, backup BLOB NOT NULL); CREATE TABLE intent_operations(request_id TEXT PRIMARY KEY REFERENCES tool_intents(request_id), operation TEXT NOT NULL); CREATE TABLE recovery_writes(request_id TEXT PRIMARY KEY, request_digest TEXT NOT NULL, intent_id TEXT NOT NULL REFERENCES tool_intents(request_id), expected_hash TEXT NOT NULL, status TEXT NOT NULL); PRAGMA user_version=4;")?;
         }
         let recorded: String = tx.query_row(
             "SELECT value FROM metadata WHERE key='workspace_root'",

@@ -126,6 +126,21 @@ pub enum Command {
         mission_id: String,
         operation: ToolOperation,
     },
+    ToolRecovery {
+        intent_id: String,
+        mode: RecoveryMode,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expected_current_hash: Option<String>,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RecoveryMode {
+    Inspect,
+    Finalize,
+    Restore,
+    SafeAbandon,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -189,6 +204,8 @@ pub struct MissionContract {
     pub rollback: String,
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub artifact_digests: std::collections::BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub artifact_previous_digests: std::collections::BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skill: Option<SkillPin>,
 }
