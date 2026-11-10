@@ -51,3 +51,39 @@ pub(crate) fn select(
     }
     Ok(selected)
 }
+
+/// Keep admission based on the original logical pieces, then bound the exact wire
+/// context. Some local templates allow only one initial system message. Merge
+/// only the leading run; later stored messages retain their roles and order.
+pub(crate) fn finalize(mut messages: Vec<Value>) -> CoreResult<Vec<Value>> {
+    validate_messages(&messages)?;
+    let leading = messages
+        .iter()
+        .take_while(|message| message["role"] == "system")
+        .count();
+    if leading > 1 {
+        let content = messages[..leading]
+            .iter()
+            .map(|message| message["content"].as_str().unwrap())
+            .collect::<Vec<_>>()
+            .join("\n\n--- Core context boundary: next original system block ---\n\n");
+        messages.splice(..leading, [json!({"role":"system","content":content})]);
+    }
+    validate_messages(&messages)?;
+    Ok(messages)
+}
+
+fn validate_messages(messages: &[Value]) -> CoreResult<()> {
+    for message in messages {
+        let content = message["content"]
+            .as_str()
+            .ok_or_else(|| CoreError::invalid("Invalid context message"))?;
+        bounded(content, "message", 32768)?;
+    }
+    if messages.is_empty() || messages.len() > 64 || serde_json::to_vec(messages)?.len() > 48000 {
+        return Err(CoreError::invalid(
+            "Context exceeds 64 messages or 48000 bytes",
+        ));
+    }
+    Ok(())
+}

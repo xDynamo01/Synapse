@@ -158,6 +158,11 @@ fn structured_plan_proposes_without_effects_and_survives_restart() {
     let root = TempDir::new().unwrap();
     let fixture = Fixture::new(true);
     std::fs::write(
+        fixture.marker.parent().unwrap().join("require-one-system"),
+        b"required",
+    )
+    .unwrap();
+    std::fs::write(
         fixture.marker.parent().unwrap().join("mission-response"),
         valid_plan().to_string(),
     )
@@ -190,6 +195,7 @@ fn structured_plan_proposes_without_effects_and_survives_restart() {
     );
     fixture.release();
     assert_eq!(poll(&mut session, "plan-one")["status"], "succeeded");
+    assert_eq!(sent["messages"].as_array().unwrap().len(), 2);
     let proposed = session.call(req(
         "get-plan",
         json!({"type":"mission_plan_get","mission_id":"mission-one"}),
@@ -854,4 +860,62 @@ fn bounded_mixed_artifacts_and_both_fixed_recipes_are_accepted() {
             .len(),
         16
     );
+}
+
+#[test]
+fn merged_system_overflow_is_atomic_for_planner_and_conversation() {
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let root = TempDir::new().unwrap();
+    let fixture = Fixture::new(false);
+    let mut session = Session::new(&root, None);
+    register(&mut session, &fixture.address);
+    assert_eq!(
+        session.call(req(
+            "chat",
+            json!({"type":"chat_create","chat_id":"chat","title":"chat","scope":"project:a"})
+        ))["ok"],
+        true
+    );
+    let skill=session.call(req("skill",json!({"type":"skill_register","skill":{"id":"guide","version":"1","scope":"project:a","provenance":"owner","tools":[],"permissions":[],"instructions":"S".repeat(17000)}})));
+    assert_eq!(skill["ok"], true);
+    assert_eq!(session.call(req("context",json!({"type":"memory_put","scope":"project:a","key":"selected","kind":"fact","content":"C".repeat(17000),"expected_revision":0,"provenance":{"source_type":"human","source_id":"owner","evidence":"direct"},"status":"active"})))["ok"],true);
+    let pin =
+        json!({"scope":"project:a","id":"guide","version":"1","digest":skill["result"]["digest"]});
+    let context = json!([{"scope":"project:a","key":"selected"}]);
+    for (id, mut command) in [
+        ("plan-overflow", plan_command("mission")),
+        (
+            "conversation-overflow",
+            json!({"type":"conversation_start","chat_id":"chat","model_id":"selected","content":"original human"}),
+        ),
+    ] {
+        command["skill"] = pin.clone();
+        command["context"] = context.clone();
+        let before =
+            session.call(req(&format!("before-{id}"), json!({"type":"health"})))["event_cursor"]
+                .clone();
+        let rejected = session.call(req(id, command));
+        assert_error(&rejected, "invalid_request");
+        assert_eq!(rejected["event_cursor"], before);
+        assert_error(
+            &session.call(req(
+                &format!("job-{id}"),
+                json!({"type":"job_get","job_id":id}),
+            )),
+            "not_found",
+        );
+    }
+    let chat = session.call(req(
+        "chat-after",
+        json!({"type":"chat_get","chat_id":"chat"}),
+    ));
+    assert!(chat["result"]["messages"].as_array().unwrap().is_empty());
+    assert_error(
+        &session.call(req(
+            "plan-after",
+            json!({"type":"mission_plan_get","mission_id":"mission"}),
+        )),
+        "not_found",
+    );
+    assert!(!fixture.marker.exists());
 }

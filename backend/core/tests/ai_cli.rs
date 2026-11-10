@@ -1585,7 +1585,12 @@ fn explicit_context_accepts_sixteen_and_counts_every_message() {
     assert_eq!(started["ok"], true, "{started}");
     fixture.wait_post();
     let posted: Value = serde_json::from_slice(&std::fs::read(&fixture.marker).unwrap()).unwrap();
-    assert_eq!(posted["messages"].as_array().unwrap().len(), 64);
+    assert_eq!(posted["messages"].as_array().unwrap().len(), 50);
+    let merged = posted["messages"][0]["content"].as_str().unwrap();
+    for i in 0..15 {
+        assert!(merged.contains(&format!("\"content\":\"memory {i}\"")));
+    }
+    assert!(!merged.contains("\"content\":\"memory 15\""));
     assert_eq!(
         poll(&mut session, "at-limit")["context"]
             .as_array()
@@ -1671,4 +1676,119 @@ fn explicit_context_failed_cancelled_and_interrupted_jobs_never_learn() {
                 .exists()
         );
     }
+}
+
+#[test]
+fn guided_context_uses_one_leading_system_message_and_keeps_human_learning_source() {
+    let _guard = TEST_LOCK.lock().unwrap();
+    let root = TempDir::new().unwrap();
+    let fixture = Fixture::new(false);
+    std::fs::write(
+        fixture.marker.parent().unwrap().join("require-one-system"),
+        b"required",
+    )
+    .unwrap();
+    let mut session = Session::new(&root, None);
+    register(&mut session, &fixture.address);
+    assert_eq!(
+        session.call(req(
+            "chat",
+            json!({"type":"chat_create","chat_id":"chat","title":"chat","scope":"project:a"})
+        ))["ok"],
+        true
+    );
+    let skill=session.call(req("skill",json!({"type":"skill_register","skill":{"id":"guide","version":"1","scope":"project:a","provenance":"owner","tools":[],"permissions":[],"instructions":"SELECTED_SKILL_GUIDANCE"}})));
+    let pin =
+        json!({"scope":"project:a","id":"guide","version":"1","digest":skill["result"]["digest"]});
+    put_context(
+        &mut session,
+        "memory",
+        "project:a",
+        "selected",
+        "SELECTED_CANONICAL_CONTEXT",
+        0,
+        "active",
+    );
+    assert_eq!(session.call(req("guided-context",json!({"type":"conversation_start","chat_id":"chat","model_id":"selected","content":"I prefer blue","skill":pin,"context":[{"scope":"project:a","key":"selected"}]})))["ok"],true);
+    let job = poll(&mut session, "guided-context");
+    assert_eq!(job["status"], "succeeded", "{job}");
+    let sent: Value = serde_json::from_slice(&std::fs::read(&fixture.marker).unwrap()).unwrap();
+    assert_eq!(sent["messages"].as_array().unwrap().len(), 2);
+    assert_eq!(sent["messages"][0]["role"], "system");
+    let merged = sent["messages"][0]["content"].as_str().unwrap();
+    assert!(merged.contains("untrusted domain data") && merged.contains("untrusted quoted data"));
+    assert!(
+        merged.find("SELECTED_SKILL_GUIDANCE").unwrap()
+            < merged.find("SELECTED_CANONICAL_CONTEXT").unwrap()
+    );
+    assert_eq!(
+        sent["messages"][1],
+        json!({"role":"user","content":"I prefer blue"})
+    );
+    assert_eq!(
+        poll_learning(&mut session, "guided-context")["status"],
+        "succeeded"
+    );
+    let learning: Value = serde_json::from_slice(
+        &std::fs::read(fixture.marker.parent().unwrap().join("learning-post")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        learning["messages"][1],
+        json!({"role":"user","content":"I prefer blue"})
+    );
+    assert!(!learning.to_string().contains("SELECTED_"));
+}
+
+#[test]
+fn context_finalization_preserves_later_history_system_roles_and_order() {
+    let _guard = TEST_LOCK.lock().unwrap();
+    let root = TempDir::new().unwrap();
+    let fixture = Fixture::new(false);
+    let mut session = Session::new(&root, None);
+    register(&mut session, &fixture.address);
+    assert_eq!(
+        session.call(req(
+            "chat",
+            json!({"type":"chat_create","chat_id":"chat","title":"chat","scope":"project:a"})
+        ))["ok"],
+        true
+    );
+    for (id, role, content) in [
+        ("initial-system", "system", "INITIAL_HISTORY_SYSTEM"),
+        ("first-user", "user", "OLD_USER"),
+        ("later-system", "system", "LATER_HISTORY_SYSTEM"),
+        ("assistant", "assistant", "OLD_ASSISTANT"),
+    ] {
+        assert_eq!(session.call(req(id,json!({"type":"message_append","chat_id":"chat","message_id":id,"role":role,"content":content})))["ok"],true);
+    }
+    put_context(
+        &mut session,
+        "context",
+        "project:a",
+        "selected",
+        "SELECTED_CONTEXT",
+        0,
+        "active",
+    );
+    assert_eq!(session.call(req("history-context",json!({"type":"conversation_start","chat_id":"chat","model_id":"selected","content":"NEW_USER","context":[{"scope":"project:a","key":"selected"}]})))["ok"],true);
+    assert_eq!(poll(&mut session, "history-context")["status"], "succeeded");
+    let sent: Value = serde_json::from_slice(&std::fs::read(&fixture.marker).unwrap()).unwrap();
+    let messages = sent["messages"].as_array().unwrap();
+    assert_eq!(messages.len(), 5);
+    assert_eq!(messages[0]["role"], "system");
+    let merged = messages[0]["content"].as_str().unwrap();
+    assert!(
+        merged.find("SELECTED_CONTEXT").unwrap() < merged.find("INITIAL_HISTORY_SYSTEM").unwrap()
+    );
+    assert_eq!(messages[1], json!({"role":"user","content":"OLD_USER"}));
+    assert_eq!(
+        messages[2],
+        json!({"role":"system","content":"LATER_HISTORY_SYSTEM"})
+    );
+    assert_eq!(
+        messages[3],
+        json!({"role":"assistant","content":"OLD_ASSISTANT"})
+    );
+    assert_eq!(messages[4], json!({"role":"user","content":"NEW_USER"}));
 }

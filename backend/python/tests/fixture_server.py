@@ -33,6 +33,9 @@ class Handler(BaseHTTPRequestHandler):
         assert request["model"] == "selected" and request["stream"] is False
         is_plan = request.get("response_format", {}).get("json_schema", {}).get("name") == "mission_plan"
         (marker.parent / "learning-post" if "response_format" in request and not is_plan else marker).write_text(json.dumps(request,ensure_ascii=False), encoding="utf-8")
+        if (marker.parent / "require-one-system").exists() and any(message["role"] == "system" for message in request["messages"][1:]):
+            self.send_error(500, "System message must be at the beginning.")
+            return
         while held and not release.exists():
             time.sleep(.01)
         while "response_format" in request and not is_plan and (marker.parent / "learning-hold").exists():

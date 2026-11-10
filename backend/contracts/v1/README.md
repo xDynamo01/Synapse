@@ -152,3 +152,15 @@ contract returns `capability_unavailable` through legacy `tool_execute` until th
 integrated coordinator and enforcing runner exist; legacy exact-digest tools
 retain their existing behavior. Runner, candidate generation, review, integration,
 rollback and recovery coordination are subsequent implementation blocks.
+
+
+Planner and conversation context finalization first validates all original logical
+message pieces against the existing 64-message, 48,000-byte serialized UTF-8 and
+32,768-byte per-message limits. It then combines only contiguous leading system
+messages, preserving their content/order with explicit Core context boundaries,
+for providers that require one initial system message. Later history roles/order
+are preserved. The resulting wire messages are validated under the same limits,
+including the merged system message; overflow fails before any human append or
+running job insertion. The original logical 64-piece admission limit still applies
+even when the provider receives fewer messages. Worker protocol 4 and public
+request/contract serialization remain unchanged.

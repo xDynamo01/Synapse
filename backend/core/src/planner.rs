@@ -98,14 +98,7 @@ pub(crate) fn start(
     let selected = context::select(tx, references)?;
     messages.extend(selected.messages);
     messages.push(json!({"role":"user","content":objective}));
-    for message in &messages {
-        bounded(message["content"].as_str().unwrap(), "message", 32768)?;
-    }
-    if messages.len() > 64 || serde_json::to_vec(&messages)?.len() > 48000 {
-        return Err(CoreError::invalid(
-            "Planning context exceeds 64 messages or 48000 bytes",
-        ));
-    }
+    let messages = context::finalize(messages)?;
     let execution = MissionExecutionSpec {
         plan_id: job_id.into(),
         primary_model_digest: store::digest(&primary)?,

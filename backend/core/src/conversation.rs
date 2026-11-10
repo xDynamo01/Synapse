@@ -84,14 +84,7 @@ pub(crate) fn start(
         }
     }
     messages.push(json!({"role":"user","content":prompt}));
-    for message in &messages {
-        bounded(message["content"].as_str().unwrap(), "message", 32_768)?;
-    }
-    if messages.len() > 64 || serde_json::to_vec(&messages)?.len() > 48_000 {
-        return Err(CoreError::invalid(
-            "Conversation context exceeds 64 messages or 48000 bytes",
-        ));
-    }
+    let messages = context::finalize(messages)?;
     // Validate wrappers and the complete serialized worker context before the human append.
     let mut user_message_id = None;
     let mut assistant_message_id = None;
