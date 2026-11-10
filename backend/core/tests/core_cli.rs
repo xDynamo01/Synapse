@@ -322,6 +322,113 @@ fn replacement_rejects_hardlinks_and_exchanged_target_on_restore() {
 
 #[cfg(windows)]
 #[test]
+fn replacement_and_restore_refuse_mismatched_pinned_skill() {
+    use sha2::{Digest, Sha256};
+    let hash = |s: &str| {
+        Sha256::digest(s.as_bytes())
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>()
+    };
+    let root = TempDir::new().unwrap();
+    std::fs::write(root.path().join("file.txt"), "old").unwrap();
+    let skill = json!({"id":"helper","version":"1","scope":"project:a","provenance":"local","tools":["artifact_replace"],"permissions":["artifact_replace"],"instructions":"Use approved replacement"});
+    let registered = run(
+        &root,
+        &[req(
+            "register",
+            json!({"type":"skill_register","skill":skill}),
+        )],
+    );
+    ok(&registered[0]);
+    let pin = json!({"scope":"project:a","id":"helper","version":"1","digest":registered[0]["result"]["digest"]});
+    let contract = json!({"version":1,"scope":"project:a","objective":"Pinned replacement","actions":["artifact_replace"],"resources":["file.txt"],"rollback":"verified backup","artifact_digests":{"file.txt":hash("new")},"artifact_previous_digests":{"file.txt":hash("old")},"skill":pin});
+    let proposal = run(
+        &root,
+        &[req(
+            "proposal",
+            json!({"type":"mission_propose","mission_id":"m","contract":contract}),
+        )],
+    );
+    ok(&proposal[0]);
+    ok(&run(
+        &root,
+        &[req(
+            "approval",
+            json!({"type":"mission_approve","mission_id":"m","contract_digest":proposal[0]["result"]["contract_digest"]}),
+        )],
+    )[0]);
+    let db = rusqlite::Connection::open(root.path().join("state/core.sqlite3")).unwrap();
+    let original: String = db
+        .query_row("SELECT manifest FROM skills WHERE id='helper'", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    let mut altered: Value = serde_json::from_str(&original).unwrap();
+    altered["instructions"] = json!("forged");
+    db.execute(
+        "UPDATE skills SET manifest=?1 WHERE id='helper'",
+        [altered.to_string()],
+    )
+    .unwrap();
+    drop(db);
+    error(
+        &run(
+            &root,
+            &[tool("bad-replace", "m", "replace", "file.txt", Some("new"))],
+        )[0],
+        "permission_denied",
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.path().join("file.txt")).unwrap(),
+        "old"
+    );
+    let db = rusqlite::Connection::open(root.path().join("state/core.sqlite3")).unwrap();
+    db.execute(
+        "UPDATE skills SET manifest=?1 WHERE id='helper'",
+        [&original],
+    )
+    .unwrap();
+    drop(db);
+    ok(&run(
+        &root,
+        &[tool("replace", "m", "replace", "file.txt", Some("new"))],
+    )[0]);
+    let db = rusqlite::Connection::open(root.path().join("state/core.sqlite3")).unwrap();
+    db.execute(
+        "UPDATE skills SET manifest=?1 WHERE id='helper'",
+        [altered.to_string()],
+    )
+    .unwrap();
+    drop(db);
+    error(
+        &run(
+            &root,
+            &[req(
+                "forged-recovery",
+                json!({"type":"tool_recovery","intent_id":"replace","mode":"restore","skill":pin}),
+            )],
+        )[0],
+        "invalid_request",
+    );
+    error(
+        &run(
+            &root,
+            &[req(
+                "bad-restore",
+                json!({"type":"tool_recovery","intent_id":"replace","mode":"restore"}),
+            )],
+        )[0],
+        "permission_denied",
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.path().join("file.txt")).unwrap(),
+        "new"
+    );
+}
+
+#[cfg(windows)]
+#[test]
 fn tool_create_read_list_and_stop_survive_restart() {
     let root = TempDir::new().unwrap();
     approved_tool_mission(&root, "m", json!([".", "report.txt"]), None);
@@ -686,6 +793,92 @@ fn crash_on(root: &TempDir, request: &Value, fault: &str) {
         .unwrap();
     writeln!(child.stdin.take().unwrap(), "{request}").unwrap();
     assert_eq!(child.wait().unwrap().code(), Some(86));
+}
+
+#[cfg(all(windows, feature = "test-fault-injection"))]
+fn approve_second_replacement(root: &TempDir) {
+    use sha2::{Digest, Sha256};
+    let hash = |s: &str| {
+        Sha256::digest(s.as_bytes())
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>()
+    };
+    let contract = json!({"version":1,"scope":"project:a","objective":"Second replacement","actions":["artifact_replace"],"resources":["file.txt"],"rollback":"verified backup","artifact_digests":{"file.txt":hash("newer")},"artifact_previous_digests":{"file.txt":hash("new")}});
+    let proposal = run(
+        root,
+        &[req(
+            "proposal-b",
+            json!({"type":"mission_propose","mission_id":"b","contract":contract}),
+        )],
+    );
+    ok(&proposal[0]);
+    ok(&run(
+        root,
+        &[req(
+            "approval-b",
+            json!({"type":"mission_approve","mission_id":"b","contract_digest":proposal[0]["result"]["contract_digest"]}),
+        )],
+    )[0]);
+}
+
+#[cfg(all(windows, feature = "test-fault-injection"))]
+#[test]
+fn restore_respects_other_prepared_target_intents() {
+    for other_restore in [false, true] {
+        let root = TempDir::new().unwrap();
+        approve_replacement(&root);
+        ok(&run(
+            &root,
+            &[tool("replace-a", "m", "replace", "file.txt", Some("new"))],
+        )[0]);
+        approve_second_replacement(&root);
+        let replace_b = tool("replace-b", "b", "replace", "file.txt", Some("newer"));
+        if other_restore {
+            ok(&run(&root, &[replace_b])[0]);
+            let restore_b = req(
+                "restore-b",
+                json!({"type":"tool_recovery","intent_id":"replace-b","mode":"restore"}),
+            );
+            crash_on(&root, &restore_b, "SYNAPSE_TEST_CRASH_BEFORE_RESTORE");
+        } else {
+            crash_on(&root, &replace_b, "SYNAPSE_TEST_CRASH_BEFORE_REPLACE");
+        }
+        let expected = if other_restore { "newer" } else { "new" };
+        let hash = {
+            use sha2::{Digest, Sha256};
+            Sha256::digest(expected.as_bytes())
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<String>()
+        };
+        let restore_a = req(
+            "restore-a",
+            json!({"type":"tool_recovery","intent_id":"replace-a","mode":"restore","expected_current_hash":hash}),
+        );
+        error(&run(&root, &[restore_a])[0], "recovery_required");
+        assert_eq!(
+            std::fs::read_to_string(root.path().join("file.txt")).unwrap(),
+            expected
+        );
+        let db = rusqlite::Connection::open(root.path().join("state/core.sqlite3")).unwrap();
+        let status: String = if other_restore {
+            db.query_row(
+                "SELECT status FROM recovery_writes WHERE request_id='restore-b'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap()
+        } else {
+            db.query_row(
+                "SELECT status FROM tool_intents WHERE request_id='replace-b'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        assert_eq!(status, "prepared");
+    }
 }
 
 #[cfg(all(windows, feature = "test-fault-injection"))]

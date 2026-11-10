@@ -46,8 +46,8 @@ unexpected partial content, and before/after replace and restore and before
 confirmation process exits. Existing tests exercise state paths, Skill scope,
 pinning and stopped missions. Fault hooks are compiled only with the opt-in
 feature; the normal binary has no hooks. Python was unchanged and its suite was
-not rerun. The existing generic Skill tests do not independently exercise a
-forged Skill specifically on replacement or restore.
+not rerun. See the review-fix addendum for dedicated replacement and restore
+Skill coverage added after this initial run.
 
 ## Limitations and review
 
@@ -60,3 +60,28 @@ released automatically. The operator-supplied expected snapshot on restore is
 an explicit authorization to restore over exactly that hash. No delete, shell,
 network, or production-data exercise is included. Independent review and
 additional adversarial/real-power-failure evidence remain outstanding.
+
+## Independent review round 1 fixes
+
+The review found that restore checked only other recovery writes for the same
+original intent; it could overwrite a different prepared operation's snapshot
+on the same target. The restore reservation check now searches all prepared
+tool intents and recovery writes for the same case-insensitive target, excluding
+only the original intent and the current restore request. It executes in the
+existing immediate transaction before committing the restore intent or writing.
+The actual binary test covers a second prepared replacement and a second
+prepared restore, both interrupted before writing, asserting unchanged bytes
+and the other reservation still prepared. Existing interrupted-restore tests
+continue to cover the legitimate own-intent exceptions.
+
+`cargo test -p synapse-core --features test-fault-injection --test core_cli restore_respects_other_prepared_target_intents -- --exact` initially failed (0 passed, 1 failed: restore A incorrectly succeeded); after the fix it passed (1 passed).
+`cargo test -p synapse-core --test core_cli replacement_and_restore_refuse_mismatched_pinned_skill -- --exact` passed (1 passed). This test registers and approves a pinned Skill, modifies its stored manifest only inside a temporary test database, verifies replace refuses without changing old bytes, restores the fixture manifest to perform a valid replace, then modifies it again and verifies restore refuses without changing new bytes. Recovery has no Skill field: an added forged `skill` field is rejected as an unknown field, while the normal recovery route reloads and validates the original mission's pin.
+
+Final sequential checks after formatting: `cargo fmt --all -- --check` passed;
+`cargo test -p synapse-core --test core_cli` passed 22 tests; then
+`cargo test -p synapse-core --features test-fault-injection --test core_cli`
+passed 26 tests. Self-review: target-wide comparisons match the existing
+create/replace `COLLATE NOCASE` reservations; the exceptions are constrained
+to the exact original intent ID and current recovery request ID, and no other
+prepared target reservation is cleared. These tests do not establish behavior
+under real power loss or a hostile OS owner.

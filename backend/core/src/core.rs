@@ -471,11 +471,11 @@ impl Core {
                 "Restore unavailable for intent",
             ));
         }
-        let other_pending: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM recovery_writes WHERE intent_id=?1 AND status='prepared' AND request_id<>?2)", params![intent_id,request.request_id], |r| r.get(0))?;
+        let other_pending: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM tool_intents WHERE target=?1 COLLATE NOCASE AND status='prepared' AND request_id<>?2 UNION ALL SELECT 1 FROM recovery_writes r JOIN tool_intents i ON i.request_id=r.intent_id WHERE i.target=?1 COLLATE NOCASE AND r.status='prepared' AND r.request_id<>?3)", params![target,intent_id,request.request_id], |r| r.get(0))?;
         if other_pending {
             return Err(CoreError::new(
                 "recovery_required",
-                "Another restore is unresolved",
+                "Another target intent is unresolved",
             ));
         }
         if pending.is_some() {
