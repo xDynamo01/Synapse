@@ -18,6 +18,35 @@ LEARNING_FORMAT = {"type": "json_schema", "json_schema": {"name": "memory_candid
 }}}
 
 
+# Fixed schema, never supplied or extended by a caller/model. Core enforces UTF-8
+# byte budgets and cross-array constraints (exact entrypoints and case collisions).
+SAFE_COMPONENT = r'(?![. ])(?!.*\.\.)(?!.*[/\\:<>"|?*])(?!(?:[Cc][Oo][Nn]|[Pp][Rr][Nn]|[Aa][Uu][Xx]|[Nn][Uu][Ll]|[Cc][Oo][Mm][1-9]|[Ll][Pp][Tt][1-9]|[Cc][Ll][Oo][Cc][Kk]\$|[Cc][Oo][Nn][Ii][Nn]\$|[Cc][Oo][Nn][Oo][Uu][Tt]\$) *(?:\.|$))[ -~]+'
+
+
+def _check_schema(kind, suffix):
+    return {"type": "object", "additionalProperties": False, "required": ["kind", "entrypoint"],
+            "properties": {"kind": {"type": "string", "enum": [kind]},
+                           "entrypoint": {"type": "string", "minLength": 1, "maxLength": 128,
+                                          "pattern": '^' + SAFE_COMPONENT + r'\.' + suffix + '$'}}}
+
+
+MISSION_PLAN_FORMAT = {"type": "json_schema", "json_schema": {"name": "mission_plan", "strict": True, "schema": {
+    "type": "object", "additionalProperties": False, "required": ["summary", "artifacts", "checks"],
+    "properties": {
+        "summary": {"type": "string", "minLength": 1, "maxLength": 2048},
+        "artifacts": {"type": "array", "minItems": 1, "maxItems": 16, "uniqueItems": True, "items": {
+            "type": "object", "additionalProperties": False, "required": ["path", "purpose"],
+            "properties": {
+                "path": {"type": "string", "minLength": 1, "maxLength": 128,
+                         "pattern": '^' + SAFE_COMPONENT + r'\.(?:rs|py|md|txt|toml)$'},
+                "purpose": {"type": "string", "minLength": 1, "maxLength": 512}
+            }}},
+        "checks": {"type": "array", "minItems": 1, "maxItems": 8, "uniqueItems": True,
+                   "items": {"anyOf": [_check_schema("python_unittest", "py"), _check_schema("rust_test", "rs")]}}
+    }
+}}}
+
+
 class ProviderError(Exception):
     pass
 
@@ -74,6 +103,8 @@ def infer(endpoint, model_id, messages, generation, purpose="conversation"):
     if not any(isinstance(item, dict) and item.get("id") == model_id for item in models["data"]):
         raise ProviderError("model_unavailable")
     payload = {"model": model_id, "messages": messages, "stream": False, "max_tokens": generation['max_output_tokens']}
+    if purpose == "mission_plan":
+        payload["response_format"] = MISSION_PLAN_FORMAT
     if purpose == "learning":
         payload["response_format"] = LEARNING_FORMAT
     if generation['reasoning_effort'] != 'provider_default':

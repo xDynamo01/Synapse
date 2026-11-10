@@ -45,7 +45,7 @@ class Handler(BaseHTTPRequestHandler):
 class WorkerTests(unittest.TestCase):
     def test_generation_mapping_and_validation(self):
         request = self.request()
-        request['version'] = 3
+        request['version'] = 4
         request['generation'] = {'max_output_tokens': 32, 'timeout_ms': 2000, 'reasoning_effort': 'none'}
         request['digest'] = hashlib.sha256(json.dumps({k:v for k,v in request.items() if k != 'digest'}, sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode()).hexdigest()
         self.assertTrue(self.worker(request)[1]['ok'])
@@ -73,7 +73,7 @@ class WorkerTests(unittest.TestCase):
         self.server.server_close()
         self.thread.join()
     def request(self):
-        bare = {"version": 3, "request_id": "r", "model_id": "selected", "endpoint": self.endpoint, "messages": [{"role":"user","content":"private question"}], "generation": {"max_output_tokens":1024,"timeout_ms":10000,"reasoning_effort":"provider_default"}, "purpose":"conversation"}
+        bare = {"version": 4, "request_id": "r", "model_id": "selected", "endpoint": self.endpoint, "messages": [{"role":"user","content":"private question"}], "generation": {"max_output_tokens":1024,"timeout_ms":10000,"reasoning_effort":"provider_default"}, "purpose":"conversation"}
         digest = hashlib.sha256(json.dumps(bare, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
         return bare | {"digest": digest}
     def worker(self, request):
@@ -82,7 +82,7 @@ class WorkerTests(unittest.TestCase):
         return [json.loads(line) for line in child.stdout.splitlines()]
     def test_handshake_real_loopback_and_bound_request(self):
         hello, answer = self.worker(self.request())
-        self.assertEqual(hello, {"type": "hello", "version": 3})
+        self.assertEqual(hello, {"type": "hello", "version": 4})
         self.assertTrue(answer["ok"])
         self.assertEqual(answer["content"], "answer")
         self.assertEqual(self.server.seen, {"model": "selected", "messages": [{"role": "user", "content": "private question"}], "stream": False, "max_tokens": 1024})
@@ -105,6 +105,41 @@ class WorkerTests(unittest.TestCase):
         with self.assertRaises(ValueError): validate(request)
         request['version'] = 2
         with self.assertRaises(ValueError): validate(request)
+    def test_mission_plan_has_static_strict_bounded_schema_and_version_four(self):
+        import re
+        from synapse_ai.protocol import digest
+        request = self.request() | {'purpose': 'mission_plan'}
+        request['digest'] = digest(request)
+        hello, answer = self.worker(request)
+        self.assertEqual(hello['version'], 4)
+        self.assertTrue(answer['ok'])
+        schema = self.server.seen['response_format']['json_schema']
+        self.assertEqual(schema['name'], 'mission_plan')
+        self.assertTrue(schema['strict'])
+        body = schema['schema']
+        self.assertFalse(body['additionalProperties'])
+        self.assertEqual(set(body['required']), {'summary', 'artifacts', 'checks'})
+        artifacts = body['properties']['artifacts']
+        self.assertEqual((artifacts['minItems'], artifacts['maxItems']), (1, 16))
+        self.assertFalse(artifacts['items']['additionalProperties'])
+        pattern = artifacts['items']['properties']['path']['pattern']
+        for good in ['file.py', 'hello-world.rs', "user's test.txt", 'config.toml']:
+            self.assertIsNotNone(re.fullmatch(pattern, good), good)
+        for bad in ['CON.py', 'com1.foo.py', '../x.py', r'dir\\x.py', 'file.exe', 'x.py ', 'x.py.', 'café.py', '😀.py', 'CON .py', 'x?.py', '.py']:
+            self.assertIsNone(re.fullmatch(pattern, bad), bad)
+        checks = body['properties']['checks']
+        self.assertEqual((checks['minItems'], checks['maxItems']), (1, 8))
+        for recipe in checks['items']['anyOf']:
+            self.assertFalse(recipe['additionalProperties'])
+            fields = recipe['properties']
+            kind = fields['kind']['enum'][0]
+            suffix = 'py' if kind == 'python_unittest' else 'rs'
+            self.assertIsNotNone(re.fullmatch(fields['entrypoint']['pattern'], 'test.' + suffix))
+            self.assertIsNone(re.fullmatch(fields['entrypoint']['pattern'], 'bad.' + ('rs' if suffix == 'py' else 'py')))
+        self.assertNotIn('response_format', request)
+        request['version'] = 3
+        with self.assertRaises(ValueError): validate(request)
+
     def test_endpoint_and_model_and_malformed_are_distinct(self):
         for url in ("https://127.0.0.1:1", "http://localhost:1", "http://127.0.0.1:1/v1/other", "http://user@127.0.0.1:1"):
             with self.assertRaises(ProviderError): validate_endpoint(url)

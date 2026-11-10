@@ -1,7 +1,7 @@
 import hashlib
 import json
 
-VERSION = 3
+VERSION = 4
 MAX_LINE = 65536
 MAX_CONTENT = 32768
 MAX_MESSAGES = 64
@@ -18,7 +18,7 @@ def validate(request):
         raise ValueError("invalid_request")
     if type(request["version"]) is not int or request["version"] != VERSION:
         raise ValueError("unsupported_version")
-    if request["purpose"] not in ("conversation", "learning"):
+    if request["purpose"] not in ("conversation", "learning", "mission_plan"):
         raise ValueError("invalid_request")
     generation = request['generation']
     if (not isinstance(generation, dict) or set(generation) != {'max_output_tokens', 'timeout_ms', 'reasoning_effort'}

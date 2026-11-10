@@ -21,6 +21,8 @@ The available command shapes are:
 | `message_append` | `chat_id`, `message_id`, `role` (`user`, `assistant`, `system`), `content` |
 | `memory_put` | `scope`, `key`, `kind`, `content`, `expected_revision`, `provenance`, `status` |
 | `memory_get` | `scope`, `context_reference`, `key`; optional `after_revision` (default 0), `limit` (1–100, default 50) |
+| `mission_plan_start` | `mission_id`, `scope`, `model_id`, `objective`, required `review_model_id` and `review_generation`; optional exact `skill` and `context` references |
+| `mission_plan_get` | `mission_id`; returns job status, pinned job metadata and, on success, validated `plan` and proposed `mission` |
 | `mission_propose` | `mission_id`, `contract` |
 | `mission_approve` | `mission_id`, `contract_digest` |
 | `mission_cancel`, `mission_revoke` | `mission_id`, `reason` |
@@ -76,10 +78,77 @@ Each selected record becomes a Core-authored system message that marks the follo
 
 `job_get.context` durably returns the selected list with exactly `scope`, `key`, `revision`, `kind`, and `content_digest` (lowercase SHA-256 of the raw content's UTF-8 bytes). It excludes content and remains pinned after subsequent manual revisions, cancellation/failure, or restart. Altering references with the same start request ID conflicts; an identical replay returns the original receipt without a new selection. Injected context remains outside stored chat messages and outside automatic learning, whose sole source is still the latest human message. Natural-language name resolution and automatic memory discovery are not implemented.
 
-Model manifests may omit `generation` for legacy behavior (1024 output tokens, 10000 ms, provider default reasoning). When supplied, `generation` must contain exactly `max_output_tokens` (integer 1–4096), `timeout_ms` (integer 250–120000), and `reasoning_effort` (`provider_default`, `none`, `low`, `medium`, or `high`). Core snapshots the effective settings in the job; `job_get` returns them as `generation`, including after restart. For the local OpenAI-compatible provider, `max_output_tokens` maps to `max_tokens` and `reasoning_effort` is omitted only for `provider_default`. Provider errors remain errors; settings do not imply model support. The worker HTTP timeout uses the configured value, and Core's supervisor adds at most 5000 ms for startup and cleanup. The worker protocol is version 3; the public API remains version 1.
+Model manifests may omit `generation` for legacy behavior (1024 output tokens, 10000 ms, provider default reasoning). When supplied, `generation` must contain exactly `max_output_tokens` (integer 1–4096), `timeout_ms` (integer 250–120000), and `reasoning_effort` (`provider_default`, `none`, `low`, `medium`, or `high`). Core snapshots the effective settings in the job; `job_get` returns them as `generation`, including after restart. For the local OpenAI-compatible provider, `max_output_tokens` maps to `max_tokens` and `reasoning_effort` is omitted only for `provider_default`. Provider errors remain errors; settings do not imply model support. The worker HTTP timeout uses the configured value, and Core's supervisor adds at most 5000 ms for startup and cleanup. The worker protocol is version 4; the public API remains version 1.
 
 Registry lists return bounded metadata pages with `next_cursor` and `has_more`; repeat with a new request ID and the returned `after` cursor until `has_more` is false. `models_list` entries contain `id`, `provider`, `capabilities`, `memory_bytes`, and `operational`; `skills_list` entries contain `id`, `version`, `scope`, `digest`, and `operational`. `model_get` and `skill_get` return complete registered manifests. Cursors are opaque append-order positions; do not infer IDs or ordering from them. List pages stop at the count or 220,000-byte record budget.
 
-Storage schema version 8 adds nullable selected context metadata on jobs and migrates earlier schemas on open. Existing jobs omit context. Version 7 introduced nullable job Skill pins. Version 6 introduced the learning queue, source cursors and conflict metadata. The public API remains version 1 and worker protocol remains version 3.
+Storage schema version 9 adds durable mission plans, job linkage, captured policy snapshots and sealed proposals. Version 8 adds nullable selected context metadata on jobs and migrates earlier schemas on open. Existing jobs omit context. Version 7 introduced nullable job Skill pins. Version 6 introduced the learning queue, source cursors and conflict metadata. The public API remains version 1 and worker protocol is version 4.
 
 State uses one SQLite Core connection with WAL and FULL synchronous transactions. A process-held exclusive lock on the canonical state directory refuses a second live Core process with `state_in_use` and releases on process exit. Domain state, events, and the request receipt commit together. A repeated request ID with the same payload returns its original response, including after restart. A changed payload with that ID returns `idempotency_conflict`. `events_read` supports ordered replay by cursor. The state directory is bound to the canonical workspace path and rejects a different workspace.
+
+
+## Structured mission planning (proposal only)
+
+`mission_plan_start` uses the existing one-worker lifecycle and returns `job_id`,
+`mission_id`, and `status:running`. It preempts background learning; another
+foreground call returns `worker_busy`. Use `job_get`, `job_cancel`, or
+`mission_plan_get` with fresh request IDs. A mission ID is reserved at start and
+cannot be retried or rebound, including after failed/cancelled/interrupted work;
+use a new mission ID. Identical start receipts replay without another call.
+
+The primary and reviewer must be registered supported chat models at numeric
+loopback HTTP endpoints. The reviewer may have the same model ID. Explicit
+`review_generation` uses the existing Generation shape, must validate, and must
+differ from the primary's captured effective generation. Planning uses the primary
+registry generation without increasing any budget. Both complete model manifests
+and their SHA-256 digests are pinned; the reviewer generation is also sealed.
+This does not invoke the reviewer, load a model, or claim independent weights.
+
+The planner sees only the original objective, fixed Core instructions, optional
+exact Skill guidance resolved in the mission's explicit project scope, and exact
+selected context through the existing reference gate. It reads no Workspace files
+or chat history. All wrappers count toward 64 messages, 48,000 serialized UTF-8
+bytes and 32,768 UTF-8 bytes per message, checked before creating a running job.
+Skill/context metadata remains pinned in the job. No planning output enters
+canonical learning.
+
+Worker protocol 4 adds the typed purpose `mission_plan` alongside `conversation`
+and `learning`. The provider supplies a fixed strict JSON response schema. Core
+independently rejects unknown fields at every depth and validates the entire
+`{summary,artifacts,checks}` result atomically: summary 1..2048 UTF-8 bytes;
+artifacts 1..16 `{path,purpose}` entries, purpose 1..512 UTF-8 bytes; path 1..128
+ASCII bytes, a safe single Windows component with `.rs`, `.py`, `.md`, `.txt` or
+`.toml` suffix, no traversal, reserved devices, separators, streams, trailing
+space/dot or case-insensitive collisions. Checks are 1..8 unique `{kind,entrypoint}`
+entries; `python_unittest` must name an exact `.py` artifact and `rust_test` an
+exact `.rs` artifact. No content, executable, argv, environment, grant, approval,
+command or Swarm fields are accepted. JSON schema bounds characters; Core enforces
+UTF-8 byte limits and cross-array constraints. Invalid output produces only the
+fixed `invalid_mission_plan` job error, with no raw output or partial proposal.
+
+On success Core derives actions exactly `mission_generate`, `project_check`,
+`artifact_create`, `workspace_read`, resources exactly the artifact paths, and
+rollback `owned verified removal`. The original owner objective/scope are retained.
+Optional `MissionContract.execution` is a strict `MissionExecutionSpec` containing
+`plan_id` (the source job ID), `primary_model`, `primary_model_digest`, `review_model`,
+`review_model_digest`, `review_generation`, validated `artifacts`/`checks`, and `limits`.
+The limits are fixed: `per_file_bytes:8192`, `total_bytes:24576`,
+`check_timeout_ms:30000`, `preparation_timeout_ms:120000`,
+`max_tool_asset_bytes:2147483648`, `job_memory_bytes:536870912`,
+`owned_processes:8`, `check_output_bytes:32768`, `generation_attempts:1`.
+Preparation covers future trusted-asset copy/ACL setup separately from execution;
+the asset byte cap does not claim a hard disk quota.
+
+The plan, sealed complete contract, mission proposal and successful job commit in
+one Core transaction. Public `mission_propose` cannot forge or alter the sealed
+policy, rebind it to another mission, or take a reserved plan mission ID with a
+legacy contract. `mission_plan_get` returns `plan` and `mission` only after success;
+restart preserves successful proposals and marks in-flight jobs interrupted.
+Absent `execution` serializes omitted, preserving legacy contract/request digests.
+
+This delivers proposed contracts only. It creates no project sources, executes no
+checks, and grants no approval. Even an explicitly approved execution-policy
+contract returns `capability_unavailable` through legacy `tool_execute` until the
+integrated coordinator and enforcing runner exist; legacy exact-digest tools
+retain their existing behavior. Runner, candidate generation, review, integration,
+rollback and recovery coordination are subsequent implementation blocks.

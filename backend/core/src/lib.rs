@@ -6,6 +6,7 @@ mod core;
 mod learning;
 mod memory;
 mod missions;
+mod planner;
 mod registry;
 mod skills;
 mod store;

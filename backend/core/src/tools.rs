@@ -43,6 +43,12 @@ pub(crate) fn authorize(
         ));
     }
     let contract: MissionContract = serde_json::from_str(&raw)?;
+    if contract.execution.is_some() {
+        return Err(CoreError::new(
+            "capability_unavailable",
+            "Execution policy requires the integrated coordinator and enforcing runner",
+        ));
+    }
     let (action, path) = details(op);
     if !contract.actions.iter().any(|a| a == action)
         || !contract.resources.iter().any(|p| p == path)

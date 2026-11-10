@@ -31,15 +31,18 @@ class Handler(BaseHTTPRequestHandler):
             return
         request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         assert request["model"] == "selected" and request["stream"] is False
-        (marker.parent / "learning-post" if "response_format" in request else marker).write_text(json.dumps(request,ensure_ascii=False), encoding="utf-8")
+        is_plan = request.get("response_format", {}).get("json_schema", {}).get("name") == "mission_plan"
+        (marker.parent / "learning-post" if "response_format" in request and not is_plan else marker).write_text(json.dumps(request,ensure_ascii=False), encoding="utf-8")
         while held and not release.exists():
             time.sleep(.01)
-        while "response_format" in request and (marker.parent / "learning-hold").exists():
+        while "response_format" in request and not is_plan and (marker.parent / "learning-hold").exists():
             time.sleep(.01)
         try:
             scripted = marker.parent / "learning-response"
             mapping = marker.parent / "learning-map"
-            if "response_format" in request and mapping.exists():
+            if is_plan:
+                content = (marker.parent / "mission-response").read_text(encoding="utf-8")
+            elif "response_format" in request and mapping.exists():
                 content = json.dumps(json.loads(mapping.read_text(encoding="utf-8"))[request["messages"][-1]["content"]])
             else:
                 conversation = marker.parent / "conversation-response"

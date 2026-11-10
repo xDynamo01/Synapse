@@ -6,10 +6,10 @@ from .providers import ProviderError, infer
 
 
 def main():
-    sys.stdout.buffer.write(b'{"type":"hello","version":3}\n')
+    sys.stdout.buffer.write(b'{"type":"hello","version":4}\n')
     sys.stdout.buffer.flush()
     line = sys.stdin.buffer.readline(MAX_LINE + 2)
-    response = {"version": 3, "request_id": None, "digest": None, "ok": False, "content": None, "error": "invalid_request"}
+    response = {"version": 4, "request_id": None, "digest": None, "ok": False, "content": None, "error": "invalid_request"}
     try:
         if not line.endswith(b"\n") or len(line) - 1 > MAX_LINE:
             raise ValueError("invalid_request")

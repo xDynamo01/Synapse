@@ -1,7 +1,7 @@
 use crate::{
     chats,
     contracts::*,
-    conversation, learning, memory, missions, registry,
+    conversation, learning, memory, missions, planner, registry,
     store::{self, Store},
     tools, worker,
 };
@@ -17,7 +17,7 @@ struct Active {
     id: String,
     stop: Arc<worker::Stop>,
     result: Receiver<Result<String, String>>,
-    learning: bool,
+    purpose: conversation::Purpose,
 }
 
 /// Local human client entrypoint. Never expose dispatch to worker output.
@@ -47,8 +47,13 @@ impl Core {
         }
         if matches!(
             &request.command,
-            Command::ConversationStart { .. } | Command::Inference { .. }
-        ) && self.active.as_ref().is_some_and(|a| a.learning)
+            Command::ConversationStart { .. }
+                | Command::Inference { .. }
+                | Command::MissionPlanStart { .. }
+        ) && self
+            .active
+            .as_ref()
+            .is_some_and(|a| a.purpose == conversation::Purpose::Learning)
         {
             let active = self.active.take().unwrap();
             active.stop.cancel();
@@ -866,7 +871,7 @@ impl Core {
     }
     fn launch(&mut self, launch: conversation::Launch) {
         let id = launch.id.clone();
-        let learning = launch.learning;
+        let purpose = launch.purpose;
         let stop = Arc::new(worker::Stop::default());
         let (sender, result) = mpsc::sync_channel(1);
         let worker_stop = stop.clone();
@@ -877,7 +882,7 @@ impl Core {
             id,
             stop,
             result,
-            learning,
+            purpose,
         });
     }
     fn drain(&mut self) -> CoreResult<()> {
@@ -891,10 +896,10 @@ impl Core {
         };
         let id = active.id.clone();
         let tx = self.store.transaction()?;
-        if active.learning {
-            learning::complete(&tx, &id, outcome)?;
-        } else {
-            conversation::complete(&tx, &id, outcome)?;
+        match active.purpose {
+            conversation::Purpose::Learning => learning::complete(&tx, &id, outcome)?,
+            conversation::Purpose::Conversation => conversation::complete(&tx, &id, outcome)?,
+            conversation::Purpose::MissionPlan => planner::complete(&tx, &id, outcome)?,
         }
         tx.commit()?;
         self.active = None;
@@ -912,7 +917,7 @@ impl Core {
         let parsed = serde_json::from_slice::<Request>(line).and_then(|request| {
             let mut value = serde_json::from_slice::<Value>(line)?;
             // Empty explicit context is equivalent to its omitted wire form.
-            if matches!(&request.command, Command::ConversationStart { context, .. } if context.is_empty())
+            if matches!(&request.command, Command::ConversationStart { context, .. } | Command::MissionPlanStart { context, .. } if context.is_empty())
                 && value["command"]["context"] == json!([])
             {
                 value["command"].as_object_mut().unwrap().remove("context");
@@ -1010,6 +1015,38 @@ fn dispatch_tx(
             after_revision.unwrap_or(0),
             limit.unwrap_or(50),
         ),
+        Command::MissionPlanStart {
+            mission_id,
+            scope,
+            model_id,
+            objective,
+            skill,
+            context,
+            review_model_id,
+            review_generation,
+        } => {
+            if busy {
+                return Err(CoreError::new(
+                    "worker_busy",
+                    "One inference job is already running",
+                ));
+            }
+            let (result, launch) = planner::start(
+                tx,
+                request_id,
+                mission_id,
+                scope,
+                model_id,
+                objective,
+                skill.as_ref(),
+                context,
+                review_model_id,
+                review_generation,
+            )?;
+            *pending = Some(launch);
+            Ok(result)
+        }
+        Command::MissionPlanGet { mission_id } => planner::get(tx, mission_id),
         Command::MissionPropose {
             mission_id,
             contract,

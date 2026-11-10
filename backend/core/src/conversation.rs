@@ -10,13 +10,21 @@ use rusqlite::{OptionalExtension, Transaction, params};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
+#[derive(Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum Purpose {
+    Conversation,
+    Learning,
+    MissionPlan,
+}
+
 pub(crate) struct Launch {
     pub id: String,
     pub model_id: String,
     pub endpoint: String,
     pub messages: Vec<Value>,
     pub generation: Generation,
-    pub learning: bool,
+    pub purpose: Purpose,
 }
 
 fn message_id(job_id: &str, role: &str) -> String {
@@ -116,7 +124,7 @@ pub(crate) fn start(
             endpoint: manifest.endpoint,
             messages,
             generation,
-            learning: false,
+            purpose: Purpose::Conversation,
         },
     ))
 }

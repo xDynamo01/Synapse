@@ -12,10 +12,19 @@ pub(crate) fn guidance(tx: &Transaction<'_>, chat_id: &str, pin: &SkillPin) -> C
         })
         .optional()?;
     let scope = scope.ok_or_else(|| CoreError::new("not_found", "Chat not found"))?;
+    guidance_for_scope(tx, &scope, pin)
+}
+
+pub(crate) fn guidance_for_scope(
+    tx: &Transaction<'_>,
+    scope: &str,
+    pin: &SkillPin,
+) -> CoreResult<Value> {
+    crate::contracts::scope(scope)?;
     if scope != pin.scope {
         return Err(CoreError::new(
             "contract_conflict",
-            "Skill scope differs from chat",
+            "Skill scope differs from project",
         ));
     }
     let record = registry::skill_get(tx, &pin.scope, &pin.id, &pin.version)?;

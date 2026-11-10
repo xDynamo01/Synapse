@@ -59,6 +59,7 @@ pub(crate) fn propose(
 ) -> CoreResult<Value> {
     bounded(id, "mission_id", 128)?;
     validate(contract)?;
+    crate::planner::validate_seal(tx, id, contract)?;
     if let Some(pin) = &contract.skill {
         if pin.scope != contract.scope {
             return Err(CoreError::new(

@@ -57,6 +57,21 @@ pub enum Command {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         limit: Option<u32>,
     },
+    MissionPlanStart {
+        mission_id: String,
+        scope: String,
+        model_id: String,
+        objective: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        skill: Option<SkillPin>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        context: Vec<ContextReference>,
+        review_model_id: String,
+        review_generation: Generation,
+    },
+    MissionPlanGet {
+        mission_id: String,
+    },
     MissionPropose {
         mission_id: String,
         contract: MissionContract,
@@ -222,6 +237,8 @@ pub struct MissionContract {
     pub artifact_previous_digests: std::collections::BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skill: Option<SkillPin>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution: Option<MissionExecutionSpec>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -359,4 +376,72 @@ pub fn scope(value: &str) -> CoreResult<()> {
         ));
     }
     Ok(())
+}
+
+/// Data-only planner output. No content, command, grant or approval fields.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MissionPlan {
+    pub summary: String,
+    pub artifacts: Vec<PlannedArtifact>,
+    pub checks: Vec<PlannedCheck>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlannedArtifact {
+    pub path: String,
+    pub purpose: String,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlannedCheck {
+    pub kind: CheckKind,
+    pub entrypoint: String,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CheckKind {
+    PythonUnittest,
+    RustTest,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MissionExecutionSpec {
+    pub plan_id: String,
+    pub primary_model: ModelManifest,
+    pub primary_model_digest: String,
+    pub review_model: ModelManifest,
+    pub review_model_digest: String,
+    pub review_generation: Generation,
+    pub artifacts: Vec<PlannedArtifact>,
+    pub checks: Vec<PlannedCheck>,
+    pub limits: MissionExecutionLimits,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MissionExecutionLimits {
+    pub per_file_bytes: u32,
+    pub total_bytes: u32,
+    pub check_timeout_ms: u64,
+    pub preparation_timeout_ms: u64,
+    pub max_tool_asset_bytes: u64,
+    pub job_memory_bytes: u64,
+    pub owned_processes: u32,
+    pub check_output_bytes: u32,
+    pub generation_attempts: u32,
+}
+impl Default for MissionExecutionLimits {
+    fn default() -> Self {
+        Self {
+            per_file_bytes: 8192,
+            total_bytes: 24576,
+            check_timeout_ms: 30000,
+            preparation_timeout_ms: 120000,
+            max_tool_asset_bytes: 2147483648,
+            job_memory_bytes: 512 * 1024 * 1024,
+            owned_processes: 8,
+            check_output_bytes: 32768,
+            generation_attempts: 1,
+        }
+    }
 }

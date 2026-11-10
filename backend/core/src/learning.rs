@@ -159,7 +159,7 @@ pub(crate) fn start(tx: &Transaction<'_>) -> CoreResult<Option<Launch>> {
         model_id,
         endpoint,
         generation,
-        learning: true,
+        purpose: crate::conversation::Purpose::Learning,
         messages: vec![
             json!({"role":"system","content":"Select durable facts, constraints or decisions stated directly by the human. Return JSON candidates with lowercase subject slug key, kind, and the complete single source sentence as content, including negation and context. Return an empty list when the message has multiple sentences, quotes, attribution, commands, credentials, secrets, transient requests, failed attempts or no durable assertion. Never infer, clip or paraphrase."}),
             json!({"role":"user","content":content}),
