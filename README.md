@@ -16,6 +16,7 @@ only and are not product dependencies.
 
 ```powershell
 cargo test -p synapse-core --locked
+$env:SYNAPSE_PYTHON_EXECUTABLE = py -3.14 -c "import sys; print(sys.executable)"
 cargo run -p synapse-core --bin synapse-backend -- --state-dir .local/backend --workspace .
 ```
 
@@ -29,6 +30,15 @@ one JSON response per line. It has no network listener. For example:
 See [v1 contracts](backend/contracts/v1/README.md) for available commands,
 limits and lifecycle semantics. Capability status is explicit; a registered
 model or Skill is not by itself an operational inference/tool capability.
+
+Reviewed Windows journeys with an existing local model cover
+[automatic source-backed memory](docs/evidence/backend/2026-11-10-automatic-memory.md),
+[pinned Skill guidance](docs/evidence/backend/2026-11-10-skill-guidance.md), and
+[explicit cross-chat canonical context](docs/evidence/backend/2026-11-10-contextual-conversation.md).
+The last uses the Core reference contract; natural-language project resolution,
+planner, routing, Skill evolution, temporary Swarm, voice/browser operation and
+native frontend remain subsequent work. Linux/macOS runtime operation and portable
+packaging have not been validated by these Windows runs.
 
 - [Architecture design](docs/specs/2026-11-06-synapse-0.3-clean-room-design.md)
 - [Binding decision charter](docs/specs/2026-11-06-synapse-0.3-decision-charter.md)
