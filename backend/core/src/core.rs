@@ -950,7 +950,7 @@ fn dispatch_tx(
 ) -> CoreResult<Value> {
     match command {
         Command::Health => Ok(
-            json!({"identity":"A.R.T.E.M.I.S.","protocol_version":1,"storage_schema":6,"journal_mode":"wal","synchronous":"full"}),
+            json!({"identity":"A.R.T.E.M.I.S.","protocol_version":1,"storage_schema":7,"journal_mode":"wal","synchronous":"full"}),
         ),
         Command::EventsRead { after, limit } => store::events_read(tx, *after, *limit),
         Command::ChatCreate {
@@ -1040,7 +1040,8 @@ fn dispatch_tx(
                     "One inference job is already running",
                 ));
             }
-            let (result, launch) = conversation::start(tx, request_id, None, model_id, prompt)?;
+            let (result, launch) =
+                conversation::start(tx, request_id, None, model_id, prompt, None)?;
             *pending = Some(launch);
             Ok(result)
         }
@@ -1048,6 +1049,7 @@ fn dispatch_tx(
             chat_id,
             model_id,
             content,
+            skill,
         } => {
             if busy {
                 return Err(CoreError::new(
@@ -1055,8 +1057,14 @@ fn dispatch_tx(
                     "One inference job is already running",
                 ));
             }
-            let (result, launch) =
-                conversation::start(tx, request_id, Some(chat_id), model_id, content)?;
+            let (result, launch) = conversation::start(
+                tx,
+                request_id,
+                Some(chat_id),
+                model_id,
+                content,
+                skill.as_ref(),
+            )?;
             *pending = Some(launch);
             Ok(result)
         }

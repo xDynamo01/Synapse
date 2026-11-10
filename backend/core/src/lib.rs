@@ -6,6 +6,7 @@ mod learning;
 mod memory;
 mod missions;
 mod registry;
+mod skills;
 mod store;
 mod tools;
 mod worker;

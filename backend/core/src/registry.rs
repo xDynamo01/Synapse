@@ -219,6 +219,7 @@ pub(crate) fn capabilities() -> Value {
         {"id":"mission_contracts","status":"operational"},
         {"id":"model_registry","status":"operational"},
         {"id":"skill_registry","status":"operational"},
+        {"id":"skill_guidance","status":"implemented","requires":"explicit exact project Skill pin and an available conversation model; no discovery, evolution or execution authority"},
         {"id":"inference","status":"implemented","requires":"registered lm_studio chat model and configured Python executable"},
         {"id":"workspace_tools","status":"implemented","requires":"Windows and an approved exact mission; create-new only"},
         {"id":"mission_execution","status":"unavailable"}
