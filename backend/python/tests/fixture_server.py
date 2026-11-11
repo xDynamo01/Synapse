@@ -4,6 +4,7 @@ import sys
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 
 marker = Path(sys.argv[1])
 release = Path(sys.argv[2])
@@ -32,7 +33,15 @@ class Handler(BaseHTTPRequestHandler):
         request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         assert request["model"] == "selected" and request["stream"] is False
         is_plan = request.get("response_format", {}).get("json_schema", {}).get("name") == "mission_plan"
-        (marker.parent / "learning-post" if "response_format" in request and not is_plan else marker).write_text(json.dumps(request,ensure_ascii=False), encoding="utf-8")
+        posted = marker.parent / "learning-post" if "response_format" in request and not is_plan else marker
+        # Publish only complete JSON. The CLI tests use marker existence as readiness.
+        with NamedTemporaryFile(dir=posted.parent, delete=False, mode="w", encoding="utf-8") as staged:
+            json.dump(request, staged, ensure_ascii=False)
+        temporary = Path(staged.name)
+        try:
+            temporary.replace(posted)
+        finally:
+            temporary.unlink(missing_ok=True)
         if (marker.parent / "require-one-system").exists() and any(message["role"] == "system" for message in request["messages"][1:]):
             self.send_error(500, "System message must be at the beginning.")
             return
