@@ -41,7 +41,7 @@ impl Store {
         connection.pragma_update(None, "synchronous", "FULL")?;
         let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let version: u32 = tx.pragma_query_value(None, "user_version", |r| r.get(0))?;
-        if version > 11 {
+        if version > 12 {
             return Err(CoreError::new(
                 "unsupported_storage_version",
                 "Database schema is newer than this Core",
@@ -132,6 +132,33 @@ CREATE TABLE mission_runs(
 CREATE UNIQUE INDEX one_active_mission_run ON mission_runs((1)) WHERE status IN ('generating','checking','reviewing');
 PRAGMA user_version=11;")?;
         }
+        if version < 12 {
+            tx.execute_batch("
+ALTER TABLE mission_runs ADD COLUMN auto_integrate INTEGER NOT NULL DEFAULT 0;
+CREATE TABLE mission_workspace_approvals(
+    mission_id TEXT PRIMARY KEY REFERENCES missions(id),
+    identity TEXT NOT NULL
+);
+CREATE TABLE mission_integrations(
+    mission_id TEXT PRIMARY KEY REFERENCES mission_runs(mission_id),
+    status TEXT NOT NULL CHECK(status IN ('publishing','postchecking','rolling_back','integrated','rolled_back','failed','recovery_required','cancelled','revoked')),
+    workspace_identity TEXT,
+    post_index INTEGER NOT NULL DEFAULT 0,
+    check_id TEXT UNIQUE REFERENCES project_checks(id),
+    error TEXT
+);
+CREATE UNIQUE INDEX one_active_mission_integration ON mission_integrations((1))
+    WHERE status IN ('publishing','postchecking','rolling_back');
+CREATE TABLE mission_integration_files(
+    mission_id TEXT NOT NULL REFERENCES mission_integrations(mission_id),
+    position INTEGER NOT NULL,
+    intent_id TEXT NOT NULL UNIQUE REFERENCES tool_intents(request_id),
+    identity TEXT,
+    status TEXT NOT NULL CHECK(status IN ('prepared','confirmed','removing','removed')),
+    PRIMARY KEY(mission_id,position)
+);
+PRAGMA user_version=12;")?;
+        }
         tx.execute("UPDATE learning_jobs SET status=CASE WHEN attempts<3 THEN 'queued' ELSE 'failed' END,error='worker_interrupted' WHERE status='running'", [])?;
         let recorded: String = tx.query_row(
             "SELECT value FROM metadata WHERE key='workspace_root'",
@@ -160,6 +187,7 @@ PRAGMA user_version=11;")?;
         }
         crate::checks::interrupt(&tx)?;
         crate::mission_run::interrupt(&tx)?;
+        crate::integration::interrupt(&tx)?;
         tx.commit()?;
         Ok(Self {
             connection,

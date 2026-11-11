@@ -224,6 +224,6 @@ pub(crate) fn capabilities() -> Value {
         {"id":"workspace_tools","status":"implemented","requires":"Windows and an approved exact mission; create-new only"},
         {"id":"project_check","status":"implemented","requires":"Windows LPAC, configured native toolchain and approved sealed mission"},
         {"id":"mission_candidate_review","status":"implemented","requires":"approved sealed mission, configured native checks and local models"},
-        {"id":"mission_execution","status":"unavailable"}
+        {"id":"mission_execution","status":"implemented","requires":"Windows, approved sealed mission, non-Git Workspace, configured local models and native checks"}
     ]})
 }

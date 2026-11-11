@@ -150,9 +150,17 @@ pub(crate) fn prepare(_root: &Path, _state: &Path, _op: &ToolOperation) -> CoreR
 #[cfg(not(windows))]
 pub(crate) struct Broker;
 #[cfg(not(windows))]
+pub(crate) struct OwnedRead {
+    pub identity: String,
+    pub bytes: Vec<u8>,
+}
+#[cfg(not(windows))]
 impl Broker {
     pub fn target(&self) -> String {
         String::new()
+    }
+    pub fn root_identity(&self) -> CoreResult<String> {
+        Err(CoreError::new("capability_unavailable", "Windows required"))
     }
     pub fn execute(&self, _: &ToolOperation) -> CoreResult<Value> {
         Err(CoreError::new("capability_unavailable", "Windows required"))
@@ -164,6 +172,15 @@ impl Broker {
         Err(CoreError::new("capability_unavailable", "Windows required"))
     }
     pub fn create_is_absent(&self) -> CoreResult<bool> {
+        Err(CoreError::new("capability_unavailable", "Windows required"))
+    }
+    pub fn create_owned(&self, _: &[u8]) -> CoreResult<(String, Vec<u8>)> {
+        Err(CoreError::new("capability_unavailable", "Windows required"))
+    }
+    pub fn read_owned_guarded(&self) -> CoreResult<OwnedRead> {
+        Err(CoreError::new("capability_unavailable", "Windows required"))
+    }
+    pub fn delete_owned(&self, _: &str, _: &[u8]) -> CoreResult<()> {
         Err(CoreError::new("capability_unavailable", "Windows required"))
     }
 }
@@ -178,7 +195,7 @@ mod win {
         path::{Component, PathBuf},
     };
     use windows_sys::Win32::{
-        Foundation::HANDLE,
+        Foundation::{GENERIC_READ, HANDLE},
         Globalization::{CSTR_EQUAL, CompareStringOrdinal},
         Storage::FileSystem::*,
     };
@@ -214,7 +231,7 @@ mod win {
         buf.truncate(len as usize);
         Ok(buf)
     }
-    fn info(file: &File, directory: bool) -> CoreResult<()> {
+    fn info(file: &File, directory: bool) -> CoreResult<BY_HANDLE_FILE_INFORMATION> {
         let mut i: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
         if unsafe { GetFileInformationByHandle(file.as_raw_handle() as HANDLE, &mut i) } == 0 {
             return Err(fail("Cannot inspect file handle"));
@@ -226,7 +243,27 @@ mod win {
         {
             return Err(fail("Reparse point, hard link or unexpected type"));
         }
-        Ok(())
+        Ok(i)
+    }
+    fn identity(i: BY_HANDLE_FILE_INFORMATION) -> String {
+        format!(
+            "{:08x}:{:08x}{:08x}",
+            i.dwVolumeSerialNumber, i.nFileIndexHigh, i.nFileIndexLow
+        )
+    }
+    fn snapshot(f: &mut File) -> CoreResult<(String, Vec<u8>)> {
+        let identity = identity(info(f, false)?);
+        f.seek(SeekFrom::Start(0))
+            .map_err(|_| fail("Cannot seek file"))?;
+        let mut bytes = Vec::new();
+        (&mut *f)
+            .take(32769)
+            .read_to_end(&mut bytes)
+            .map_err(|_| fail("Cannot read file"))?;
+        if bytes.len() > 32768 || std::str::from_utf8(&bytes).is_err() {
+            return Err(fail("Only bounded UTF-8 files are supported"));
+        }
+        Ok((identity, bytes))
     }
     fn open(path: &Path, directory: bool) -> CoreResult<File> {
         let mut opts = OpenOptions::new();
@@ -337,8 +374,15 @@ mod win {
         }
         Ok(out)
     }
+    pub(crate) struct OwnedRead {
+        pub identity: String,
+        pub bytes: Vec<u8>,
+        _file: File,
+    }
+
     pub(crate) struct Broker {
-        _dirs: Vec<File>,
+        dirs: Vec<File>,
+        root_handle_index: usize,
         parent: PathBuf,
         leaf: Option<String>,
         target: String,
@@ -350,42 +394,126 @@ mod win {
         pub fn target(&self) -> String {
             self.target.clone()
         }
+        pub fn root_identity(&self) -> CoreResult<String> {
+            Ok(identity(info(&self.dirs[self.root_handle_index], true)?))
+        }
         pub fn create_is_absent(&self) -> CoreResult<bool> {
-            let leaf = self
-                .leaf
-                .as_ref()
-                .ok_or_else(|| fail("File path required"))?;
-            match std::fs::symlink_metadata(self.parent.join(leaf)) {
+            match std::fs::symlink_metadata(self.file_path()?) {
                 Ok(_) => Ok(false),
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(true),
                 Err(_) => Err(fail("Cannot inspect create target")),
             }
+        }
+        fn file_path(&self) -> CoreResult<PathBuf> {
+            let leaf = self
+                .leaf
+                .as_ref()
+                .ok_or_else(|| fail("File path required"))?;
+            Ok(self.parent.join(leaf))
+        }
+        fn verify_file_path(&self, file: &File) -> CoreResult<()> {
+            let actual = final_path(file)?;
+            let expected: Vec<u16> = self.target.encode_utf16().collect();
+            if !same(&actual, &expected)
+                || !within(&actual, &self.root)
+                || within(&actual, &self.state)
+            {
+                return Err(fail("Alias, protected or outside workspace"));
+            }
+            Ok(())
+        }
+        pub fn create_owned(&self, bytes: &[u8]) -> CoreResult<(String, Vec<u8>)> {
+            if bytes.len() > 32768 || std::str::from_utf8(bytes).is_err() {
+                return Err(CoreError::invalid("Only bounded UTF-8 files are supported"));
+            }
+            let mut file = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create_new(true)
+                .share_mode(0)
+                .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+                .open(self.file_path()?)
+                .map_err(|error| {
+                    if error.kind() == std::io::ErrorKind::AlreadyExists {
+                        CoreError::new("artifact_conflict", "Create target already exists")
+                    } else {
+                        CoreError::new("effect_failed", "Cannot create new file")
+                    }
+                })?;
+            info(&file, false)?;
+            self.verify_file_path(&file)?;
+            file.write_all(bytes)
+                .and_then(|_| file.sync_all())
+                .map_err(|_| CoreError::new("effect_failed", "Cannot write and flush artifact"))?;
+            let receipt = snapshot(&mut file)?;
+            if receipt.1 != bytes {
+                return Err(CoreError::new("effect_failed", "Artifact readback differs"));
+            }
+            Ok(receipt)
+        }
+        fn open_owned(&self, access: u32) -> CoreResult<File> {
+            // Deny concurrent writes and renames during readback and compensation.
+            let file = OpenOptions::new()
+                .access_mode(access)
+                .share_mode(0)
+                .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+                .open(self.file_path()?)
+                .map_err(|_| fail("Cannot exclusively open artifact"))?;
+            self.verify_file_path(&file)?;
+            Ok(file)
+        }
+        #[cfg(test)]
+        pub fn read_owned(&self) -> CoreResult<(String, Vec<u8>)> {
+            let receipt = self.read_owned_guarded()?;
+            Ok((receipt.identity, receipt.bytes))
+        }
+        pub fn read_owned_guarded(&self) -> CoreResult<OwnedRead> {
+            let mut file = self.open_owned(GENERIC_READ)?;
+            let (identity, bytes) = snapshot(&mut file)?;
+            Ok(OwnedRead {
+                identity,
+                bytes,
+                _file: file,
+            })
+        }
+        pub fn delete_owned(&self, identity: &str, bytes: &[u8]) -> CoreResult<()> {
+            let mut file = self.open_owned(GENERIC_READ | DELETE)?;
+            let (actual_identity, actual_bytes) = snapshot(&mut file)?;
+            if actual_identity != identity || actual_bytes != bytes {
+                return Err(CoreError::new(
+                    "ownership_conflict",
+                    "Artifact identity or bytes changed",
+                ));
+            }
+            info(&file, false)?;
+            // Mark the verified handle for deletion and close it before checking absence.
+            let disposition = FILE_DISPOSITION_INFO { DeleteFile: true };
+            if unsafe {
+                SetFileInformationByHandle(
+                    file.as_raw_handle() as HANDLE,
+                    FileDispositionInfo,
+                    (&disposition as *const FILE_DISPOSITION_INFO).cast(),
+                    std::mem::size_of_val(&disposition) as u32,
+                )
+            } == 0
+            {
+                return Err(CoreError::new("effect_failed", "Artifact deletion refused"));
+            }
+            drop(file);
+            if !self.create_is_absent()? {
+                return Err(CoreError::new(
+                    "effect_failed",
+                    "Artifact absence not verified",
+                ));
+            }
+            Ok(())
         }
         pub fn replacement_snapshot(&mut self) -> CoreResult<(String, Vec<u8>)> {
             let f = self
                 .replacement
                 .as_mut()
                 .ok_or_else(|| fail("Replacement handle missing"))?;
-            info(f, false)?;
-            let mut i: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
-            if unsafe { GetFileInformationByHandle(f.as_raw_handle() as HANDLE, &mut i) } == 0 {
-                return Err(fail("Cannot inspect file identity"));
-            }
-            let identity = format!(
-                "{:08x}:{:08x}{:08x}",
-                i.dwVolumeSerialNumber, i.nFileIndexHigh, i.nFileIndexLow
-            );
-            f.seek(SeekFrom::Start(0))
-                .map_err(|_| fail("Cannot seek file"))?;
-            let mut bytes = Vec::new();
-            (&mut *f)
-                .take(32769)
-                .read_to_end(&mut bytes)
-                .map_err(|_| fail("Cannot read file"))?;
-            if bytes.len() > 32768 || std::str::from_utf8(&bytes).is_err() {
-                return Err(fail("Only bounded UTF-8 files are supported"));
-            }
-            Ok((identity, bytes))
+            snapshot(f)
         }
         pub fn replacement_write(&mut self, bytes: &[u8]) -> CoreResult<()> {
             let f = self
@@ -514,6 +642,7 @@ mod win {
         let components = parts(raw)?;
         let mut dirs = Vec::new();
         let root_real = pin_ancestors(root, &mut dirs)?;
+        let root_handle_index = dirs.len() - 1;
         let state_real = pin_ancestors(state, &mut dirs)?;
         let is_list = matches!(op, ToolOperation::List { .. });
         if components.is_empty() && !is_list {
@@ -580,7 +709,8 @@ mod win {
             None
         };
         Ok(Broker {
-            _dirs: dirs,
+            dirs,
+            root_handle_index,
             parent: current,
             leaf,
             target,
@@ -589,6 +719,151 @@ mod win {
             replacement,
         })
     }
+
+    #[cfg(test)]
+    mod owned_tests {
+        use super::*;
+        use std::fs;
+
+        const CONTENT: &[u8] = b"verified artifact\n";
+
+        fn fixture() -> (tempfile::TempDir, PathBuf, Broker) {
+            let temp = tempfile::tempdir().unwrap();
+            let workspace = temp.path().join("workspace");
+            let state = temp.path().join("state");
+            fs::create_dir(&workspace).unwrap();
+            fs::create_dir(&state).unwrap();
+            let broker = prepare(
+                &workspace,
+                &state,
+                &ToolOperation::Read {
+                    path: "artifact.txt".into(),
+                },
+            )
+            .unwrap();
+            (temp, workspace.join("artifact.txt"), broker)
+        }
+
+        #[test]
+        fn root_identity_changes_when_the_directory_is_exchanged() {
+            let (temp, path, broker) = fixture();
+            let workspace = path.parent().unwrap();
+            let original = temp.path().join("original_workspace");
+            let identity = broker.root_identity().unwrap();
+            assert!(fs::rename(workspace, &original).is_err());
+            drop(broker);
+            fs::rename(workspace, &original).unwrap();
+            fs::create_dir(workspace).unwrap();
+            let current = prepare(
+                workspace,
+                &temp.path().join("state"),
+                &ToolOperation::Read {
+                    path: "artifact.txt".into(),
+                },
+            )
+            .unwrap();
+            assert_ne!(current.root_identity().unwrap(), identity);
+        }
+
+        #[test]
+        fn create_read_and_delete_share_the_same_identity_and_bytes() {
+            let (_temp, path, broker) = fixture();
+            let receipt = broker.create_owned(CONTENT).unwrap();
+            assert_eq!(receipt.1, CONTENT);
+            assert_eq!(fs::read(&path).unwrap(), CONTENT);
+            assert_eq!(broker.read_owned().unwrap(), receipt);
+            broker.delete_owned(&receipt.0, CONTENT).unwrap();
+            assert!(broker.create_is_absent().unwrap());
+        }
+
+        #[test]
+        fn guarded_read_holds_exclusive_access_until_dropped() {
+            let (_temp, path, broker) = fixture();
+            let (identity, _) = broker.create_owned(CONTENT).unwrap();
+            let read = broker.read_owned_guarded().unwrap();
+            assert_eq!(read.identity, identity);
+            assert_eq!(read.bytes, CONTENT);
+            assert!(fs::write(&path, b"changed").is_err());
+            assert!(fs::rename(&path, path.with_file_name("moved.txt")).is_err());
+            drop(read);
+            fs::write(&path, b"changed").unwrap();
+        }
+
+        #[test]
+        fn create_conflict_preserves_occupied_file() {
+            let (_temp, path, broker) = fixture();
+            fs::write(&path, b"already here").unwrap();
+            assert_eq!(
+                broker.create_owned(CONTENT).unwrap_err().code,
+                "artifact_conflict"
+            );
+            assert_eq!(fs::read(&path).unwrap(), b"already here");
+        }
+
+        #[test]
+        fn read_and_delete_refuse_hard_links() {
+            let (_temp, path, broker) = fixture();
+            let (identity, _) = broker.create_owned(CONTENT).unwrap();
+            let link = path.with_file_name("linked.txt");
+            fs::hard_link(&path, &link).unwrap();
+            assert_eq!(broker.read_owned().unwrap_err().code, "path_denied");
+            assert_eq!(
+                broker.delete_owned(&identity, CONTENT).unwrap_err().code,
+                "path_denied"
+            );
+            assert_eq!(fs::read(&path).unwrap(), CONTENT);
+            assert_eq!(fs::read(&link).unwrap(), CONTENT);
+        }
+
+        #[test]
+        fn delete_refuses_changed_bytes_and_changed_identity() {
+            let (_temp, path, broker) = fixture();
+            let (identity, _) = broker.create_owned(CONTENT).unwrap();
+            fs::write(&path, b"edited").unwrap();
+            assert_eq!(
+                broker.delete_owned(&identity, CONTENT).unwrap_err().code,
+                "ownership_conflict"
+            );
+            assert_eq!(fs::read(&path).unwrap(), b"edited");
+            let original = path.with_file_name("original.txt");
+            fs::rename(&path, &original).unwrap();
+            let (new_identity, _) = broker.create_owned(CONTENT).unwrap();
+            assert_ne!(new_identity, identity);
+            assert_eq!(
+                broker.delete_owned(&identity, CONTENT).unwrap_err().code,
+                "ownership_conflict"
+            );
+            assert_eq!(fs::read(&path).unwrap(), CONTENT);
+            assert_eq!(fs::read(&original).unwrap(), b"edited");
+        }
+
+        #[test]
+        fn delete_refusal_preserves_readonly_artifact() {
+            let (_temp, path, broker) = fixture();
+            let (identity, _) = broker.create_owned(CONTENT).unwrap();
+            let mut permissions = fs::metadata(&path).unwrap().permissions();
+            permissions.set_readonly(true);
+            fs::set_permissions(&path, permissions.clone()).unwrap();
+            let result = broker.delete_owned(&identity, CONTENT);
+            permissions.set_readonly(false);
+            fs::set_permissions(&path, permissions).unwrap();
+            assert_eq!(result.unwrap_err().code, "effect_failed");
+            assert_eq!(fs::read(&path).unwrap(), CONTENT);
+        }
+
+        #[test]
+        fn owned_reads_enforce_the_byte_limit() {
+            let (_temp, path, broker) = fixture();
+            let oversized = vec![b'a'; 32769];
+            assert_eq!(
+                broker.create_owned(&oversized).unwrap_err().code,
+                "invalid_request"
+            );
+            assert!(broker.create_is_absent().unwrap());
+            fs::write(&path, oversized).unwrap();
+            assert_eq!(broker.read_owned().unwrap_err().code, "path_denied");
+        }
+    }
 }
 #[cfg(windows)]
-pub(crate) use win::prepare;
+pub(crate) use win::{Broker, OwnedRead, prepare};

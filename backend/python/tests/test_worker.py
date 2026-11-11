@@ -149,6 +149,9 @@ class WorkerTests(unittest.TestCase):
         for purpose, required in expected.items():
             with self.subTest(purpose=purpose):
                 request = self.request() | {'purpose': purpose}
+                if purpose == 'mission_generate':
+                    request['messages'] = [{"role": "user", "content": json.dumps(
+                        {"artifacts": [{"path": "a.rs"}, {"path": "b.py"}]})}]
                 request['digest'] = digest(request)
                 hello, answer = self.worker(request)
                 self.assertEqual(hello, {"type": "hello", "version": 4})
@@ -162,7 +165,8 @@ class WorkerTests(unittest.TestCase):
                 self.assertEqual(set(body['properties']), required)
                 if purpose == 'mission_generate':
                     artifacts = body['properties']['artifacts']
-                    self.assertEqual((artifacts['minItems'], artifacts['maxItems']), (1, 16))
+                    self.assertEqual((artifacts['minItems'], artifacts['maxItems']), (2, 2))
+                    self.assertEqual(artifacts['items']['properties']['path']['enum'], ['a.rs', 'b.py'])
                     item = artifacts['items']
                     self.assertIs(item['additionalProperties'], False)
                     self.assertEqual(set(item['required']), {'path', 'content'})
@@ -177,7 +181,11 @@ class WorkerTests(unittest.TestCase):
         files = [{"path": f"file{index}.txt", "content": "\x01" * 8192} for index in range(3)]
         self.server.content = json.dumps({"artifacts": files})
         self.assertGreater(len(self.server.content), 131072)
-        generate = self.request() | {"purpose": "mission_generate"}
+        generate = self.request() | {
+            "purpose": "mission_generate",
+            "messages": [{"role": "user", "content": json.dumps(
+                {"artifacts": [{"path": file["path"]} for file in files]})}],
+        }
         generate["digest"] = digest(generate)
         self.assertEqual(self.worker(generate)[1]["content"], self.server.content)
 

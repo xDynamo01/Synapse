@@ -42,8 +42,8 @@ The available command shapes are:
 | `job_get` | `job_id`; returns job state, content/error, deterministic message IDs, `skill` for guided jobs, and selected `context` metadata when references were supplied |
 | `learning_get` | `source_job_id`; returns durable background status, attempts, error and pending conflict metadata |
 | `job_cancel` | `job_id`; persists cancellation before terminating its worker |
-| `mission_execute` | `mission_id`; starts generation for an approved sealed mission |
-| `mission_run_get` | `mission_id`; returns candidate digest, completed checks, phase and review |
+| `mission_execute` | `mission_id`; starts generation and integration for an approved sealed mission |
+| `mission_run_get` | `mission_id`; returns candidate digest, phase, review, pre/postcheck counts and integration intents |
 | `tool_execute` | `mission_id`, `operation`: `list`/`read` with `path`, `create`/`replace` with `path` and UTF-8 `content` |
 | `tool_recovery` | `intent_id`, `mode` (`inspect`, `finalize`, `restore`, `safe_abandon`); optional `expected_current_hash` for restore |
 
@@ -150,12 +150,9 @@ legacy contract. `mission_plan_get` returns `plan` and `mission` only after succ
 restart preserves successful proposals and marks in-flight jobs interrupted.
 Absent `execution` serializes omitted, preserving legacy contract/request digests.
 
-This delivers proposed contracts only. It creates no project sources, executes no
-checks, and grants no approval. Even an explicitly approved execution-policy
-contract returns `capability_unavailable` through legacy `tool_execute` until the
-integrated coordinator and enforcing runner exist; legacy exact-digest tools
-retain their existing behavior. Runner, candidate generation, review, integration,
-rollback and recovery coordination are subsequent implementation blocks.
+Planning creates the proposal and leaves source generation, checks and approval
+to their own steps. An execution-policy contract uses the integrated coordinator.
+Legacy `tool_execute` retains its exact-digest authorization rules.
 
 
 Planner and conversation context finalization first validates all original logical
@@ -201,12 +198,36 @@ reports unverified cleanup without replaying the check.
 `mission_execute` starts one durable run for an approved sealed mission. The
 Core stages exact candidate bytes privately and runs the approved checks
 sequentially before launching the separate pinned reviewer. Only a successful
-review can reach `review_ready`. A review can reject a passing candidate.
+review can advance to publication. A review can reject a passing candidate.
 The response exposes the digest and verdict, while candidate bytes stay in
 Core storage. The CLI advances the run while idle. Use fresh request IDs to
 query changing status with `mission_run_get`.
 
 Mission cancellation or revocation stops active work. A restart marks active
-runs `interrupted`. Workspace publication is outside this endpoint.
+runs `interrupted` before publication. The Core never replays an ambiguous
+Workspace effect after restart.
 The worker v4 envelope adds `mission_generate` and `mission_review` purposes
-with distinct static schemas.
+with distinct schema templates. Generation constrains the array to the
+approved count and path set; the Core still validates exact occurrence and
+content limits.
+
+## Automatic mission integration
+
+An approval for a sealed plan pins the Workspace directory identity. The
+initial Windows implementation publishes flat, create-new artifacts in a
+non-Git Workspace. It verifies the current approval, exact reviewed candidate,
+passing prechecks and Workspace identity before applying prepared intents.
+It checks the actual published bytes and repeats the approved checks using
+the same tool digests. `integrated` requires final identity and byte readback.
+
+A failed postcheck removes only files created by that run whose identity and
+bytes still match, while the original approval remains active. `rolled_back`
+reports verified removal. An ambiguous effect, changed target, abrupt exit or
+revocation after a write leaves `recovery_required` with the relevant file
+paths and intent IDs. The targets remain reserved. This version reports and
+preserves ambiguous effects for owner recovery. It does not replay or remove
+them automatically.
+
+Approvals from before Workspace identity pinning require a newly proposed
+mission for automatic integration. Earlier runs already stopped at
+`review_ready` are not published by migration.

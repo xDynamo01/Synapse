@@ -1,7 +1,7 @@
 use crate::{
     chats, checks,
     contracts::*,
-    conversation, learning, memory, mission_run, missions, planner, registry, runner,
+    conversation, integration, learning, memory, mission_run, missions, planner, registry, runner,
     store::{self, Store},
     tools, worker,
 };
@@ -118,6 +118,7 @@ impl Core {
             }
         }
         let _ = self.advance_mission();
+        let _ = self.advance_integration();
         if self.active.is_none() {
             let next = (|| -> CoreResult<Option<conversation::Launch>> {
                 let tx = self.store.transaction()?;
@@ -147,6 +148,16 @@ impl Core {
                 "request_too_large",
                 "Request exceeds 65536 bytes",
             ));
+        }
+        if request.request_id.starts_with(mission_run::INTERNAL_PREFIX)
+            && matches!(
+                &request.command,
+                Command::ToolExecute { .. }
+                    | Command::ToolRecovery { .. }
+                    | Command::ProjectCheckStart { .. }
+            )
+        {
+            return Err(CoreError::invalid("Reserved internal effect request ID"));
         }
         let digest = store::digest(request)?;
         if matches!(&request.command, Command::ToolRecovery { .. }) {
@@ -959,7 +970,8 @@ impl Core {
         let tx = self.store.transaction()?;
         match self.check_event.as_ref().unwrap() {
             runner::Event::Prepared(digest) => {
-                let approved = checks::prepare(&tx, &active.id, digest)?;
+                let approved = integration::allow_tool(&tx, &active.id, digest)?
+                    && checks::prepare(&tx, &active.id, digest)?;
                 tx.commit()?;
                 if approved {
                     let _ = active.permit.try_send(());
@@ -997,6 +1009,15 @@ impl Core {
         Ok(())
     }
 
+    fn advance_integration(&mut self) -> CoreResult<()> {
+        if let Some(launch) =
+            integration::advance(&mut self.store, &self.workspace_root, self.check.is_some())?
+        {
+            self.check = Some(runner::Active::start(launch));
+        }
+        Ok(())
+    }
+
     pub fn poll_mission(&mut self) -> CoreResult<()> {
         self.poll_project_check()?;
         if self.active.as_ref().is_some_and(|active| {
@@ -1007,7 +1028,8 @@ impl Core {
         }) {
             self.drain()?;
         }
-        self.advance_mission()
+        self.advance_mission()?;
+        self.advance_integration()
     }
 
     fn drain(&mut self) -> CoreResult<()> {
@@ -1204,17 +1226,23 @@ fn dispatch_tx(
         Command::MissionApprove {
             mission_id,
             contract_digest,
-        } => missions::approve(tx, mission_id, contract_digest),
+        } => {
+            let result = missions::approve(tx, mission_id, contract_digest)?;
+            integration::bind_approval(tx, mission_id, _workspace_root, state_dir)?;
+            Ok(result)
+        }
         Command::MissionCancel { mission_id, reason } => {
             let result = missions::stop(tx, mission_id, "cancelled", reason)?;
             checks::stop_mission(tx, mission_id, "cancelled")?;
             mission_run::stop(tx, mission_id, "cancelled")?;
+            integration::stop(tx, mission_id, "cancelled")?;
             Ok(result)
         }
         Command::MissionRevoke { mission_id, reason } => {
             let result = missions::stop(tx, mission_id, "revoked", reason)?;
             checks::stop_mission(tx, mission_id, "revoked")?;
             mission_run::stop(tx, mission_id, "revoked")?;
+            integration::stop(tx, mission_id, "revoked")?;
             Ok(result)
         }
         Command::MissionGet { mission_id } => missions::get(tx, mission_id),
@@ -1223,9 +1251,6 @@ fn dispatch_tx(
             check_index,
             artifacts,
         } => {
-            if request_id.starts_with(mission_run::INTERNAL_PREFIX) {
-                return Err(CoreError::invalid("Reserved project check ID"));
-            }
             let (result, launch) = checks::start(
                 tx,
                 request_id,

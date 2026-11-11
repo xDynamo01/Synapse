@@ -30,6 +30,10 @@ struct Session {
 }
 impl Session {
     fn new(root: &TempDir, python: Option<&str>) -> Self {
+        Self::with_env(root, python, &[])
+    }
+
+    fn with_env(root: &TempDir, python: Option<&str>, settings: &[(&str, &str)]) -> Self {
         let workspace = root.path().join("workspace");
         std::fs::create_dir_all(&workspace).unwrap();
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_synapse-backend"));
@@ -44,6 +48,7 @@ impl Session {
         .stderr(Stdio::piped());
         let executable = python.map(str::to_owned).unwrap_or_else(python_exe);
         cmd.env("SYNAPSE_PYTHON_EXECUTABLE", executable);
+        cmd.envs(settings.iter().copied());
         let mut child = cmd.spawn().unwrap();
         let input = child.stdin.take().unwrap();
         let output = BufReader::new(child.stdout.take().unwrap());
@@ -387,13 +392,23 @@ fn approved_check_runs_real_rust() {
 
 #[test]
 #[ignore = "requires the dedicated Windows Python runtime configured by the owner"]
-fn mission_run_checks_candidate_before_separate_review() {
+fn mission_run_integrates_only_verified_owned_candidate() {
     let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     assert!(std::env::var_os("SYNAPSE_CHECK_PYTHON_EXECUTABLE").is_some());
     let source = "import unittest\nclass Arithmetic(unittest.TestCase):\n def test_adds(self): self.assertEqual(2+3,5)\n";
 
     for (scenario, expected) in [
-        ("approved", "review_ready"),
+        ("approved", "integrated"),
+        ("occupied", "failed"),
+        #[cfg(feature = "test-fault-injection")]
+        ("postcheck-rollback", "rolled_back"),
+        #[cfg(feature = "test-fault-injection")]
+        ("publish-crash-before", "recovery_required"),
+        #[cfg(feature = "test-fault-injection")]
+        ("publish-crash-after", "recovery_required"),
+        ("revoke-after-write", "recovery_required"),
+        ("workspace-exchanged", "failed"),
+        ("git-ancestor", "failed"),
         ("rejected", "rejected"),
         ("check-failure", "failed"),
         ("wrong-artifact", "failed"),
@@ -436,7 +451,16 @@ fn mission_run_checks_candidate_before_separate_review() {
             std::fs::write(&hold, "").unwrap();
         }
 
-        let mut session = Session::new(&root, None);
+        let settings: &[(&str, &str)] = match scenario {
+            "postcheck-rollback" => &[("SYNAPSE_TEST_REJECT_POSTCHECK_TOOL", "1")],
+            "publish-crash-before" => &[("SYNAPSE_TEST_CRASH_AFTER_MISSION_PUBLISH_PREPARE", "1")],
+            "publish-crash-after" => &[("SYNAPSE_TEST_CRASH_AFTER_MISSION_PUBLISH_WRITE", "1")],
+            _ => &[],
+        };
+        let mut session = Session::with_env(&root, None, settings);
+        if scenario == "occupied" {
+            std::fs::write(root.path().join("workspace/test_project.py"), "owner file").unwrap();
+        }
         register(&mut session, &fixture.address);
         assert_eq!(
             session.call(req("plan", plan_command("mission")))["ok"],
@@ -452,6 +476,19 @@ fn mission_run_checks_candidate_before_separate_review() {
         ));
         let approved = session.call(req("approve",json!({"type":"mission_approve","mission_id":"mission","contract_digest":proposal["result"]["contract_digest"]})));
         assert_eq!(approved["ok"], true, "{approved}");
+        if scenario == "workspace-exchanged" {
+            std::fs::rename(
+                root.path().join("workspace"),
+                root.path().join("original-workspace"),
+            )
+            .unwrap();
+            std::fs::create_dir(root.path().join("workspace")).unwrap();
+        }
+        if scenario == "git-ancestor" {
+            std::fs::create_dir(root.path().join(".git")).unwrap();
+        }
+        let reserved = session.call(req("internal-mission-test",json!({"type":"tool_execute","mission_id":"mission","operation":{"type":"create","path":"test_project.py","content":"denied"}})));
+        assert_eq!(reserved["error"]["code"], "invalid_request", "{reserved}");
         let start = req("execute", execute);
         let started = session.call(start.clone());
         assert_eq!(started["result"]["status"], "generating", "{started}");
@@ -472,6 +509,35 @@ fn mission_run_checks_candidate_before_separate_review() {
             std::fs::remove_file(&hold).unwrap();
         }
 
+        if scenario.starts_with("publish-crash-") {
+            let began = Instant::now();
+            loop {
+                if let Some(exit) = session.child.try_wait().unwrap() {
+                    assert_eq!(
+                        exit.code(),
+                        Some(if scenario == "publish-crash-before" {
+                            87
+                        } else {
+                            88
+                        })
+                    );
+                    break;
+                }
+                assert!(began.elapsed() < Duration::from_secs(60));
+                thread::sleep(Duration::from_millis(50));
+            }
+            session = Session::new(&root, None);
+        }
+        if scenario == "revoke-after-write" {
+            let began = Instant::now();
+            while !root.path().join("workspace/test_project.py").is_file() {
+                assert!(began.elapsed() < Duration::from_secs(60));
+                thread::sleep(Duration::from_millis(10));
+            }
+            let revoked = session.call(req("revoke-write",json!({"type":"mission_revoke","mission_id":"mission","reason":"stop after observed write"})));
+            assert_eq!(revoked["ok"], true, "{revoked}");
+        }
+
         let began = Instant::now();
         let result = (0..)
             .find_map(|index| {
@@ -483,7 +549,15 @@ fn mission_run_checks_candidate_before_separate_review() {
                 let run = &status["result"];
                 if !matches!(
                     run["status"].as_str(),
-                    Some("generating" | "checking" | "reviewing")
+                    Some(
+                        "generating"
+                            | "checking"
+                            | "reviewing"
+                            | "review_ready"
+                            | "publishing"
+                            | "postchecking"
+                            | "rolling_back"
+                    )
                 ) {
                     return Some(run.clone());
                 }
@@ -501,13 +575,53 @@ fn mission_run_checks_candidate_before_separate_review() {
             assert_eq!(result["error"], "invalid_generated_candidate", "{result}");
             assert!(result["candidate_digest"].is_null());
         }
+        if scenario == "occupied" {
+            assert_eq!(result["error"], "artifact_conflict");
+        }
+        if scenario == "postcheck-rollback" {
+            assert_eq!(result["error"], "postcheck_tool_changed");
+            assert_eq!(result["completed_postchecks"], 0);
+        }
+        if scenario == "workspace-exchanged" {
+            assert_eq!(result["error"], "workspace_changed", "{result}");
+            assert!(
+                root.path()
+                    .join("original-workspace")
+                    .read_dir()
+                    .unwrap()
+                    .next()
+                    .is_none()
+            );
+        }
+        if scenario == "git-ancestor" {
+            assert_eq!(result["error"], "workspace_unsupported", "{result}");
+        }
+        if scenario.starts_with("publish-crash-") || scenario == "revoke-after-write" {
+            let file = &result["integration_files"][0];
+            assert_eq!(file["path"], "test_project.py", "{result}");
+            assert!(file["intent_id"].as_str().is_some());
+            if scenario.starts_with("publish-crash-") {
+                assert_eq!(file["status"], "prepared", "{result}");
+            }
+        }
         let review_path = provider.join("mission_review-post");
-        if matches!(scenario, "approved" | "rejected") {
+        if matches!(
+            scenario,
+            "approved"
+                | "rejected"
+                | "occupied"
+                | "postcheck-rollback"
+                | "publish-crash-before"
+                | "publish-crash-after"
+                | "revoke-after-write"
+                | "workspace-exchanged"
+                | "git-ancestor"
+        ) {
             assert_eq!(
                 result["completed_checks"],
                 if scenario == "approved" { 2 } else { 1 }
             );
-            assert_eq!(result["review"]["approved"], scenario == "approved");
+            assert_eq!(result["review"]["approved"], scenario != "rejected");
             assert!(
                 result["candidate_digest"]
                     .as_str()
@@ -529,20 +643,42 @@ fn mission_run_checks_candidate_before_separate_review() {
                     "after-revoke-ready",
                     json!({"type":"mission_run_get","mission_id":"mission"}),
                 ));
-                assert_eq!(revoked["result"]["status"], "revoked", "{revoked}");
+                assert_eq!(revoked["result"]["status"], "integrated", "{revoked}");
+                assert_eq!(revoked["result"]["completed_postchecks"], 2);
                 assert_eq!(revoked["result"]["review"]["approved"], true);
             }
         } else {
             assert!(!review_path.exists());
             assert!(result["review"].is_null());
         }
-        assert!(
-            root.path()
-                .join("workspace")
-                .read_dir()
-                .unwrap()
-                .next()
-                .is_none()
-        );
+        let workspace = root.path().join("workspace");
+        match scenario {
+            "approved" => {
+                assert_eq!(
+                    std::fs::read_to_string(workspace.join("test_project.py")).unwrap(),
+                    source
+                );
+                assert_eq!(
+                    std::fs::read_to_string(workspace.join("test_second.py")).unwrap(),
+                    source
+                );
+                assert_eq!(workspace.read_dir().unwrap().count(), 2);
+            }
+            "publish-crash-after" | "revoke-after-write" => {
+                assert_eq!(
+                    std::fs::read_to_string(workspace.join("test_project.py")).unwrap(),
+                    source
+                );
+                assert_eq!(workspace.read_dir().unwrap().count(), 1);
+            }
+            "occupied" => {
+                assert_eq!(
+                    std::fs::read_to_string(workspace.join("test_project.py")).unwrap(),
+                    "owner file"
+                );
+                assert_eq!(workspace.read_dir().unwrap().count(), 1);
+            }
+            _ => assert!(workspace.read_dir().unwrap().next().is_none()),
+        }
     }
 }

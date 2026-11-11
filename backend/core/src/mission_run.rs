@@ -19,7 +19,7 @@ pub(crate) enum Next {
     Review(Launch),
 }
 
-fn approved(tx: &Transaction<'_>, id: &str) -> CoreResult<(MissionContract, String)> {
+pub(crate) fn approved(tx: &Transaction<'_>, id: &str) -> CoreResult<(MissionContract, String)> {
     bounded(id, "mission_id", 128)?;
     let row: Option<(String, String, String)> = tx
         .query_row(
@@ -87,7 +87,10 @@ pub(crate) fn start(
         ));
     }
     let busy: bool = tx.query_row(
-        &format!("SELECT EXISTS(SELECT 1 FROM mission_runs WHERE status IN {ACTIVE})"),
+        &format!("SELECT EXISTS(SELECT 1 FROM mission_runs r WHERE status IN {ACTIVE}
+            OR (status='review_ready' AND auto_integrate=1 AND NOT EXISTS(
+                 SELECT 1 FROM mission_integrations i WHERE i.mission_id=r.mission_id))
+            UNION ALL SELECT 1 FROM mission_integrations WHERE status IN ('publishing','postchecking','rolling_back'))"),
         [],
         |row| row.get(0),
     )?;
@@ -106,8 +109,8 @@ pub(crate) fn start(
         launch.messages = context::finalize_candidate(launch.messages)?;
     }
     tx.execute(
-        "INSERT INTO mission_runs(mission_id,contract_digest,status,ai_id)
-         VALUES(?1,?2,'generating',?3)",
+        "INSERT INTO mission_runs(mission_id,contract_digest,status,ai_id,auto_integrate)
+         VALUES(?1,?2,'generating',?3,1)",
         params![mission, digest, id],
     )?;
     store::event(tx, "mission_run_started", json!({"mission_id":mission}))?;
@@ -144,6 +147,35 @@ pub(crate) fn get(tx: &Transaction<'_>, id: &str) -> CoreResult<Value> {
         .map(|value| serde_json::from_str(&value))
         .transpose()?
         .unwrap_or(Value::Null);
+    if let Some((status, post_index, check_id, error)) = tx
+        .query_row(
+            "SELECT status,post_index,check_id,error FROM mission_integrations WHERE mission_id=?1",
+            [id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, u32>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                ))
+            },
+        )
+        .optional()?
+    {
+        result["status"] = json!(status);
+        result["completed_postchecks"] = json!(post_index);
+        result["active_check_id"] = json!(check_id);
+        result["error"] = json!(error);
+        let mut statement = tx.prepare(
+            "SELECT f.intent_id,f.status,json_extract(o.operation,'$.path')
+            FROM mission_integration_files f JOIN intent_operations o ON o.request_id=f.intent_id
+            WHERE f.mission_id=?1 ORDER BY f.position",
+        )?;
+        let files = statement.query_map([id], |row| Ok(json!({
+            "intent_id":row.get::<_,String>(0)?,"status":row.get::<_,String>(1)?,"path":row.get::<_,String>(2)?
+        })))?.collect::<Result<Vec<_>,_>>()?;
+        result["integration_files"] = json!(files);
+    }
     Ok(result)
 }
 
@@ -339,7 +371,7 @@ pub(crate) fn advance(
     Ok(Some(Next::Review(launch)))
 }
 
-fn valid_check(check: &Value, contract: &str, candidate: &str, index: u32) -> bool {
+pub(crate) fn valid_check(check: &Value, contract: &str, candidate: &str, index: u32) -> bool {
     check["status"] == "succeeded"
         && check["cleanup"] == "complete"
         && check["contract_digest"] == contract

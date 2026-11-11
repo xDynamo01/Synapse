@@ -5,6 +5,7 @@ mod context;
 pub mod contracts;
 mod conversation;
 mod core;
+mod integration;
 mod learning;
 mod memory;
 mod mission_run;

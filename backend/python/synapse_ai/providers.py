@@ -1,4 +1,6 @@
+from copy import deepcopy
 import json
+import re
 import socket
 import urllib.error
 import urllib.parse
@@ -72,13 +74,34 @@ MISSION_REVIEW_FORMAT = {"type": "json_schema", "json_schema": {"name": "mission
 RESPONSE_FORMATS = {
     "learning": LEARNING_FORMAT,
     "mission_plan": MISSION_PLAN_FORMAT,
-    "mission_generate": MISSION_GENERATE_FORMAT,
     "mission_review": MISSION_REVIEW_FORMAT,
 }
 
 
 class ProviderError(Exception):
     pass
+
+
+def _mission_generate_format(messages):
+    # Only Core's approved artifact metadata specializes this fixed template.
+    try:
+        planned = json.loads(messages[-1]["content"])["artifacts"]
+        if not isinstance(planned, list) or not 1 <= len(planned) <= 16:
+            raise ValueError()
+        paths = [artifact["path"] for artifact in planned]
+        if any(not isinstance(path, str) or len(path) > 128
+               or not re.fullmatch(ARTIFACT_PATH_SCHEMA["pattern"], path)
+               for path in paths):
+            raise ValueError()
+        if len(set(path.lower() for path in paths)) != len(paths):
+            raise ValueError()
+    except (IndexError, KeyError, TypeError, ValueError):
+        raise ProviderError("provider_malformed") from None
+    response_format = deepcopy(MISSION_GENERATE_FORMAT)
+    array = response_format["json_schema"]["schema"]["properties"]["artifacts"]
+    array["minItems"] = array["maxItems"] = len(paths)
+    array["items"]["properties"]["path"] = {"type": "string", "enum": paths}
+    return response_format
 
 
 def validate_endpoint(endpoint):
@@ -133,7 +156,9 @@ def infer(endpoint, model_id, messages, generation, purpose="conversation"):
     if not any(isinstance(item, dict) and item.get("id") == model_id for item in models["data"]):
         raise ProviderError("model_unavailable")
     payload = {"model": model_id, "messages": messages, "stream": False, "max_tokens": generation['max_output_tokens']}
-    if purpose in RESPONSE_FORMATS:
+    if purpose == "mission_generate":
+        payload["response_format"] = _mission_generate_format(messages)
+    elif purpose in RESPONSE_FORMATS:
         payload["response_format"] = RESPONSE_FORMATS[purpose]
     if generation['reasoning_effort'] != 'provider_default':
         payload['reasoning_effort'] = generation['reasoning_effort']
