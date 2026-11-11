@@ -2,6 +2,8 @@ use std::{
     env,
     io::{self, BufRead, BufReader, BufWriter, Write},
     path::PathBuf,
+    sync::mpsc,
+    time::Duration,
 };
 use synapse_core::{
     Core, Response,
@@ -33,17 +35,40 @@ fn emit(writer: &mut impl Write, response: &Response) -> io::Result<()> {
 }
 
 fn serve(core: &mut Core) -> io::Result<()> {
-    let stdin = io::stdin();
-    let mut reader = BufReader::new(stdin.lock());
+    let (sender, receiver) = mpsc::sync_channel(1);
+    std::thread::spawn(move || {
+        if let Err(error) = read_lines(&sender) {
+            let _ = sender.send(Err(error));
+        }
+    });
     let stdout = io::stdout();
     let mut writer = BufWriter::new(stdout.lock());
+    loop {
+        match receiver.recv_timeout(Duration::from_millis(50)) {
+            Ok(line) => {
+                let (line, too_large) = line?;
+                process_line(core, &mut writer, &line, too_large)?;
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                // Keep the same Core writer while stdin is idle. Retain pending
+                // results in Core if a transient storage error prevents commit.
+                let _ = core.poll_project_check();
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(()),
+        }
+    }
+}
+
+fn read_lines(sender: &mpsc::SyncSender<io::Result<(Vec<u8>, bool)>>) -> io::Result<()> {
+    let stdin = io::stdin();
+    let mut reader = BufReader::new(stdin.lock());
     let mut line = Vec::with_capacity(4096);
     let mut too_large = false;
     loop {
         let available = reader.fill_buf()?;
         if available.is_empty() {
             if !line.is_empty() || too_large {
-                process_line(core, &mut writer, &line, too_large)?;
+                let _ = sender.send(Ok((line, too_large)));
             }
             break;
         }
@@ -60,8 +85,12 @@ fn serve(core: &mut Core) -> io::Result<()> {
         }
         reader.consume(take);
         if end.is_some() {
-            process_line(core, &mut writer, &line, too_large)?;
-            line.clear();
+            if sender
+                .send(Ok((std::mem::take(&mut line), too_large)))
+                .is_err()
+            {
+                return Ok(());
+            }
             too_large = false;
         }
     }
@@ -100,6 +129,7 @@ fn main() {
         }
     };
     if let Err(error) = serve(&mut core) {
+        drop(core);
         eprintln!("I/O error: {error}");
         std::process::exit(1)
     }

@@ -48,6 +48,21 @@ pub(super) fn sealed_directory(path: &Path) -> Result<File, String> {
     verified_with_share(path, true, FILE_SHARE_READ | FILE_SHARE_WRITE)
 }
 
+pub(super) fn directory_identity(file: &File) -> Result<(u32, u32, u32), String> {
+    let mut info = BY_HANDLE_FILE_INFORMATION::default();
+    if unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut info) } == 0
+        || info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY == 0
+        || info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0
+    {
+        return Err("unsafe_run_identity".into());
+    }
+    Ok((
+        info.dwVolumeSerialNumber,
+        info.nFileIndexHigh,
+        info.nFileIndexLow,
+    ))
+}
+
 /// Hold a checked output file across the next contained phase. The same handle
 /// checks the identity and stream table, and disallows replacement and writes.
 pub(super) fn sealed_output(path: &Path) -> Result<File, String> {
@@ -208,11 +223,20 @@ impl Copy<'_> {
         Ok(())
     }
 }
+#[cfg(test)]
 pub(super) fn python(
     executable: &Path,
     target: &Path,
     control: &Control,
 ) -> Result<PathBuf, String> {
+    python_copy(executable, target, control).map(|(executable, _)| executable)
+}
+
+fn python_copy<'a>(
+    executable: &Path,
+    target: &'a Path,
+    control: &'a Control,
+) -> Result<(PathBuf, Copy<'a>), String> {
     if !executable.is_absolute()
         || executable.file_name().and_then(|s| s.to_str()) != Some("python.exe")
     {
@@ -236,7 +260,53 @@ pub(super) fn python(
     }
     copy.tree(&source.join("Lib"), &target.join("Lib"))?;
     copy.tree(&source.join("DLLs"), &target.join("DLLs"))?;
-    Ok(target.join("python.exe"))
+    Ok((target.join("python.exe"), copy))
+}
+
+pub(super) fn verified_python(
+    executable: &Path,
+    target: &Path,
+    control: &Control,
+) -> Result<(PathBuf, String), String> {
+    #[derive(serde::Deserialize)]
+    struct Manifest {
+        cpython: String,
+        files: std::collections::BTreeMap<String, String>,
+    }
+    let package = executable
+        .parent()
+        .and_then(Path::parent)
+        .ok_or("toolchain_unavailable")?;
+    let manifest_path = package.join("runtime-manifest.json");
+    ancestors(&manifest_path)?;
+    let manifest_file = verified(&manifest_path, false)?;
+    let mut bytes = Vec::new();
+    manifest_file
+        .take(256 * 1024 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| "toolchain_unavailable")?;
+    if bytes.len() > 256 * 1024 {
+        return Err("toolchain_unavailable".into());
+    }
+    let mut manifest: Manifest =
+        serde_json::from_slice(&bytes).map_err(|_| "toolchain_unavailable")?;
+    if manifest.cpython != "323c59a5e348347be2ce2b7ea55fcb30bf68b2d3" {
+        return Err("toolchain_unavailable".into());
+    }
+    let (executable, copied) = python_copy(executable, target, control)?;
+    for (path, _, digest) in &copied.files {
+        if manifest.files.remove(path).as_ref() != Some(digest) {
+            return Err("toolchain_unavailable".into());
+        }
+    }
+    if manifest
+        .files
+        .keys()
+        .any(|path| !matches!(path.as_str(), "LICENSE.txt" | "LICENSE-zlib-ng.txt"))
+    {
+        return Err("toolchain_unavailable".into());
+    }
+    Ok((executable, copied.digest()))
 }
 
 const RUST_TARGET: &str = "x86_64-pc-windows-msvc";

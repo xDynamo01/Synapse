@@ -1,4 +1,5 @@
 mod chats;
+mod checks;
 mod context;
 pub mod contracts;
 mod conversation;

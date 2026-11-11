@@ -23,6 +23,9 @@ The available command shapes are:
 | `memory_get` | `scope`, `context_reference`, `key`; optional `after_revision` (default 0), `limit` (1–100, default 50) |
 | `mission_plan_start` | `mission_id`, `scope`, `model_id`, `objective`, required `review_model_id` and `review_generation`; optional exact `skill` and `context` references |
 | `mission_plan_get` | `mission_id`; returns job status, pinned job metadata and, on success, validated `plan` and proposed `mission` |
+| `project_check_start` | `mission_id`, zero-based `check_index`, and exact planned `artifacts` of `{path, content}` |
+| `project_check_get` | `check_id`; returns current status, cleanup state and completed phase receipt |
+| `project_check_cancel` | `check_id`; stops a running check |
 | `mission_propose` | `mission_id`, `contract` |
 | `mission_approve` | `mission_id`, `contract_digest` |
 | `mission_cancel`, `mission_revoke` | `mission_id`, `reason` |
@@ -164,3 +167,30 @@ including the merged system message; overflow fails before any human append or
 running job insertion. The original logical 64-piece admission limit still applies
 even when the provider receives fewer messages. Worker protocol 4 and public
 request/contract serialization remain unchanged.
+
+## Native project checks
+
+A check starts only with an approved sealed plan, its exact candidate artifact
+set and a valid recipe index. Use the start request ID as the check ID. Replaying
+that ID returns the original response. Use a fresh request ID for current
+status. The CLI drives the worker while input is idle. Embedded Core consumers
+can call `poll_project_check` on their existing writer loop.
+
+Windows uses a verified LPAC worker. Configure the dedicated Python executable
+with `SYNAPSE_CHECK_PYTHON_EXECUTABLE` and its adjacent package manifest as
+produced by `tools/runner/build_windows_python.py`. Rust uses the configured
+`SYNAPSE_RUNNER_RUST_SYSROOT`, `SYNAPSE_RUNNER_VC_X64_LIB`,
+`SYNAPSE_RUNNER_SDK_UM_X64_LIB` and `SYNAPSE_RUNNER_SDK_UCRT_X64_LIB`.
+Optionally set `SYNAPSE_CHECK_RUST_RUN_ROOT` to a local absolute staging parent
+when the linker cannot resolve its executable beneath the state directory.
+Use a staging parent outside the Workspace that other principals cannot modify.
+Core creates a fresh private child and leaves the parent ACL intact.
+An unavailable runtime fails closed. One check may prepare, execute or clean
+up at a time. Core persists the candidate, recipe and staged tool digests.
+The phase receipt carries exit codes, output digests and observed token/Job
+properties. Candidate files are staged privately.
+
+Status and cleanup are independent. Cancellation or mission revocation
+blocks late receipts. A graceful shutdown records observed cleanup. After an
+abrupt exit, the next Core marks previously running checks interrupted and
+reports unverified cleanup without replaying the check.

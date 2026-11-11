@@ -91,6 +91,17 @@ pub enum Command {
     MissionGet {
         mission_id: String,
     },
+    ProjectCheckStart {
+        mission_id: String,
+        check_index: u32,
+        artifacts: Vec<CandidateArtifact>,
+    },
+    ProjectCheckGet {
+        check_id: String,
+    },
+    ProjectCheckCancel {
+        check_id: String,
+    },
     ModelRegister {
         model: ModelManifest,
     },
@@ -416,6 +427,12 @@ pub struct MissionExecutionSpec {
     pub artifacts: Vec<PlannedArtifact>,
     pub checks: Vec<PlannedCheck>,
     pub limits: MissionExecutionLimits,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CandidateArtifact {
+    pub path: String,
+    pub content: String,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

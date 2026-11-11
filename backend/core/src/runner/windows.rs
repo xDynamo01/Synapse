@@ -21,6 +21,7 @@ use std::{
 use windows_sys::Win32::{
     Foundation::{HANDLE, HANDLE_FLAG_INHERIT, LocalFree, SetHandleInformation, WAIT_OBJECT_0},
     Security::{Authorization::*, Isolation::*, *},
+    Storage::FileSystem::CreateDirectoryW,
     System::{JobObjects::*, Pipes::CreatePipe, Threading::*},
 };
 
@@ -80,6 +81,42 @@ fn process_token(process: HANDLE) -> Result<OwnedHandle, String> {
     Ok(own(handle))
 }
 
+fn owner_sid() -> Result<String, String> {
+    let owner = process_token(unsafe { GetCurrentProcess() })?;
+    let info = token_info(raw(&owner), TokenUser)?;
+    let user = unsafe { &*(info.as_ptr().cast::<TOKEN_USER>()) };
+    sid_text(user.User.Sid)
+}
+
+pub(super) fn create_private_directory(path: &Path) -> Result<(), String> {
+    let owner = owner_sid()?;
+    let descriptor = wide(&format!("D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;{owner})"));
+    let mut sd = null_mut();
+    if unsafe {
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            descriptor.as_ptr(),
+            1,
+            &mut sd,
+            null_mut(),
+        )
+    } == 0
+    {
+        return Err(error("run_security_descriptor"));
+    }
+    let attributes = SECURITY_ATTRIBUTES {
+        nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
+        lpSecurityDescriptor: sd,
+        bInheritHandle: 0,
+    };
+    let name: Vec<_> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+    let result = unsafe { CreateDirectoryW(name.as_ptr(), &attributes) };
+    let failure = (result == 0).then(|| error("run_create_failed"));
+    unsafe {
+        LocalFree(sd);
+    }
+    failure.map_or(Ok(()), Err)
+}
+
 pub(super) struct Profile {
     name: String,
     sid: PSID,
@@ -119,10 +156,7 @@ impl Profile {
         }
     }
     pub fn protect(&self, path: &Path, writable: bool) -> Result<(), String> {
-        let owner = process_token(unsafe { GetCurrentProcess() })?;
-        let owner_info = token_info(raw(&owner), TokenUser)?;
-        let user = unsafe { &*(owner_info.as_ptr().cast::<TOKEN_USER>()) };
-        let owner_sid = sid_text(user.User.Sid)?;
+        let owner_sid = owner_sid()?;
         let access = if writable { "0x1301bf" } else { "GRGX" };
         let level = if writable { "LW" } else { "ME" };
         let descriptor = wide(&format!(
@@ -183,6 +217,10 @@ impl Profile {
         }
         Ok(())
     }
+    pub(super) fn preserve(mut self) {
+        self.name.clear();
+    }
+
     pub fn remove(mut self) -> Result<(), String> {
         let hr = unsafe { DeleteAppContainerProfile(wide(&self.name).as_ptr()) };
         if hr < 0 {
@@ -325,24 +363,33 @@ impl Profile {
         }
         let process_handle = own(process.hProcess);
         let thread_handle = own(process.hThread);
-        let verified = match verify(raw(&process_handle), raw(&job), self.sid) {
-            Ok(value) => value,
+        let suspended = (|| {
+            let verified = verify(raw(&process_handle), raw(&job), self.sid)?;
+            let _resume = control.lock_resume();
+            control.before_launch()?;
+            let started = control.start_execution();
+            if unsafe { ResumeThread(raw(&thread_handle)) } == u32::MAX {
+                return Err(error("resume"));
+            }
+            Ok((verified, started))
+        })();
+        let (verified, started) = match suspended {
+            Ok(result) => result,
             Err(error) => {
                 unsafe {
                     TerminateJobObject(raw(&job), 1);
                 }
-                let reaped =
-                    unsafe { WaitForSingleObject(raw(&process_handle), 5000) } == WAIT_OBJECT_0;
-                return Err(format!(
-                    "{error}; suspended_child_reaped={reaped}; resumed=false"
-                ));
+                if unsafe { WaitForSingleObject(raw(&process_handle), 5000) } != WAIT_OBJECT_0 {
+                    return Err("descendant_cleanup_failed".into());
+                }
+                if error.starts_with("lpac_") {
+                    return Err(format!(
+                        "{error}; suspended_child_reaped=true; resumed=false"
+                    ));
+                }
+                return Err(error);
             }
         };
-        control.before_launch()?;
-        let started = control.start_execution();
-        if unsafe { ResumeThread(raw(&thread_handle)) } == u32::MAX {
-            return Err(error("resume"));
-        }
         drop(thread_handle);
         drop(stdin_read);
         drop(stdin_write);
@@ -417,7 +464,7 @@ impl Profile {
                 )
             } == 0
             {
-                return Err(error("job_query"));
+                return Err("descendant_cleanup_failed".into());
             }
             if accounting.ActiveProcesses == 0 {
                 break;

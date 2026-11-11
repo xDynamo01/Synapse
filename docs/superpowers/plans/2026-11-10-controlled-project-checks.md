@@ -65,9 +65,11 @@ Interfaces:
   produces a bounded parent-observed receipt with phase exit codes, input/tool
   digests, actual token/job observations, timing, output/error code and cleanup.
   stdout/stderr are untrusted diagnostics kept private/bounded, not effect receipts.
-- Trusted tool locations come only from local owner configuration, using existing
-  SYNAPSE_PYTHON_EXECUTABLE for the real Python executable and documented runner
-  environment settings for real Rust sysroot, VC x64 libs, SDK um/ucrt x64 libs.
+- Trusted tool locations come only from local owner configuration. Use
+  `SYNAPSE_CHECK_PYTHON_EXECUTABLE` for the dedicated Python build from the
+  native recipe checkpoint and documented runner environment settings for the
+  real Rust sysroot, VC x64 libs and SDK um/ucrt x64 libs. The Python worker
+  uses its own executable configuration.
   Missing/unusable config is typed unavailable; no WindowsApps/rustup shim inside
   LPAC, source-supplied path or broad system scan. Do not hardcode user paths.
 

@@ -1,7 +1,7 @@
 use crate::{
-    chats,
+    chats, checks,
     contracts::*,
-    conversation, learning, memory, missions, planner, registry,
+    conversation, learning, memory, missions, planner, registry, runner,
     store::{self, Store},
     tools, worker,
 };
@@ -25,6 +25,8 @@ pub struct Core {
     store: Store,
     workspace_root: PathBuf,
     active: Option<Active>,
+    check: Option<runner::Active>,
+    check_event: Option<runner::Event>,
 }
 impl Core {
     pub fn open(state_dir: impl AsRef<Path>, workspace_root: impl AsRef<Path>) -> CoreResult<Self> {
@@ -39,10 +41,12 @@ impl Core {
             store: Store::open(state_dir.as_ref(), &workspace_root)?,
             workspace_root,
             active: None,
+            check: None,
+            check_event: None,
         })
     }
     pub fn dispatch(&mut self, request: Request) -> Response {
-        if let Err(error) = self.drain() {
+        if let Err(error) = self.poll_project_check().and_then(|()| self.drain()) {
             return Response::failure(Some(request.request_id), self.event_cursor(), error);
         }
         if matches!(
@@ -147,6 +151,18 @@ impl Core {
             };
         }
         let mut pending = None;
+        let mut check_launch = None;
+        let stop = self
+            .check
+            .as_ref()
+            .filter(|active| match &request.command {
+                Command::ProjectCheckCancel { check_id } => active.id == *check_id,
+                Command::MissionCancel { mission_id, .. }
+                | Command::MissionRevoke { mission_id, .. } => active.mission_id == *mission_id,
+                _ => false,
+            })
+            .map(runner::Active::control);
+        let guard = stop.as_ref().map(|control| control.lock_resume());
         let busy = self.active.is_some();
         let state_dir = self.store.state_dir.clone();
         let tx = self.store.transaction()?;
@@ -197,6 +213,7 @@ impl Core {
             &request.request_id,
             busy,
             &mut pending,
+            &mut check_launch,
         )
         .and_then(|result| {
             if serde_json::to_vec(&result)?.len() > MAX_RESULT_BYTES {
@@ -233,6 +250,15 @@ impl Core {
             ],
         )?;
         tx.commit()?;
+        if response.ok {
+            if let Some(control) = &stop {
+                control.signal_cancel();
+            }
+            if let Some(launch) = check_launch {
+                self.check = Some(runner::Active::start(launch));
+            }
+        }
+        drop(guard);
         if let Some(launch) = pending {
             self.launch(launch);
         }
@@ -885,6 +911,41 @@ impl Core {
             purpose,
         });
     }
+    pub fn poll_project_check(&mut self) -> CoreResult<()> {
+        let Some(active) = &self.check else {
+            return Ok(());
+        };
+        if self.check_event.is_none() {
+            self.check_event = Some(match active.events.try_recv() {
+                Ok(event) => event,
+                Err(mpsc::TryRecvError::Empty) => return Ok(()),
+                Err(mpsc::TryRecvError::Disconnected) => runner::Event::Finished(runner::Outcome {
+                    receipt: None,
+                    error: Some("worker_interrupted"),
+                    cleanup_complete: false,
+                }),
+            });
+        }
+        let tx = self.store.transaction()?;
+        match self.check_event.as_ref().unwrap() {
+            runner::Event::Prepared(digest) => {
+                let approved = checks::prepare(&tx, &active.id, digest)?;
+                tx.commit()?;
+                if approved {
+                    let _ = active.permit.try_send(());
+                } else {
+                    active.cancel();
+                }
+            }
+            runner::Event::Finished(outcome) => {
+                checks::finish(&tx, &active.id, outcome)?;
+                tx.commit()?;
+                self.check.take().unwrap().join();
+            }
+        }
+        self.check_event = None;
+        Ok(())
+    }
     fn drain(&mut self) -> CoreResult<()> {
         let Some(active) = &self.active else {
             return Ok(());
@@ -943,6 +1004,23 @@ impl Core {
 }
 impl Drop for Core {
     fn drop(&mut self) {
+        if let Some(check) = self.check.take() {
+            check.cancel();
+            let id = check.id.clone();
+            let observed = check.join();
+            let outcome = match self.check_event.take() {
+                Some(runner::Event::Finished(outcome)) => Some(outcome),
+                _ => observed,
+            };
+            if let Some(outcome) = outcome {
+                let _ = (|| -> CoreResult<()> {
+                    let tx = self.store.transaction()?;
+                    checks::shutdown(&tx, &id, &outcome)?;
+                    tx.commit()?;
+                    Ok(())
+                })();
+            }
+        }
         if let Some(active) = &self.active {
             active.stop.cancel();
         }
@@ -958,6 +1036,7 @@ fn dispatch_tx(
     request_id: &str,
     busy: bool,
     pending: &mut Option<conversation::Launch>,
+    check_launch: &mut Option<runner::Launch>,
 ) -> CoreResult<Value> {
     match command {
         Command::Health => {
@@ -1056,12 +1135,35 @@ fn dispatch_tx(
             contract_digest,
         } => missions::approve(tx, mission_id, contract_digest),
         Command::MissionCancel { mission_id, reason } => {
-            missions::stop(tx, mission_id, "cancelled", reason)
+            let result = missions::stop(tx, mission_id, "cancelled", reason)?;
+            checks::stop_mission(tx, mission_id, "cancelled")?;
+            Ok(result)
         }
         Command::MissionRevoke { mission_id, reason } => {
-            missions::stop(tx, mission_id, "revoked", reason)
+            let result = missions::stop(tx, mission_id, "revoked", reason)?;
+            checks::stop_mission(tx, mission_id, "revoked")?;
+            Ok(result)
         }
         Command::MissionGet { mission_id } => missions::get(tx, mission_id),
+        Command::ProjectCheckStart {
+            mission_id,
+            check_index,
+            artifacts,
+        } => {
+            let (result, launch) = checks::start(
+                tx,
+                request_id,
+                mission_id,
+                *check_index,
+                artifacts,
+                state_dir,
+                _workspace_root,
+            )?;
+            *check_launch = Some(launch);
+            Ok(result)
+        }
+        Command::ProjectCheckGet { check_id } => checks::get(tx, check_id),
+        Command::ProjectCheckCancel { check_id } => checks::cancel(tx, check_id),
         Command::ModelRegister { model } => registry::model_register(tx, model),
         Command::ModelsList { after, limit } => {
             registry::models_list(tx, after.unwrap_or(0), limit.unwrap_or(50))

@@ -649,13 +649,13 @@ fn conversation_fixture_persists_once_and_replays_across_restart() {
     drop(session);
     // Recreate the prior schema with its existing unguided job and receipt.
     let db = rusqlite::Connection::open(root.path().join("state/core.sqlite3")).unwrap();
-    db.execute_batch("DROP TABLE mission_plans; ALTER TABLE ai_jobs DROP COLUMN context; ALTER TABLE ai_jobs DROP COLUMN skill; PRAGMA user_version=6;")
+    db.execute_batch("DROP TABLE project_checks; DROP TABLE mission_plans; ALTER TABLE ai_jobs DROP COLUMN context; ALTER TABLE ai_jobs DROP COLUMN skill; PRAGMA user_version=6;")
         .unwrap();
     drop(db);
     let mut session = Session::new(&root, None);
     assert_eq!(
         session.call(req("migrated-health", json!({"type":"health"})))["result"]["storage_schema"],
-        9
+        10
     );
     let migrated = session.call(req(
         "migrated-job",
