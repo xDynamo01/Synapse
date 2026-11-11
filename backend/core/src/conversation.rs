@@ -16,6 +16,8 @@ pub(crate) enum Purpose {
     Conversation,
     Learning,
     MissionPlan,
+    MissionGenerate,
+    MissionReview,
 }
 
 pub(crate) struct Launch {

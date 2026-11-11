@@ -1,11 +1,11 @@
 //! Approval and durable state for the private project check worker.
-use std::{collections::BTreeSet, path::Path};
+use std::path::Path;
 
 use rusqlite::{OptionalExtension, Transaction, params};
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
 
 use crate::{
+    candidate,
     contracts::{CandidateArtifact, CheckKind, CoreError, CoreResult, MissionContract, bounded},
     planner, runner, store,
 };
@@ -59,43 +59,7 @@ pub(crate) fn start(
         .get(check_index as usize)
         .ok_or_else(|| CoreError::invalid("Check index is outside the approved plan"))?;
 
-    let mut paths: BTreeSet<_> = policy
-        .artifacts
-        .iter()
-        .map(|artifact| artifact.path.as_str())
-        .collect();
-    let mut bytes = 0usize;
-    if candidates.len() != paths.len() {
-        return Err(CoreError::invalid(
-            "Candidate must contain the exact approved artifact set",
-        ));
-    }
-    for artifact in candidates {
-        if !paths.remove(artifact.path.as_str()) {
-            return Err(CoreError::invalid(
-                "Candidate path is unapproved or repeated",
-            ));
-        }
-        let size = artifact.content.len();
-        bytes += size;
-        if size > policy.limits.per_file_bytes as usize
-            || bytes > policy.limits.total_bytes as usize
-        {
-            return Err(CoreError::invalid("Candidate exceeds approved byte limits"));
-        }
-        if let Some(expected) = contract.artifact_digests.get(&artifact.path) {
-            let actual: String = Sha256::digest(artifact.content.as_bytes())
-                .iter()
-                .map(|byte| format!("{byte:02x}"))
-                .collect();
-            if &actual != expected {
-                return Err(CoreError::new(
-                    "contract_conflict",
-                    "Candidate differs from the approved artifact digest",
-                ));
-            }
-        }
-    }
+    candidate::validate_artifacts(&contract, candidates)?;
     let busy: bool = tx.query_row(
         "SELECT EXISTS(SELECT 1 FROM project_checks WHERE cleanup='pending')",
         [],

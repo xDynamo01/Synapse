@@ -55,8 +55,20 @@ pub(crate) fn select(
 /// Keep admission based on the original logical pieces, then bound the exact wire
 /// context. Some local templates allow only one initial system message. Merge
 /// only the leading run; later stored messages retain their roles and order.
-pub(crate) fn finalize(mut messages: Vec<Value>) -> CoreResult<Vec<Value>> {
-    validate_messages(&messages)?;
+pub(crate) fn finalize(messages: Vec<Value>) -> CoreResult<Vec<Value>> {
+    finalize_with_limit(messages, 32 * 1024, 48000)
+}
+
+pub(crate) fn finalize_candidate(messages: Vec<Value>) -> CoreResult<Vec<Value>> {
+    finalize_with_limit(messages, 64 * 1024, 256 * 1024)
+}
+
+fn finalize_with_limit(
+    mut messages: Vec<Value>,
+    max_message: usize,
+    max_bytes: usize,
+) -> CoreResult<Vec<Value>> {
+    validate_messages(&messages, max_message, max_bytes)?;
     let leading = messages
         .iter()
         .take_while(|message| message["role"] == "system")
@@ -69,21 +81,22 @@ pub(crate) fn finalize(mut messages: Vec<Value>) -> CoreResult<Vec<Value>> {
             .join("\n\n--- Core context boundary: next original system block ---\n\n");
         messages.splice(..leading, [json!({"role":"system","content":content})]);
     }
-    validate_messages(&messages)?;
+    validate_messages(&messages, max_message, max_bytes)?;
     Ok(messages)
 }
 
-fn validate_messages(messages: &[Value]) -> CoreResult<()> {
+fn validate_messages(messages: &[Value], max_message: usize, max_bytes: usize) -> CoreResult<()> {
     for message in messages {
         let content = message["content"]
             .as_str()
             .ok_or_else(|| CoreError::invalid("Invalid context message"))?;
-        bounded(content, "message", 32768)?;
+        bounded(content, "message", max_message)?;
     }
-    if messages.is_empty() || messages.len() > 64 || serde_json::to_vec(messages)?.len() > 48000 {
-        return Err(CoreError::invalid(
-            "Context exceeds 64 messages or 48000 bytes",
-        ));
+    if messages.is_empty() || messages.len() > 64 || serde_json::to_vec(messages)?.len() > max_bytes
+    {
+        return Err(CoreError::invalid(&format!(
+            "Context exceeds 64 messages or {max_bytes} bytes"
+        )));
     }
     Ok(())
 }

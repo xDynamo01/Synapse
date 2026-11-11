@@ -649,13 +649,13 @@ fn conversation_fixture_persists_once_and_replays_across_restart() {
     drop(session);
     // Recreate the prior schema with its existing unguided job and receipt.
     let db = rusqlite::Connection::open(root.path().join("state/core.sqlite3")).unwrap();
-    db.execute_batch("DROP TABLE project_checks; DROP TABLE mission_plans; ALTER TABLE ai_jobs DROP COLUMN context; ALTER TABLE ai_jobs DROP COLUMN skill; PRAGMA user_version=6;")
+    db.execute_batch("DROP TABLE mission_runs; DROP TABLE project_checks; DROP TABLE mission_plans; ALTER TABLE ai_jobs DROP COLUMN context; ALTER TABLE ai_jobs DROP COLUMN skill; PRAGMA user_version=6;")
         .unwrap();
     drop(db);
     let mut session = Session::new(&root, None);
     assert_eq!(
         session.call(req("migrated-health", json!({"type":"health"})))["result"]["storage_schema"],
-        10
+        11
     );
     let migrated = session.call(req(
         "migrated-job",
@@ -737,25 +737,45 @@ fn cancellation_is_durable_and_late_answer_is_suppressed() {
         "chat",
         json!({"type":"chat_create","chat_id":"one","title":"One","scope":"project:test"}),
     ));
-    assert_eq!(session.call(req("turn",json!({"type":"conversation_start","chat_id":"one","model_id":"selected","content":"secret"})))["ok"],true);
+    assert_eq!(session.call(req("internal-mission-turn",json!({"type":"conversation_start","chat_id":"one","model_id":"selected","content":"secret"})))["ok"],true);
     thread::sleep(Duration::from_millis(800));
-    let status = session.call(req("prekill", json!({"type":"job_get","job_id":"turn"})));
+    let status = session.call(req(
+        "prekill",
+        json!({"type":"job_get","job_id":"internal-mission-turn"}),
+    ));
     assert_eq!(status["result"]["status"], "running", "{status}");
     fixture.wait_post();
-    let cancel = session.call(req("cancel", json!({"type":"job_cancel","job_id":"turn"})));
+    let cancel = session.call(req(
+        "cancel",
+        json!({"type":"job_cancel","job_id":"internal-mission-turn"}),
+    ));
     assert_eq!(cancel["result"]["status"], "cancelled", "{cancel}");
+    let began = Instant::now();
+    for attempt in 0.. {
+        let next = session.call(req(
+            &format!("next-job-{attempt}"),
+            json!({"type":"inference","model_id":"selected","prompt":"New work"}),
+        ));
+        if next["ok"] == true {
+            break;
+        }
+        assert!(began.elapsed() < Duration::from_secs(3), "{next}");
+        thread::sleep(Duration::from_millis(25));
+    }
     fixture.release();
-    thread::sleep(Duration::from_millis(150));
     drop(session);
     let mut session = Session::new(&root, None);
     assert_eq!(
-        session.call(req("read-job", json!({"type":"job_get","job_id":"turn"})))["result"]["status"],
+        session.call(req(
+            "read-job",
+            json!({"type":"job_get","job_id":"internal-mission-turn"})
+        ))["result"]["status"],
         "cancelled"
     );
     assert_eq!(
         session.call(req(
             "no-learning",
-            json!({"type":"learning_get","source_job_id":"turn"})
+            json!({"type":"learning_get","source_job_id":"internal-mission-turn"})
         ))["error"]["code"],
         "not_found"
     );

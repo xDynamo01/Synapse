@@ -155,6 +155,9 @@ pub enum Command {
     MissionExecute {
         mission_id: String,
     },
+    MissionRunGet {
+        mission_id: String,
+    },
     ToolExecute {
         mission_id: String,
         operation: ToolOperation,

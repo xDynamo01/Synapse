@@ -52,7 +52,7 @@ fn serve(core: &mut Core) -> io::Result<()> {
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 // Keep the same Core writer while stdin is idle. Retain pending
                 // results in Core if a transient storage error prevents commit.
-                let _ = core.poll_project_check();
+                let _ = core.poll_mission();
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(()),
         }

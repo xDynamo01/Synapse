@@ -41,7 +41,7 @@ impl Store {
         connection.pragma_update(None, "synchronous", "FULL")?;
         let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let version: u32 = tx.pragma_query_value(None, "user_version", |r| r.get(0))?;
-        if version > 10 {
+        if version > 11 {
             return Err(CoreError::new(
                 "unsupported_storage_version",
                 "Database schema is newer than this Core",
@@ -115,6 +115,23 @@ CREATE TABLE project_checks(
 CREATE UNIQUE INDEX one_active_project_check ON project_checks((1)) WHERE cleanup='pending';
 PRAGMA user_version=10;")?;
         }
+        if version < 11 {
+            tx.execute_batch("
+CREATE TABLE mission_runs(
+    mission_id TEXT PRIMARY KEY REFERENCES missions(id),
+    contract_digest TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('generating','checking','reviewing','review_ready','failed','rejected','cancelled','revoked','interrupted')),
+    ai_id TEXT UNIQUE,
+    candidate TEXT,
+    candidate_digest TEXT,
+    check_index INTEGER NOT NULL DEFAULT 0,
+    check_id TEXT UNIQUE REFERENCES project_checks(id),
+    review TEXT,
+    error TEXT
+);
+CREATE UNIQUE INDEX one_active_mission_run ON mission_runs((1)) WHERE status IN ('generating','checking','reviewing');
+PRAGMA user_version=11;")?;
+        }
         tx.execute("UPDATE learning_jobs SET status=CASE WHEN attempts<3 THEN 'queued' ELSE 'failed' END,error='worker_interrupted' WHERE status='running'", [])?;
         let recorded: String = tx.query_row(
             "SELECT value FROM metadata WHERE key='workspace_root'",
@@ -142,6 +159,7 @@ PRAGMA user_version=10;")?;
             event(&tx, "ai_job_interrupted", json!({"job_id":id}))?;
         }
         crate::checks::interrupt(&tx)?;
+        crate::mission_run::interrupt(&tx)?;
         tx.commit()?;
         Ok(Self {
             connection,

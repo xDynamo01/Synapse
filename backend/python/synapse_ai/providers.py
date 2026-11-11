@@ -4,7 +4,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from .protocol import MAX_CONTENT
+from .protocol import MAX_CANDIDATE_CONTENT, MAX_CANDIDATE_FRAME, MAX_CONTENT
 
 MAX_PROVIDER_BYTES = 131072
 
@@ -30,6 +30,10 @@ def _check_schema(kind, suffix):
                                           "pattern": '^' + SAFE_COMPONENT + r'\.' + suffix + '$'}}}
 
 
+ARTIFACT_PATH_SCHEMA = {"type": "string", "minLength": 1, "maxLength": 128,
+                        "pattern": '^' + SAFE_COMPONENT + r'\.(?:rs|py|md|txt|toml)$'}
+
+
 MISSION_PLAN_FORMAT = {"type": "json_schema", "json_schema": {"name": "mission_plan", "strict": True, "schema": {
     "type": "object", "additionalProperties": False, "required": ["summary", "artifacts", "checks"],
     "properties": {
@@ -37,14 +41,40 @@ MISSION_PLAN_FORMAT = {"type": "json_schema", "json_schema": {"name": "mission_p
         "artifacts": {"type": "array", "minItems": 1, "maxItems": 16, "uniqueItems": True, "items": {
             "type": "object", "additionalProperties": False, "required": ["path", "purpose"],
             "properties": {
-                "path": {"type": "string", "minLength": 1, "maxLength": 128,
-                         "pattern": '^' + SAFE_COMPONENT + r'\.(?:rs|py|md|txt|toml)$'},
+                "path": ARTIFACT_PATH_SCHEMA,
                 "purpose": {"type": "string", "minLength": 1, "maxLength": 512}
             }}},
         "checks": {"type": "array", "minItems": 1, "maxItems": 8, "uniqueItems": True,
                    "items": {"anyOf": [_check_schema("python_unittest", "py"), _check_schema("rust_test", "rs")]}}
     }
 }}}
+
+
+MISSION_GENERATE_FORMAT = {"type": "json_schema", "json_schema": {"name": "mission_generate", "strict": True, "schema": {
+    "type": "object", "additionalProperties": False, "required": ["artifacts"],
+    "properties": {"artifacts": {"type": "array", "minItems": 1, "maxItems": 16, "items": {
+        "type": "object", "additionalProperties": False, "required": ["path", "content"],
+        "properties": {
+            "path": ARTIFACT_PATH_SCHEMA,
+            "content": {"type": "string", "maxLength": 8192}
+        }
+    }}}
+}}}
+
+MISSION_REVIEW_FORMAT = {"type": "json_schema", "json_schema": {"name": "mission_review", "strict": True, "schema": {
+    "type": "object", "additionalProperties": False, "required": ["approved", "reason"],
+    "properties": {
+        "approved": {"type": "boolean"},
+        "reason": {"type": "string", "minLength": 1, "maxLength": 2048}
+    }
+}}}
+
+RESPONSE_FORMATS = {
+    "learning": LEARNING_FORMAT,
+    "mission_plan": MISSION_PLAN_FORMAT,
+    "mission_generate": MISSION_GENERATE_FORMAT,
+    "mission_review": MISSION_REVIEW_FORMAT,
+}
 
 
 class ProviderError(Exception):
@@ -73,13 +103,13 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
 
 
-def _json(url, payload=None, timeout=10):
+def _json(url, payload=None, timeout=10, response_limit=MAX_PROVIDER_BYTES):
     data = None if payload is None else json.dumps(payload, separators=(",", ":")).encode()
     request = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"} if data else {}, method="POST" if data else "GET")
     try:
         with OPENER.open(request, timeout=timeout) as response:
-            raw = response.read(MAX_PROVIDER_BYTES + 1)
-            if len(raw) > MAX_PROVIDER_BYTES:
+            raw = response.read(response_limit + 1)
+            if len(raw) > response_limit:
                 raise ProviderError("provider_malformed")
             return json.loads(raw.decode("utf-8"))
     except (socket.timeout, TimeoutError):
@@ -103,13 +133,14 @@ def infer(endpoint, model_id, messages, generation, purpose="conversation"):
     if not any(isinstance(item, dict) and item.get("id") == model_id for item in models["data"]):
         raise ProviderError("model_unavailable")
     payload = {"model": model_id, "messages": messages, "stream": False, "max_tokens": generation['max_output_tokens']}
-    if purpose == "mission_plan":
-        payload["response_format"] = MISSION_PLAN_FORMAT
-    if purpose == "learning":
-        payload["response_format"] = LEARNING_FORMAT
+    if purpose in RESPONSE_FORMATS:
+        payload["response_format"] = RESPONSE_FORMATS[purpose]
     if generation['reasoning_effort'] != 'provider_default':
         payload['reasoning_effort'] = generation['reasoning_effort']
-    result = _json(base + "/chat/completions", payload, timeout=timeout)
+    generation_response = purpose == "mission_generate"
+    response_limit = MAX_CANDIDATE_FRAME if generation_response else MAX_PROVIDER_BYTES
+    content_limit = MAX_CANDIDATE_CONTENT if generation_response else MAX_CONTENT
+    result = _json(base + "/chat/completions", payload, timeout=timeout, response_limit=response_limit)
     try:
         choices = result["choices"]
         if not isinstance(choices, list) or len(choices) != 1:
@@ -118,7 +149,7 @@ def infer(endpoint, model_id, messages, generation, purpose="conversation"):
         if message.get("tool_calls") or message.get("function_call") or message.get("role") != "assistant":
             raise ValueError()
         content = message["content"]
-        if not isinstance(content, str) or not content.strip() or len(content.encode()) > MAX_CONTENT:
+        if not isinstance(content, str) or not content.strip() or len(content.encode()) > content_limit:
             raise ValueError()
         return content
     except (KeyError, IndexError, TypeError, ValueError, AttributeError):

@@ -1,3 +1,4 @@
+mod candidate;
 mod chats;
 mod checks;
 mod context;
@@ -6,6 +7,7 @@ mod conversation;
 mod core;
 mod learning;
 mod memory;
+mod mission_run;
 mod missions;
 mod planner;
 mod registry;

@@ -384,3 +384,165 @@ fn approved_check_runs_real_rust() {
         assert_eq!(phase["token"]["lpac"], true);
     }
 }
+
+#[test]
+#[ignore = "requires the dedicated Windows Python runtime configured by the owner"]
+fn mission_run_checks_candidate_before_separate_review() {
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    assert!(std::env::var_os("SYNAPSE_CHECK_PYTHON_EXECUTABLE").is_some());
+    let source = "import unittest\nclass Arithmetic(unittest.TestCase):\n def test_adds(self): self.assertEqual(2+3,5)\n";
+
+    for (scenario, expected) in [
+        ("approved", "review_ready"),
+        ("rejected", "rejected"),
+        ("check-failure", "failed"),
+        ("wrong-artifact", "failed"),
+        ("generation-cancel", "cancelled"),
+        ("generation-restart", "interrupted"),
+    ] {
+        let root = TempDir::new().unwrap();
+        let fixture = Fixture::new(false);
+        let provider = fixture.marker.parent().unwrap();
+        let mut plan = valid_plan();
+        let mut files = vec![json!({
+            "path": if scenario == "wrong-artifact" { "outside.py" } else { "test_project.py" },
+            "content": if scenario == "check-failure" {source.replace("2+3,5", "2+3,6")} else {source.to_owned()}
+        })];
+        if scenario == "approved" {
+            plan["artifacts"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!({"path":"test_second.py","purpose":"Second check"}));
+            plan["checks"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!({"kind":"python_unittest","entrypoint":"test_second.py"}));
+            files.push(json!({"path":"test_second.py","content":source}));
+        }
+        std::fs::write(provider.join("mission-response"), plan.to_string()).unwrap();
+        std::fs::write(
+            provider.join("mission_generate-response"),
+            json!({"artifacts":files}).to_string(),
+        )
+        .unwrap();
+        std::fs::write(
+            provider.join("mission_review-response"),
+            json!({"approved":scenario != "rejected","reason":"Fixture review decision"})
+                .to_string(),
+        )
+        .unwrap();
+        let hold = provider.join("mission_generate-hold");
+        if scenario.starts_with("generation-") {
+            std::fs::write(&hold, "").unwrap();
+        }
+
+        let mut session = Session::new(&root, None);
+        register(&mut session, &fixture.address);
+        assert_eq!(
+            session.call(req("plan", plan_command("mission")))["ok"],
+            true
+        );
+        assert_eq!(poll(&mut session, "plan")["status"], "succeeded");
+        let execute = json!({"type":"mission_execute","mission_id":"mission"});
+        let refused = session.call(req("too-early", execute.clone()));
+        assert_eq!(refused["error"]["code"], "permission_denied", "{refused}");
+        let proposal = session.call(req(
+            "proposal",
+            json!({"type":"mission_get","mission_id":"mission"}),
+        ));
+        let approved = session.call(req("approve",json!({"type":"mission_approve","mission_id":"mission","contract_digest":proposal["result"]["contract_digest"]})));
+        assert_eq!(approved["ok"], true, "{approved}");
+        let start = req("execute", execute);
+        let started = session.call(start.clone());
+        assert_eq!(started["result"]["status"], "generating", "{started}");
+        assert_eq!(session.call(start), started);
+        if scenario.starts_with("generation-") {
+            let began = Instant::now();
+            while !provider.join("mission_generate-post").is_file() {
+                assert!(began.elapsed() < Duration::from_secs(12));
+                thread::sleep(Duration::from_millis(20));
+            }
+            if scenario == "generation-cancel" {
+                let cancelled = session.call(req("cancel-run", json!({"type":"mission_cancel","mission_id":"mission","reason":"fixture cancellation"})));
+                assert_eq!(cancelled["ok"], true, "{cancelled}");
+            } else {
+                drop(session);
+                session = Session::new(&root, None);
+            }
+            std::fs::remove_file(&hold).unwrap();
+        }
+
+        let began = Instant::now();
+        let result = (0..)
+            .find_map(|index| {
+                let status = session.call(req(
+                    &format!("run-status-{index}"),
+                    json!({"type":"mission_run_get","mission_id":"mission"}),
+                ));
+                assert_eq!(status["ok"], true, "{status}");
+                let run = &status["result"];
+                if !matches!(
+                    run["status"].as_str(),
+                    Some("generating" | "checking" | "reviewing")
+                ) {
+                    return Some(run.clone());
+                }
+                assert!(began.elapsed() < Duration::from_secs(150), "{status}");
+                thread::sleep(Duration::from_millis(50));
+                None
+            })
+            .unwrap();
+        assert_eq!(result["status"], expected, "{scenario}: {result}");
+        if scenario == "check-failure" {
+            assert_eq!(result["error"], "check_failed", "{result}");
+            assert!(result["failed_check_id"].as_str().is_some());
+        }
+        if scenario == "wrong-artifact" {
+            assert_eq!(result["error"], "invalid_generated_candidate", "{result}");
+            assert!(result["candidate_digest"].is_null());
+        }
+        let review_path = provider.join("mission_review-post");
+        if matches!(scenario, "approved" | "rejected") {
+            assert_eq!(
+                result["completed_checks"],
+                if scenario == "approved" { 2 } else { 1 }
+            );
+            assert_eq!(result["review"]["approved"], scenario == "approved");
+            assert!(
+                result["candidate_digest"]
+                    .as_str()
+                    .is_some_and(|hash| hash.len() == 64)
+            );
+            let generation: Value = serde_json::from_slice(
+                &std::fs::read(provider.join("mission_generate-post")).unwrap(),
+            )
+            .unwrap();
+            let review: Value =
+                serde_json::from_slice(&std::fs::read(review_path).unwrap()).unwrap();
+            assert_ne!(generation["messages"], review["messages"]);
+            assert_ne!(generation["max_tokens"], review["max_tokens"]);
+            assert!(review["messages"].to_string().contains("observed_checks"));
+            if scenario == "approved" {
+                let revoke = session.call(req("revoke-ready",json!({"type":"mission_revoke","mission_id":"mission","reason":"fixture stop after review"})));
+                assert_eq!(revoke["ok"], true, "{revoke}");
+                let revoked = session.call(req(
+                    "after-revoke-ready",
+                    json!({"type":"mission_run_get","mission_id":"mission"}),
+                ));
+                assert_eq!(revoked["result"]["status"], "revoked", "{revoked}");
+                assert_eq!(revoked["result"]["review"]["approved"], true);
+            }
+        } else {
+            assert!(!review_path.exists());
+            assert!(result["review"].is_null());
+        }
+        assert!(
+            root.path()
+                .join("workspace")
+                .read_dir()
+                .unwrap()
+                .next()
+                .is_none()
+        );
+    }
+}

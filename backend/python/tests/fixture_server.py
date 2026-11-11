@@ -32,8 +32,13 @@ class Handler(BaseHTTPRequestHandler):
             return
         request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         assert request["model"] == "selected" and request["stream"] is False
-        is_plan = request.get("response_format", {}).get("json_schema", {}).get("name") == "mission_plan"
-        posted = marker.parent / "learning-post" if "response_format" in request and not is_plan else marker
+        purpose = request.get("response_format", {}).get("json_schema", {}).get("name")
+        is_plan = purpose == "mission_plan"
+        is_mission_stage = purpose in ("mission_generate", "mission_review")
+        if is_mission_stage:
+            posted = marker.parent / f"{purpose}-post"
+        else:
+            posted = marker.parent / "learning-post" if "response_format" in request and not is_plan else marker
         # Publish only complete JSON. The CLI tests use marker existence as readiness.
         with NamedTemporaryFile(dir=posted.parent, delete=False, mode="w", encoding="utf-8") as staged:
             json.dump(request, staged, ensure_ascii=False)
@@ -47,13 +52,17 @@ class Handler(BaseHTTPRequestHandler):
             return
         while held and not release.exists():
             time.sleep(.01)
-        while "response_format" in request and not is_plan and (marker.parent / "learning-hold").exists():
+        while is_mission_stage and (marker.parent / f"{purpose}-hold").exists():
+            time.sleep(.01)
+        while "response_format" in request and not is_plan and not is_mission_stage and (marker.parent / "learning-hold").exists():
             time.sleep(.01)
         try:
             scripted = marker.parent / "learning-response"
             mapping = marker.parent / "learning-map"
             if is_plan:
                 content = (marker.parent / "mission-response").read_text(encoding="utf-8")
+            elif is_mission_stage:
+                content = (marker.parent / f"{purpose}-response").read_text(encoding="utf-8")
             elif "response_format" in request and mapping.exists():
                 content = json.dumps(json.loads(mapping.read_text(encoding="utf-8"))[request["messages"][-1]["content"]])
             else:

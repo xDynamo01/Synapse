@@ -42,7 +42,8 @@ The available command shapes are:
 | `job_get` | `job_id`; returns job state, content/error, deterministic message IDs, `skill` for guided jobs, and selected `context` metadata when references were supplied |
 | `learning_get` | `source_job_id`; returns durable background status, attempts, error and pending conflict metadata |
 | `job_cancel` | `job_id`; persists cancellation before terminating its worker |
-| `mission_execute` | `mission_id`; returns `capability_unavailable` in this version |
+| `mission_execute` | `mission_id`; starts generation for an approved sealed mission |
+| `mission_run_get` | `mission_id`; returns candidate digest, completed checks, phase and review |
 | `tool_execute` | `mission_id`, `operation`: `list`/`read` with `path`, `create`/`replace` with `path` and UTF-8 `content` |
 | `tool_recovery` | `intent_id`, `mode` (`inspect`, `finalize`, `restore`, `safe_abandon`); optional `expected_current_hash` for restore |
 
@@ -194,3 +195,18 @@ Status and cleanup are independent. Cancellation or mission revocation
 blocks late receipts. A graceful shutdown records observed cleanup. After an
 abrupt exit, the next Core marks previously running checks interrupted and
 reports unverified cleanup without replaying the check.
+
+## Candidate generation and review
+
+`mission_execute` starts one durable run for an approved sealed mission. The
+Core stages exact candidate bytes privately and runs the approved checks
+sequentially before launching the separate pinned reviewer. Only a successful
+review can reach `review_ready`. A review can reject a passing candidate.
+The response exposes the digest and verdict, while candidate bytes stay in
+Core storage. The CLI advances the run while idle. Use fresh request IDs to
+query changing status with `mission_run_get`.
+
+Mission cancellation or revocation stops active work. A restart marks active
+runs `interrupted`. Workspace publication is outside this endpoint.
+The worker v4 envelope adds `mission_generate` and `mission_review` purposes
+with distinct static schemas.

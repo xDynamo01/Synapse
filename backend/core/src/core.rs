@@ -1,7 +1,7 @@
 use crate::{
     chats, checks,
     contracts::*,
-    conversation, learning, memory, missions, planner, registry, runner,
+    conversation, learning, memory, mission_run, missions, planner, registry, runner,
     store::{self, Store},
     tools, worker,
 };
@@ -18,6 +18,7 @@ struct Active {
     stop: Arc<worker::Stop>,
     result: Receiver<Result<String, String>>,
     purpose: conversation::Purpose,
+    outcome: Option<Result<String, String>>,
 }
 
 /// Local human client entrypoint. Never expose dispatch to worker output.
@@ -54,6 +55,7 @@ impl Core {
             Command::ConversationStart { .. }
                 | Command::Inference { .. }
                 | Command::MissionPlanStart { .. }
+                | Command::MissionExecute { .. }
         ) && self
             .active
             .as_ref()
@@ -79,7 +81,13 @@ impl Core {
                 if response.ok {
                     if let Command::JobCancel { job_id } = &request.command {
                         if let Some(active) = &self.active {
-                            if active.id == *job_id {
+                            if active.id == *job_id
+                                && !matches!(
+                                    active.purpose,
+                                    conversation::Purpose::MissionGenerate
+                                        | conversation::Purpose::MissionReview
+                                )
+                            {
                                 active.stop.cancel();
                             }
                         }
@@ -89,6 +97,27 @@ impl Core {
             }
             Err(error) => Response::failure(id, self.store.event_cursor().unwrap_or(0), error),
         };
+        if response.ok {
+            if let Command::MissionCancel { mission_id, .. }
+            | Command::MissionRevoke { mission_id, .. } = &request.command
+            {
+                if let Some(active) = &self.active {
+                    let stage = match active.purpose {
+                        conversation::Purpose::MissionGenerate => Some("generation"),
+                        conversation::Purpose::MissionReview => Some("review"),
+                        _ => None,
+                    };
+                    if stage
+                        .and_then(|stage| mission_run::stage_id(mission_id, stage).ok())
+                        .as_ref()
+                        == Some(&active.id)
+                    {
+                        active.stop.cancel();
+                    }
+                }
+            }
+        }
+        let _ = self.advance_mission();
         if self.active.is_none() {
             let next = (|| -> CoreResult<Option<conversation::Launch>> {
                 let tx = self.store.transaction()?;
@@ -909,6 +938,7 @@ impl Core {
             stop,
             result,
             purpose,
+            outcome: None,
         });
     }
     pub fn poll_project_check(&mut self) -> CoreResult<()> {
@@ -946,21 +976,62 @@ impl Core {
         self.check_event = None;
         Ok(())
     }
+    fn advance_mission(&mut self) -> CoreResult<()> {
+        let state = self.store.state_dir.clone();
+        let tx = self.store.transaction()?;
+        let next = mission_run::advance(
+            &tx,
+            &state,
+            &self.workspace_root,
+            self.active.is_some(),
+            self.check.is_some(),
+        )?;
+        tx.commit()?;
+        match next {
+            Some(mission_run::Next::Check(launch)) => {
+                self.check = Some(runner::Active::start(launch))
+            }
+            Some(mission_run::Next::Review(launch)) => self.launch(launch),
+            None => {}
+        }
+        Ok(())
+    }
+
+    pub fn poll_mission(&mut self) -> CoreResult<()> {
+        self.poll_project_check()?;
+        if self.active.as_ref().is_some_and(|active| {
+            matches!(
+                active.purpose,
+                conversation::Purpose::MissionGenerate | conversation::Purpose::MissionReview
+            )
+        }) {
+            self.drain()?;
+        }
+        self.advance_mission()
+    }
+
     fn drain(&mut self) -> CoreResult<()> {
-        let Some(active) = &self.active else {
+        let Some(active) = &mut self.active else {
             return Ok(());
         };
-        let outcome = match active.result.try_recv() {
-            Ok(outcome) => outcome,
-            Err(mpsc::TryRecvError::Empty) => return Ok(()),
-            Err(mpsc::TryRecvError::Disconnected) => Err("worker_crashed".into()),
-        };
+        if active.outcome.is_none() {
+            active.outcome = Some(match active.result.try_recv() {
+                Ok(outcome) => outcome,
+                Err(mpsc::TryRecvError::Empty) => return Ok(()),
+                Err(mpsc::TryRecvError::Disconnected) => Err("worker_crashed".into()),
+            });
+        }
+        let outcome = active.outcome.clone().unwrap();
         let id = active.id.clone();
         let tx = self.store.transaction()?;
         match active.purpose {
             conversation::Purpose::Learning => learning::complete(&tx, &id, outcome)?,
             conversation::Purpose::Conversation => conversation::complete(&tx, &id, outcome)?,
             conversation::Purpose::MissionPlan => planner::complete(&tx, &id, outcome)?,
+            purpose @ (conversation::Purpose::MissionGenerate
+            | conversation::Purpose::MissionReview) => {
+                mission_run::complete(&tx, &id, purpose, outcome)?
+            }
         }
         tx.commit()?;
         self.active = None;
@@ -1137,11 +1208,13 @@ fn dispatch_tx(
         Command::MissionCancel { mission_id, reason } => {
             let result = missions::stop(tx, mission_id, "cancelled", reason)?;
             checks::stop_mission(tx, mission_id, "cancelled")?;
+            mission_run::stop(tx, mission_id, "cancelled")?;
             Ok(result)
         }
         Command::MissionRevoke { mission_id, reason } => {
             let result = missions::stop(tx, mission_id, "revoked", reason)?;
             checks::stop_mission(tx, mission_id, "revoked")?;
+            mission_run::stop(tx, mission_id, "revoked")?;
             Ok(result)
         }
         Command::MissionGet { mission_id } => missions::get(tx, mission_id),
@@ -1150,6 +1223,9 @@ fn dispatch_tx(
             check_index,
             artifacts,
         } => {
+            if request_id.starts_with(mission_run::INTERNAL_PREFIX) {
+                return Err(CoreError::invalid("Reserved project check ID"));
+            }
             let (result, launch) = checks::start(
                 tx,
                 request_id,
@@ -1221,10 +1297,12 @@ fn dispatch_tx(
         Command::JobGet { job_id } => conversation::get(tx, job_id),
         Command::LearningGet { source_job_id } => learning::get(tx, source_job_id),
         Command::JobCancel { job_id } => conversation::cancel(tx, job_id),
-        Command::MissionExecute { .. } => Err(CoreError::new(
-            "capability_unavailable",
-            "Mission tool execution is not integrated",
-        )),
+        Command::MissionExecute { mission_id } => {
+            let (result, launch) = mission_run::start(tx, mission_id, busy)?;
+            *pending = Some(launch);
+            Ok(result)
+        }
+        Command::MissionRunGet { mission_id } => mission_run::get(tx, mission_id),
         Command::ToolExecute {
             mission_id,
             operation,

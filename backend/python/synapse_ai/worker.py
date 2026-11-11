@@ -1,19 +1,21 @@
 import json
 import sys
 
-from .protocol import MAX_LINE, digest, validate
+from .protocol import MAX_LINE, MAX_CANDIDATE_REQUEST, digest, validate
 from .providers import ProviderError, infer
 
 
 def main():
     sys.stdout.buffer.write(b'{"type":"hello","version":4}\n')
     sys.stdout.buffer.flush()
-    line = sys.stdin.buffer.readline(MAX_LINE + 2)
+    line = sys.stdin.buffer.readline(MAX_CANDIDATE_REQUEST + 2)
     response = {"version": 4, "request_id": None, "digest": None, "ok": False, "content": None, "error": "invalid_request"}
     try:
-        if not line.endswith(b"\n") or len(line) - 1 > MAX_LINE:
+        if not line.endswith(b"\n") or len(line) - 1 > MAX_CANDIDATE_REQUEST:
             raise ValueError("invalid_request")
         request = json.loads(line.decode("utf-8"))
+        if len(line) - 1 > MAX_LINE and (not isinstance(request, dict) or request.get("purpose") not in ("mission_generate", "mission_review")):
+            raise ValueError("invalid_request")
         validate(request)
         response["request_id"] = request["request_id"]
         response["digest"] = digest(request)

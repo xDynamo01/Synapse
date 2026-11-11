@@ -11,7 +11,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from synapse_ai.providers import ProviderError, validate_endpoint, infer
-from synapse_ai.protocol import validate
+from synapse_ai.protocol import digest, validate
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -32,7 +32,8 @@ class Handler(BaseHTTPRequestHandler):
         elif self.mode == "bad":
             self.reply({"choices": [{"message": {"role": "assistant", "tool_calls": [{"id": "x"}], "content": "unsafe"}}]})
         else:
-            self.reply({"choices": [{"message": {"role": "assistant", "content": "answer"}}]})
+            content = getattr(self.server, "content", "answer")
+            self.reply({"choices": [{"message": {"role": "assistant", "content": content}}]})
     def reply(self, body):
         data = json.dumps(body).encode()
         self.send_response(200)
@@ -139,6 +140,55 @@ class WorkerTests(unittest.TestCase):
         self.assertNotIn('response_format', request)
         request['version'] = 3
         with self.assertRaises(ValueError): validate(request)
+
+    def test_mission_generation_and_review_use_distinct_static_schemas(self):
+        expected = {
+            'mission_generate': {'artifacts'},
+            'mission_review': {'approved', 'reason'},
+        }
+        for purpose, required in expected.items():
+            with self.subTest(purpose=purpose):
+                request = self.request() | {'purpose': purpose}
+                request['digest'] = digest(request)
+                hello, answer = self.worker(request)
+                self.assertEqual(hello, {"type": "hello", "version": 4})
+                self.assertTrue(answer['ok'])
+                schema = self.server.seen['response_format']['json_schema']
+                self.assertEqual(schema['name'], purpose)
+                self.assertIs(schema['strict'], True)
+                body = schema['schema']
+                self.assertIs(body['additionalProperties'], False)
+                self.assertEqual(set(body['required']), required)
+                self.assertEqual(set(body['properties']), required)
+                if purpose == 'mission_generate':
+                    artifacts = body['properties']['artifacts']
+                    self.assertEqual((artifacts['minItems'], artifacts['maxItems']), (1, 16))
+                    item = artifacts['items']
+                    self.assertIs(item['additionalProperties'], False)
+                    self.assertEqual(set(item['required']), {'path', 'content'})
+                    self.assertEqual(item['properties']['content']['maxLength'], 8192)
+                else:
+                    self.assertEqual(body['properties']['approved']['type'], 'boolean')
+                    self.assertEqual(body['properties']['reason']['maxLength'], 2048)
+                custom_schema = request | {'response_format': {'type': 'text'}}
+                self.assertEqual(self.worker(custom_schema)[1]['error'], 'invalid_request')
+
+    def test_candidate_wire_limits_account_for_json_escaping(self):
+        files = [{"path": f"file{index}.txt", "content": "\x01" * 8192} for index in range(3)]
+        self.server.content = json.dumps({"artifacts": files})
+        self.assertGreater(len(self.server.content), 131072)
+        generate = self.request() | {"purpose": "mission_generate"}
+        generate["digest"] = digest(generate)
+        self.assertEqual(self.worker(generate)[1]["content"], self.server.content)
+
+        self.server.content = '{"approved":true,"reason":"reviewed"}'
+        messages = [{"role": "user", "content": "".join(file["content"] for file in files)}]
+        review = self.request() | {"purpose": "mission_review", "messages": messages}
+        review["digest"] = digest(review)
+        self.assertTrue(self.worker(review)[1]["ok"])
+        review["purpose"] = "conversation"
+        review["digest"] = digest(review)
+        self.assertEqual(self.worker(review)[1]["error"], "invalid_request")
 
     def test_endpoint_and_model_and_malformed_are_distinct(self):
         for url in ("https://127.0.0.1:1", "http://localhost:1", "http://127.0.0.1:1/v1/other", "http://user@127.0.0.1:1"):

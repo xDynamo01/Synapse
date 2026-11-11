@@ -198,12 +198,12 @@ mod windows {
             }
         }
     }
-    fn read_line<R: BufRead>(reader: &mut R) -> Result<Value, String> {
+    fn read_line<R: BufRead>(reader: &mut R, limit: usize) -> Result<Value, String> {
         let mut buf = Vec::new();
-        std::io::Read::take(&mut *reader, 65537)
+        std::io::Read::take(&mut *reader, limit as u64 + 1)
             .read_until(b'\n', &mut buf)
             .map_err(|_| "worker_protocol".to_string())?;
-        if buf.is_empty() || buf.len() > 65536 || !buf.ends_with(b"\n") {
+        if buf.is_empty() || buf.len() > limit || !buf.ends_with(b"\n") {
             return Err("worker_protocol".into());
         }
         serde_json::from_slice(&buf).map_err(|_| "worker_protocol".into())
@@ -335,7 +335,7 @@ mod windows {
         let mut writer = File::from(parent_stdin);
         let mut reader = BufReader::new(File::from(parent_stdout));
         let result = (|| {
-            let hello = read_line(&mut reader)?;
+            let hello = read_line(&mut reader, 65536)?;
             if hello != json!({"type":"hello","version":4}) {
                 return Err("worker_protocol".into());
             }
@@ -346,7 +346,10 @@ mod windows {
                 .and_then(|_| writer.flush())
                 .map_err(|_| "worker_protocol".to_string())?;
             drop(writer);
-            let answer = read_line(&mut reader)?;
+            let generating = bare["purpose"] == "mission_generate";
+            let frame_limit = if generating { 320 * 1024 } else { 65536 };
+            let content_limit = if generating { 160 * 1024 } else { 32768 };
+            let answer = read_line(&mut reader, frame_limit)?;
             if answer.get("version") != Some(&json!(4))
                 || answer.get("request_id") != bare.get("request_id")
                 || answer.get("digest") != Some(&json!(digest))
@@ -357,7 +360,7 @@ mod windows {
             let code = answer.get("error");
             match (answer.get("ok"), answer.get("content"), code) {
                 (Some(Value::Bool(true)), Some(Value::String(content)), Some(Value::Null))
-                    if !content.trim().is_empty() && content.len() <= 32768 =>
+                    if !content.trim().is_empty() && content.len() <= content_limit =>
                 {
                     Ok(content.clone())
                 }
