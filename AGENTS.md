@@ -13,3 +13,9 @@
   arquivos no disco E como parte do trabalho neste projeto.
 - A consolidação de pastas não significa que todas as funcionalidades do backend
   estejam concluídas. Registre testes e limitações do que realmente foi executado.
+
+- Atualize o checklist em
+  `docs/superpowers/plans/2026-11-11-synapse-0.3-roteiro-de-automacao.md`
+  ao concluir uma etapa. Marque o item após validar o critério de aceite e
+  registre a evidência, o commit e a plataforma. Atualize o marco numerado
+  correspondente no README no mesmo commit quando o marco completo for validado.
