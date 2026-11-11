@@ -38,9 +38,24 @@ in a Core-owned check request before launching anything.
 Use a fresh per-check AppContainer profile and Less Privileged AppContainer (LPAC)
 with no capabilities. Opt out of ALL APPLICATION PACKAGES grants. Apply Job
 ownership atomically at creation and launch suspended. Before resuming, the
-parent must verify the kernel token: AppContainer and LPAC flags, exact profile
-SID, low integrity, zero capabilities and correct Job membership. An uncertain
+parent must verify the actual kernel token: AppContainer flag, LPAC access
+semantics, exact profile SID, low integrity, zero capabilities and correct Job
+membership. An uncertain
 setup never resumes generated code and has no unrestricted fallback.
+
+On the measured Windows build26200, the class46 LPAC boolean query is unsupported
+and returns87 even for the suspended child. Do not label a requested launch flag
+as observed LPAC. Use documented AccessCheck on a duplicated actual child
+impersonation token. With SYSTEM owner/group, World0x3, AAP0x1 and ARAP0x2, require
+successful MAXIMUM_ALLOWED access computation granting exactly0x2. Require exact
+package/ARAP positive and AAP/World-only negative controls, with successful API
+calls even for expected access denials. A suspended ordinary AppContainer control
+must grant0x3 and fail this LPAC gate. Any unsupported query/API error or unexpected
+control result blocks resume. Report the kernel-access-policy verification method,
+not a successful direct LPAC flag query. This tests the documented opt-out meaning;
+[Chromium's primary LPAC test](https://raw.githubusercontent.com/chromium/chromium/main/sandbox/win/src/app_container_test.cc)
+uses the same kernel access-check distinction. Later real filesystem/network
+canaries remain required and are not replaced by this token test.
 
 The launcher constructs its environment and inherits only the three explicitly
 allowed pipe handles. No Core database/file/token/job-control/network handle,

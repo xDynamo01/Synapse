@@ -84,7 +84,10 @@ Interfaces:
       copied selected VC/SDK libs. Never copy user Cargo config or run build scripts.
 - [ ] Launch suspended LPAC with zero capabilities, exact handle list and atomic
       Job membership. Verify actual kernel LPAC/SID/low-integrity/capabilities/job
-      before resume. Set memory512MiB/process8/output32768/execution30000ms limits
+      before resume: on build26200 use actual-token documented AccessCheck controls
+      per sourcepolicy (World3/AAP1/ARAP2 => exactgrant2; ordinaryAC=>3, plus package
+      positive and World-only negative); class46 returning87 is not success.
+      Record verification method explicitly. Set memory512MiB/process8/output32768/execution30000ms limits
       from the approved spec. No breakaway. Cancellation must stop preparation and
       terminate the whole Job, including root-exited descendants and pipe holders.
 - [ ] Implement fixed Python compile/unittest and Rust compile--test/test execution

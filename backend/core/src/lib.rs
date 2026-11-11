@@ -8,6 +8,7 @@ mod memory;
 mod missions;
 mod planner;
 mod registry;
+mod runner;
 mod skills;
 mod store;
 mod tools;
