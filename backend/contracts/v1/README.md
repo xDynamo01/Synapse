@@ -44,6 +44,8 @@ The available command shapes are:
 | `job_cancel` | `job_id`; persists cancellation before terminating its worker |
 | `mission_execute` | `mission_id`; starts generation and integration for an approved sealed mission |
 | `mission_run_get` | `mission_id`; returns candidate digest, phase, review, pre/postcheck counts and integration intents |
+| `mission_recovery_inspect` | `mission_id`; observes journaled paths in a mission requiring recovery |
+| `mission_recovery_resolve` | `mission_id`, `mode` (`finalize` or `rollback`); schedules owner resolution |
 | `tool_execute` | `mission_id`, `operation`: `list`/`read` with `path`, `create`/`replace` with `path` and UTF-8 `content` |
 | `tool_recovery` | `intent_id`, `mode` (`inspect`, `finalize`, `restore`, `safe_abandon`); optional `expected_current_hash` for restore |
 
@@ -224,10 +226,37 @@ A failed postcheck removes only files created by that run whose identity and
 bytes still match, while the original approval remains active. `rolled_back`
 reports verified removal. An ambiguous effect, changed target, abrupt exit or
 revocation after a write leaves `recovery_required` with the relevant file
-paths and intent IDs. The targets remain reserved. This version reports and
-preserves ambiguous effects for owner recovery. It does not replay or remove
-them automatically.
+paths and intent IDs. The targets remain reserved. Ambiguous effects remain reserved until the owner can resolve them using the
+evidence. See the recovery commands below.
 
 Approvals from before Workspace identity pinning require a newly proposed
 mission for automatic integration. Earlier runs already stopped at
 `review_ready` are not published by migration.
+
+
+## Mission recovery
+
+Use a fresh request ID for every new observation with
+`mission_recovery_inspect`. It returns the journaled paths, expected and
+observed SHA-256 digests and file identities, plus an observation classification.
+A repeated request ID returns the original receipt. The inspection does not
+alter the Workspace or renew mission authority.
+
+- `verified_owned` requires the recorded identity and exact reviewed bytes.
+- `matching_bytes_unproven` means the bytes match but the journal lacks
+  sufficient proof of file identity.
+- `absent`, `changed` and `unreadable` distinguish absence, modification or
+  replacement, and an observation that cannot be safely completed.
+
+The owner can request `finalize` when every file has a confirmed identity and
+every matching postcheck receipt is durable. The Core repeats guarded
+readback before marking the run integrated. A `rollback` request rechecks the
+current approval, reconciles absent targets and removes only confirmed
+unchanged files. Changed files and ownership ambiguity keep the reservation.
+The command returns a durable scheduling receipt. Query `mission_run_get`
+with fresh IDs to observe the terminal outcome.
+
+If Core stops during recovery, restart exposes `recovery_required`. A retry
+of the original request ID does not restart work. Inspect again and submit
+a new owner decision when the evidence permits it. Revocation prevents
+subsequent resolution effects under the old approval.

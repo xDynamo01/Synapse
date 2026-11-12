@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 use crate::{
     candidate, checks,
     contracts::{CandidateArtifact, CoreError, CoreResult, MissionContract, ToolOperation},
-    mission_run, runner,
+    mission_recovery, mission_run, runner,
     store::{self, Store},
     tools,
 };
@@ -468,6 +468,32 @@ fn publish_one(store: &mut Store, workspace: &Path, state: &Path, mission: &str)
     Ok(tx.commit()?)
 }
 
+fn verified_journal(
+    tx: &Transaction<'_>,
+    mission: &str,
+    data: &Snapshot,
+) -> CoreResult<Vec<mission_recovery::JournalEntry>> {
+    let entries = mission_recovery::journal(
+        tx,
+        mission,
+        &data.contract_digest,
+        Some(&data.candidate_digest),
+    )?;
+    for entry in &entries {
+        if data
+            .artifacts
+            .get(entry.position as usize)
+            .is_none_or(|artifact| artifact.path != entry.path || artifact.content != entry.content)
+        {
+            return Err(CoreError::new(
+                "journal_mismatch",
+                "Journal differs from reviewed candidate",
+            ));
+        }
+    }
+    Ok(entries)
+}
+
 struct Readback {
     artifacts: Vec<CandidateArtifact>,
     _pins: Vec<(tools::Broker, tools::OwnedRead)>,
@@ -482,18 +508,27 @@ fn readback(
 ) -> CoreResult<Readback> {
     let mut pins = Vec::with_capacity(data.artifacts.len());
     let mut result = Vec::with_capacity(data.artifacts.len());
-    for (position, artifact) in data.artifacts.iter().enumerate() {
-        let identity: String = tx.query_row(
-            "SELECT identity FROM mission_integration_files WHERE mission_id=?1 AND position=?2 AND status='confirmed'",
-            params![mission,position as u32], |row| row.get(0),
-        )?;
+    let entries = verified_journal(tx, mission, data)?;
+    if entries.len() != data.artifacts.len() {
+        return Err(CoreError::new(
+            "journal_mismatch",
+            "Publication receipts are incomplete",
+        ));
+    }
+    for entry in entries {
+        let artifact = &data.artifacts[entry.position as usize];
         let broker = tools::prepare(workspace, state, &read(artifact))?;
         verify_workspace(tx, mission, &broker.root_identity()?)?;
         let observed = broker.read_owned_guarded()?;
-        if observed.identity != identity || observed.bytes != artifact.content.as_bytes() {
+        if entry.journal_status != "confirmed"
+            || entry.intent_status != "prepared"
+            || entry.target != broker.target()
+            || entry.identity.as_deref() != Some(observed.identity.as_str())
+            || observed.bytes != artifact.content.as_bytes()
+        {
             return Err(CoreError::new(
                 "ownership_conflict",
-                "Published artifact changed after creation",
+                "Published artifact or receipt changed after creation",
             ));
         }
         let content = String::from_utf8(observed.bytes.clone())
@@ -565,6 +600,10 @@ fn postcheck(
         }
     };
     if index as usize == data.contract.execution.as_ref().unwrap().checks.len() {
+        #[cfg(feature = "test-fault-injection")]
+        if std::env::var_os("SYNAPSE_TEST_CRASH_BEFORE_MISSION_FINALIZE").is_some() {
+            std::process::exit(89);
+        }
         tx.execute("UPDATE tool_intents SET status='confirmed' WHERE request_id IN
             (SELECT intent_id FROM mission_integration_files WHERE mission_id=?1 AND status='confirmed')",[mission])?;
         transition(&tx, mission, "integrated", None)?;
@@ -637,12 +676,29 @@ fn rollback_one(
         return Ok(tx.commit()?);
     }
     let data = snapshot(&tx, mission)?;
-    let row: Option<(u32,String,String)> = tx.query_row(
-        "SELECT position,intent_id,identity FROM mission_integration_files WHERE mission_id=?1 AND status='confirmed'
-         ORDER BY position DESC LIMIT 1",
-        [mission], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?)),
-    ).optional()?;
-    let Some((position, intent, identity)) = row else {
+    let entries = match verified_journal(&tx, mission, &data) {
+        Ok(entries) => entries,
+        Err(error) => {
+            transition(&tx, mission, "recovery_required", Some(&error.code))?;
+            return Ok(tx.commit()?);
+        }
+    };
+    let Some(entry) = entries
+        .into_iter()
+        .rev()
+        .find(|entry| entry.journal_status == "confirmed")
+    else {
+        let broker = match tools::prepare(workspace, state, &read(&data.artifacts[0])) {
+            Ok(broker) => broker,
+            Err(error) => {
+                transition(&tx, mission, "recovery_required", Some(&error.code))?;
+                return Ok(tx.commit()?);
+            }
+        };
+        if verify_workspace(&tx, mission, &broker.root_identity()?).is_err() {
+            transition(&tx, mission, "recovery_required", Some("workspace_changed"))?;
+            return Ok(tx.commit()?);
+        }
         let error: Option<String> = tx.query_row(
             "SELECT error FROM mission_integrations WHERE mission_id=?1",
             [mission],
@@ -651,7 +707,17 @@ fn rollback_one(
         transition(&tx, mission, "rolled_back", error.as_deref())?;
         return Ok(tx.commit()?);
     };
-    let artifact = &data.artifacts[position as usize];
+    let artifact = &data.artifacts[entry.position as usize];
+    let Some(identity) = entry.identity else {
+        transition(
+            &tx,
+            mission,
+            "recovery_required",
+            Some("rollback_ownership_unverified"),
+        )?;
+        return Ok(tx.commit()?);
+    };
+    let intent = entry.intent_id;
     let broker = match tools::prepare(workspace, state, &read(artifact)) {
         Ok(broker) => broker,
         Err(_) => {
@@ -666,6 +732,10 @@ fn rollback_one(
     };
     if verify_workspace(&tx, mission, &broker.root_identity()?).is_err() {
         transition(&tx, mission, "recovery_required", Some("workspace_changed"))?;
+        return Ok(tx.commit()?);
+    }
+    if entry.intent_status != "prepared" || entry.target != broker.target() {
+        transition(&tx, mission, "recovery_required", Some("journal_mismatch"))?;
         return Ok(tx.commit()?);
     }
     if reserve_conflict(&tx, &broker.target(), Some(&intent))? {
@@ -704,8 +774,17 @@ fn rollback_one(
         transition(&tx, mission, "recovery_required", Some(&error.code))?;
         return Ok(tx.commit()?);
     }
+    #[cfg(feature = "test-fault-injection")]
+    if std::env::var_os("SYNAPSE_TEST_CRASH_BEFORE_MISSION_ROLLBACK_DELETE").is_some() {
+        std::process::exit(91);
+    }
     match broker.delete_owned(&identity, artifact.content.as_bytes()) {
         Ok(()) => {
+            #[cfg(feature = "test-fault-injection")]
+            if std::env::var_os("SYNAPSE_TEST_CRASH_AFTER_MISSION_ROLLBACK_DELETE").is_some() {
+                std::process::exit(90);
+            }
+
             tx.execute(
                 "UPDATE mission_integration_files SET status='removed' WHERE intent_id=?1",
                 [&intent],
@@ -728,6 +807,161 @@ fn rollback_one(
         )?,
     }
     Ok(tx.commit()?)
+}
+
+/// Schedule an explicit owner resolution. The durable request commits before the
+/// coordinator touches the Workspace, and every scheduled effect is rechecked.
+pub(crate) fn resolve(
+    tx: &Transaction<'_>,
+    mission: &str,
+    mode: crate::contracts::MissionRecoveryMode,
+    workspace: &Path,
+    state: &Path,
+) -> CoreResult<Value> {
+    use crate::contracts::{MissionRecoveryMode, bounded};
+
+    bounded(mission, "mission_id", 128)?;
+    let current: Option<String> = tx
+        .query_row(
+            "SELECT status FROM mission_integrations WHERE mission_id=?1",
+            [mission],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if current.as_deref() != Some("recovery_required") {
+        return Err(CoreError::new(
+            "invalid_transition",
+            "Mission does not require recovery",
+        ));
+    }
+    let busy: bool = tx.query_row(
+        &format!("SELECT EXISTS(SELECT 1 FROM mission_integrations WHERE status IN {ACTIVE})"),
+        [],
+        |row| row.get(0),
+    )?;
+    if busy {
+        return Err(CoreError::new(
+            "mission_run_busy",
+            "Another integration is active",
+        ));
+    }
+    require_non_git(workspace)?;
+    let data = snapshot(tx, mission)?;
+    let recipe_count = data.contract.execution.as_ref().unwrap().checks.len() as u32;
+    match mode {
+        MissionRecoveryMode::Finalize => {
+            for index in 0..recipe_count {
+                let pre = original_check(tx, mission, &data, index)?;
+                let post = checks::get(
+                    tx,
+                    &mission_run::stage_id(mission, &format!("post-check-{index}"))?,
+                )
+                .map_err(|error| {
+                    if error.code == "not_found" {
+                        CoreError::new(
+                            "postcheck_unavailable",
+                            "Recovery requires durable postchecks",
+                        )
+                    } else {
+                        error
+                    }
+                })?;
+                if !mission_run::valid_check(
+                    &post,
+                    &data.contract_digest,
+                    &data.candidate_digest,
+                    index,
+                ) || post["tool_digest"] != pre["tool_digest"]
+                {
+                    return Err(CoreError::new(
+                        "postcheck_unavailable",
+                        "Recovery requires matching passing postchecks",
+                    ));
+                }
+            }
+            // The coordinator repeats this readback while holding every file
+            // handle through the terminal transaction.
+            readback(tx, workspace, state, mission, &data).map_err(|error| {
+                CoreError::new("recovery_evidence_insufficient", &error.message)
+            })?;
+            tx.execute(
+                "UPDATE mission_integrations SET post_index=?2 WHERE mission_id=?1",
+                params![mission, recipe_count],
+            )?;
+            transition(tx, mission, "postchecking", None)?;
+        }
+        MissionRecoveryMode::Rollback => {
+            let broker = tools::prepare(workspace, state, &read(&data.artifacts[0]))?;
+            verify_workspace(tx, mission, &broker.root_identity()?)?;
+            let rows = verified_journal(tx, mission, &data)?;
+            let mut absent = Vec::new();
+            let mut owned = Vec::new();
+            for entry in rows
+                .into_iter()
+                .filter(|entry| entry.journal_status != "removed")
+            {
+                let artifact = &data.artifacts[entry.position as usize];
+                let broker = tools::prepare(workspace, state, &read(artifact))?;
+                verify_workspace(tx, mission, &broker.root_identity()?)?;
+                if entry.intent_status != "prepared" || entry.target != broker.target() {
+                    return Err(CoreError::new(
+                        "journal_mismatch",
+                        "Recovery target or reservation changed",
+                    ));
+                }
+                let intent = entry.intent_id;
+                if reserve_conflict(tx, &broker.target(), Some(&intent))? {
+                    return Err(CoreError::new(
+                        "recovery_evidence_insufficient",
+                        "Another intent reserves this target",
+                    ));
+                }
+                if broker.create_is_absent()? {
+                    absent.push(intent);
+                    continue;
+                }
+                let observed = broker.read_owned_guarded()?;
+                if !matches!(entry.journal_status.as_str(), "confirmed" | "removing")
+                    || entry.identity.as_deref() != Some(observed.identity.as_str())
+                    || observed.bytes != artifact.content.as_bytes()
+                {
+                    return Err(CoreError::new(
+                        "recovery_evidence_insufficient",
+                        "A present target has unverified ownership or changed bytes",
+                    ));
+                }
+                owned.push(intent);
+            }
+            for intent in absent {
+                tx.execute(
+                    "UPDATE mission_integration_files SET status='removed' WHERE intent_id=?1",
+                    [&intent],
+                )?;
+                tx.execute(
+                    "UPDATE tool_intents SET status='compensated' WHERE request_id=?1",
+                    [&intent],
+                )?;
+                store::event(
+                    tx,
+                    "mission_recovery_absence_verified",
+                    json!({"mission_id":mission,"intent_id":intent}),
+                )?;
+            }
+            for intent in owned {
+                tx.execute(
+                    "UPDATE mission_integration_files SET status='confirmed' WHERE intent_id=?1",
+                    [&intent],
+                )?;
+            }
+            transition(tx, mission, "rolling_back", Some("owner_recovery"))?;
+        }
+    }
+    store::event(
+        tx,
+        "mission_recovery_requested",
+        json!({"mission_id":mission,"mode":mode}),
+    )?;
+    mission_run::get(tx, mission)
 }
 
 pub(crate) fn stop(tx: &Transaction<'_>, mission: &str, status: &str) -> CoreResult<()> {

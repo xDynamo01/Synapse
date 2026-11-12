@@ -604,6 +604,64 @@ fn mission_run_integrates_only_verified_owned_candidate() {
                 assert_eq!(file["status"], "prepared", "{result}");
             }
         }
+        if scenario.starts_with("publish-crash-") || scenario == "revoke-after-write" {
+            let command = json!({"type":"mission_recovery_inspect","mission_id":"mission"});
+            let inspection = session.call(req("inspect-recovery", command.clone()));
+            assert_eq!(inspection["ok"], true, "{inspection}");
+            let inspection = &inspection["result"];
+            let file = &inspection["files"][0];
+            assert_eq!(inspection["status"], "recovery_required", "{inspection}");
+            assert_eq!(file["path"], "test_project.py", "{inspection}");
+            assert_eq!(
+                file["intent_id"],
+                result["integration_files"][0]["intent_id"]
+            );
+            assert_eq!(file["intent_status"], "prepared", "{inspection}");
+            let target = root.path().join("workspace/test_project.py");
+            match scenario {
+                "publish-crash-before" => {
+                    assert_eq!(file["classification"], "absent", "{inspection}");
+                    assert!(file["observed_sha256"].is_null());
+                    assert!(!target.exists());
+                }
+                "publish-crash-after" => {
+                    assert_eq!(
+                        file["classification"], "matching_bytes_unproven",
+                        "{inspection}"
+                    );
+                    assert_eq!(file["identity_recorded"], false, "{inspection}");
+                    assert_eq!(file["observed_sha256"], file["expected_sha256"]);
+                    assert_eq!(std::fs::read_to_string(&target).unwrap(), source);
+                    use std::os::windows::fs::OpenOptionsExt;
+                    let lock = std::fs::OpenOptions::new()
+                        .read(true)
+                        .share_mode(0)
+                        .open(&target)
+                        .unwrap();
+                    let unreadable = session.call(req("inspect-locked", command.clone()));
+                    assert_eq!(
+                        unreadable["result"]["files"][0]["classification"], "unreadable",
+                        "{unreadable}"
+                    );
+                    drop(lock);
+                }
+                _ => {
+                    assert_eq!(file["classification"], "verified_owned", "{inspection}");
+                    assert_eq!(file["identity_recorded"], true, "{inspection}");
+                    std::fs::write(&target, "modified by the fixture").unwrap();
+                    let changed = session.call(req("inspect-modified", command));
+                    assert_eq!(
+                        changed["result"]["files"][0]["classification"], "changed",
+                        "{changed}"
+                    );
+                    assert_eq!(
+                        std::fs::read_to_string(&target).unwrap(),
+                        "modified by the fixture"
+                    );
+                    std::fs::write(&target, source).unwrap();
+                }
+            }
+        }
         let review_path = provider.join("mission_review-post");
         if matches!(
             scenario,
@@ -680,5 +738,240 @@ fn mission_run_integrates_only_verified_owned_candidate() {
             }
             _ => assert!(workspace.read_dir().unwrap().next().is_none()),
         }
+    }
+}
+
+#[test]
+#[cfg(feature = "test-fault-injection")]
+#[ignore = "requires the dedicated Windows Python runtime configured by the owner"]
+fn mission_recovery_resolves_only_verified_effects() {
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    assert!(std::env::var_os("SYNAPSE_CHECK_PYTHON_EXECUTABLE").is_some());
+    let source = "import unittest\nclass Good(unittest.TestCase):\n def test_ok(self): self.assertEqual(2+3,5)\n";
+    for (scenario, fault, exit_code) in [
+        (
+            "absent",
+            "SYNAPSE_TEST_CRASH_AFTER_MISSION_PUBLISH_PREPARE",
+            87,
+        ),
+        (
+            "unproven",
+            "SYNAPSE_TEST_CRASH_AFTER_MISSION_PUBLISH_WRITE",
+            88,
+        ),
+        ("finalize", "SYNAPSE_TEST_CRASH_BEFORE_MISSION_FINALIZE", 89),
+        (
+            "rollback-after",
+            "SYNAPSE_TEST_CRASH_BEFORE_MISSION_FINALIZE",
+            89,
+        ),
+        (
+            "rollback-before",
+            "SYNAPSE_TEST_CRASH_BEFORE_MISSION_FINALIZE",
+            89,
+        ),
+        ("revoked", "SYNAPSE_TEST_CRASH_BEFORE_MISSION_FINALIZE", 89),
+    ] {
+        let root = TempDir::new().unwrap();
+        let fixture = Fixture::new(false);
+        let provider = fixture.marker.parent().unwrap();
+        std::fs::write(provider.join("mission-response"), valid_plan().to_string()).unwrap();
+        std::fs::write(
+            provider.join("mission_generate-response"),
+            json!({"artifacts":[
+            {"path":"test_project.py","content":source}]})
+            .to_string(),
+        )
+        .unwrap();
+        std::fs::write(
+            provider.join("mission_review-response"),
+            json!({"approved":true,"reason":"fixture"}).to_string(),
+        )
+        .unwrap();
+        let mut session = Session::with_env(&root, None, &[(fault, "1")]);
+        register(&mut session, &fixture.address);
+        assert_eq!(
+            session.call(req("plan", plan_command("mission")))["ok"],
+            true
+        );
+        assert_eq!(poll(&mut session, "plan")["status"], "succeeded");
+        let proposal = session.call(req(
+            "proposal",
+            json!({"type":"mission_get","mission_id":"mission"}),
+        ));
+        let approval = session.call(req(
+            "approve",
+            json!({"type":"mission_approve","mission_id":"mission",
+            "contract_digest":proposal["result"]["contract_digest"]}),
+        ));
+        assert_eq!(approval["ok"], true, "{approval}");
+        assert_eq!(
+            session.call(req(
+                "execute",
+                json!({"type":"mission_execute","mission_id":"mission"})
+            ))["ok"],
+            true
+        );
+        wait_recovery_exit(&mut session, exit_code);
+        let rollback_fault = match scenario {
+            "rollback-before" => Some(("SYNAPSE_TEST_CRASH_BEFORE_MISSION_ROLLBACK_DELETE", 91)),
+            "rollback-after" => Some(("SYNAPSE_TEST_CRASH_AFTER_MISSION_ROLLBACK_DELETE", 90)),
+            _ => None,
+        };
+        session = match rollback_fault {
+            Some((fault, _)) => Session::with_env(&root, None, &[(fault, "1")]),
+            None => Session::new(&root, None),
+        };
+        let current = session.call(req(
+            "initial-recovery",
+            json!({"type":"mission_run_get","mission_id":"mission"}),
+        ));
+        assert_eq!(
+            current["result"]["status"], "recovery_required",
+            "{current}"
+        );
+        let file = root.path().join("workspace/test_project.py");
+        let command =
+            |mode| json!({"type":"mission_recovery_resolve","mission_id":"mission","mode":mode});
+        if scenario == "unproven" {
+            assert_eq!(std::fs::read_to_string(&file).unwrap(), source);
+            for mode in ["finalize", "rollback"] {
+                let refusal = session.call(req(mode, command(mode)));
+                assert_eq!(refusal["ok"], false, "{refusal}");
+            }
+            assert_eq!(std::fs::read_to_string(&file).unwrap(), source);
+            continue;
+        }
+        if scenario == "revoked" {
+            let stop = session.call(req(
+                "revoke",
+                json!({"type":"mission_revoke","mission_id":"mission","reason":"fixture"}),
+            ));
+            assert_eq!(stop["ok"], true, "{stop}");
+            let refusal = session.call(req("rollback", command("rollback")));
+            assert_eq!(refusal["error"]["code"], "permission_denied", "{refusal}");
+            assert_eq!(std::fs::read_to_string(&file).unwrap(), source);
+            continue;
+        }
+        if scenario == "finalize" {
+            // Simulate a damaged private journal while no Core owns the store.
+            let intent = current["result"]["integration_files"][0]["intent_id"]
+                .as_str()
+                .unwrap();
+            drop(session);
+            let db = rusqlite::Connection::open(root.path().join("state/core.sqlite3")).unwrap();
+            let operation: String = db
+                .query_row(
+                    "SELECT operation FROM intent_operations WHERE request_id=?1",
+                    [intent],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            db.execute(
+                "DELETE FROM intent_operations WHERE request_id=?1",
+                [intent],
+            )
+            .unwrap();
+            drop(db);
+            session = Session::new(&root, None);
+            let inspect = session.call(req(
+                "damaged-journal",
+                json!({"type":"mission_recovery_inspect","mission_id":"mission"}),
+            ));
+            assert_eq!(inspect["error"]["code"], "journal_mismatch", "{inspect}");
+            let refusal = session.call(req("damaged-rollback", command("rollback")));
+            assert_eq!(refusal["error"]["code"], "journal_mismatch", "{refusal}");
+            assert_eq!(std::fs::read_to_string(&file).unwrap(), source);
+            drop(session);
+            let db = rusqlite::Connection::open(root.path().join("state/core.sqlite3")).unwrap();
+            db.execute(
+                "INSERT INTO intent_operations(request_id,operation) VALUES(?1,?2)",
+                rusqlite::params![intent, operation],
+            )
+            .unwrap();
+            drop(db);
+            session = Session::new(&root, None);
+            std::fs::write(&file, "owner edit").unwrap();
+            let refusal = session.call(req("edited-finalize", command("finalize")));
+            assert_eq!(
+                refusal["error"]["code"], "recovery_evidence_insufficient",
+                "{refusal}"
+            );
+            let refusal = session.call(req("edited-rollback", command("rollback")));
+            assert_eq!(
+                refusal["error"]["code"], "recovery_evidence_insufficient",
+                "{refusal}"
+            );
+            assert_eq!(std::fs::read_to_string(&file).unwrap(), "owner edit");
+            std::fs::write(&file, source).unwrap();
+        }
+        if let Some((_, exit_code)) = rollback_fault {
+            let rollback = req("first-resolution", command("rollback"));
+            let stdin = session.input.as_mut().unwrap();
+            writeln!(stdin, "{rollback}").unwrap();
+            stdin.flush().unwrap();
+            wait_recovery_exit(&mut session, exit_code);
+            session = Session::new(&root, None);
+            if scenario == "rollback-before" {
+                assert_eq!(std::fs::read_to_string(&file).unwrap(), source);
+            } else {
+                assert!(!file.exists());
+            }
+            let replay = session.call(rollback);
+            assert_eq!(replay["result"]["status"], "rolling_back", "{replay}");
+            let current = session.call(req(
+                "after-replay",
+                json!({"type":"mission_run_get","mission_id":"mission"}),
+            ));
+            assert_eq!(
+                current["result"]["status"], "recovery_required",
+                "{current}"
+            );
+        }
+        let mode = if scenario == "finalize" {
+            "finalize"
+        } else {
+            "rollback"
+        };
+        let request = req("resolve", command(mode));
+        let accepted = session.call(request.clone());
+        assert_eq!(accepted["ok"], true, "{accepted}");
+        assert_eq!(session.call(request), accepted);
+        let expected = if scenario == "finalize" {
+            "integrated"
+        } else {
+            "rolled_back"
+        };
+        let began = Instant::now();
+        for index in 0.. {
+            let reply = session.call(req(
+                &format!("terminal-{index}"),
+                json!({"type":"mission_run_get","mission_id":"mission"}),
+            ));
+            assert_eq!(reply["ok"], true, "{reply}");
+            if reply["result"]["status"] == expected {
+                break;
+            }
+            assert!(began.elapsed() < Duration::from_secs(10), "{reply}");
+            thread::sleep(Duration::from_millis(50));
+        }
+        if scenario == "finalize" {
+            assert_eq!(std::fs::read_to_string(&file).unwrap(), source);
+        } else {
+            assert!(!file.exists());
+        }
+    }
+}
+
+#[cfg(feature = "test-fault-injection")]
+fn wait_recovery_exit(session: &mut Session, expected: i32) {
+    let began = Instant::now();
+    loop {
+        if let Some(exit) = session.child.try_wait().unwrap() {
+            assert_eq!(exit.code(), Some(expected));
+            return;
+        }
+        assert!(began.elapsed() < Duration::from_secs(120));
+        thread::sleep(Duration::from_millis(50));
     }
 }

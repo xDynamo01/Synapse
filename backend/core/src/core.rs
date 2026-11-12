@@ -1,7 +1,8 @@
 use crate::{
     chats, checks,
     contracts::*,
-    conversation, integration, learning, memory, mission_run, missions, planner, registry, runner,
+    conversation, integration, learning, memory, mission_recovery, mission_run, missions, planner,
+    registry, runner,
     store::{self, Store},
     tools, worker,
 };
@@ -1328,6 +1329,12 @@ fn dispatch_tx(
             Ok(result)
         }
         Command::MissionRunGet { mission_id } => mission_run::get(tx, mission_id),
+        Command::MissionRecoveryInspect { mission_id } => {
+            mission_recovery::inspect(tx, mission_id, _workspace_root, state_dir)
+        }
+        Command::MissionRecoveryResolve { mission_id, mode } => {
+            integration::resolve(tx, mission_id, *mode, _workspace_root, state_dir)
+        }
         Command::ToolExecute {
             mission_id,
             operation,

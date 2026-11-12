@@ -8,6 +8,7 @@ mod core;
 mod integration;
 mod learning;
 mod memory;
+mod mission_recovery;
 mod mission_run;
 mod missions;
 mod planner;

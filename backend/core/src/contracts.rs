@@ -158,6 +158,13 @@ pub enum Command {
     MissionRunGet {
         mission_id: String,
     },
+    MissionRecoveryInspect {
+        mission_id: String,
+    },
+    MissionRecoveryResolve {
+        mission_id: String,
+        mode: MissionRecoveryMode,
+    },
     ToolExecute {
         mission_id: String,
         operation: ToolOperation,
@@ -168,6 +175,13 @@ pub enum Command {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         expected_current_hash: Option<String>,
     },
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MissionRecoveryMode {
+    Finalize,
+    Rollback,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
