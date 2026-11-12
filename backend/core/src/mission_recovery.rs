@@ -18,6 +18,7 @@ pub(crate) struct JournalEntry {
     pub expected_sha256: String,
     pub path: String,
     pub content: String,
+    pub replacement: bool,
 }
 
 pub(crate) fn journal(
@@ -50,11 +51,15 @@ pub(crate) fn journal(
         {
             return Err(CoreError::new("journal_mismatch", "Create intent changed"));
         }
-        let ToolOperation::Create { path, content } = operation else {
-            return Err(CoreError::new(
-                "journal_mismatch",
-                "Expected a create intent",
-            ));
+        let (path, content, replacement) = match operation {
+            ToolOperation::Create { path, content } => (path, content, false),
+            ToolOperation::Replace { path, content } => (path, content, true),
+            _ => {
+                return Err(CoreError::new(
+                    "journal_mismatch",
+                    "Expected a publication intent",
+                ));
+            }
         };
         if tools::sha(content.as_bytes()) != expected_sha256 {
             return Err(CoreError::new(
@@ -73,6 +78,7 @@ pub(crate) fn journal(
             expected_sha256,
             path,
             content,
+            replacement,
         });
     }
     let expected: u32 = tx.query_row(

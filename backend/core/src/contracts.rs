@@ -73,6 +73,8 @@ pub enum Command {
         skill: Option<SkillPin>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         context: Vec<ContextReference>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        git_edit_paths: Vec<String>,
         review_model_id: String,
         review_generation: Generation,
     },
@@ -433,11 +435,35 @@ pub struct PlannedCheck {
     pub kind: CheckKind,
     pub entrypoint: String,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CheckKind {
     PythonUnittest,
     RustTest,
+    PythonCompile,
+    JsonValidate,
+    GameLevelValidate,
+    TomlValidate,
+    PythonManifestValidate,
+    CsvValidate,
+    SvgValidate,
+    MarkdownValidate,
+    WebvttValidate,
+}
+
+impl CheckKind {
+    pub(crate) fn extension(self) -> &'static str {
+        match self {
+            Self::PythonUnittest | Self::PythonCompile => "py",
+            Self::RustTest => "rs",
+            Self::JsonValidate | Self::GameLevelValidate => "json",
+            Self::TomlValidate | Self::PythonManifestValidate => "toml",
+            Self::CsvValidate => "csv",
+            Self::SvgValidate => "svg",
+            Self::MarkdownValidate => "md",
+            Self::WebvttValidate => "vtt",
+        }
+    }
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

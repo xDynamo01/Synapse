@@ -62,10 +62,10 @@ de cada etapa estão no [roteiro até a finalização](docs/superpowers/plans/20
 - [x] **09. Publicação automática, pós-testes e reversão verificada para arquivos novos em Workspace Windows sem Git.** [Evidência](docs/evidence/backend/2026-11-11-mission-auto-integration.md)
 - [x] **10. Recuperação de missões interrompidas pelo CLI no Windows.** [Evidência](docs/evidence/backend/2026-11-12-mission-recovery.md)
 - [x] **11. Aplicativo Rust nativo no Windows, com Presence, Workspace e ponte local.** [Evidência](docs/evidence/backend/2026-11-12-native-desktop.md)
+- [x] **12. Workspaces por projeto, edição Git local e receitas por domínio no Windows.** [Evidência](docs/evidence/backend/2026-11-12-workspace-expansion.md)
 
 ### Etapas a seguir
 
-- [ ] **12. Workspace ampliado.** Integrar projetos Git, ferramentas e outros tipos de projeto com verificações próprias.
 - [ ] **13. Voz e tradução.** Ativar por “Artemis”, responder com voz fixa, animar com áudio real e traduzir nos dois sentidos.
 - [ ] **14. Navegador interno.** Usar sessões autenticadas e executar ações autorizadas pela missão.
 - [ ] **15. Evolução de Skills, MoM e Swarm.** Validar promoção de Skills, orquestração local de modelos e agentes temporários sob aceite.

@@ -12,6 +12,13 @@ use std::{
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 enum Action {
     State,
+    RegisterProject {
+        scope: String,
+        root: String,
+    },
+    SelectProject {
+        scope: String,
+    },
     OpenChat {
         chat_id: String,
     },
@@ -33,6 +40,9 @@ enum Action {
         scope: String,
         model: String,
         objective: String,
+        #[serde(default)]
+        git_edit_paths: Vec<String>,
+        skill: Option<Value>,
     },
     Approve {
         contract_digest: String,
@@ -118,6 +128,8 @@ fn handle(desktop: &mut Desktop, action: Action) -> Result<Value, String> {
     }
     match action {
         Action::State => (),
+        Action::RegisterProject { scope, root } => desktop.register_project(&scope, &root),
+        Action::SelectProject { scope } => desktop.select_project(&scope),
         Action::OpenChat { chat_id } => {
             if desktop.job_id.is_some() {
                 return Err("A conversa ainda está em andamento.".into());
@@ -184,17 +196,22 @@ fn handle(desktop: &mut Desktop, action: Action) -> Result<Value, String> {
             scope,
             model,
             objective,
+            git_edit_paths,
+            skill,
         } => {
             desktop.workspace = true;
             desktop.mission_id = mission_id;
-            desktop.scope = scope;
+            if desktop.scope != scope {
+                desktop.project = Value::Null;
+                desktop.scope = scope;
+            }
             desktop.model = model;
             desktop.objective = objective;
             desktop.plan = Value::Null;
             desktop.mission = Value::Null;
             desktop.run = Value::Null;
             desktop.recovery = Value::Null;
-            desktop.plan_mission();
+            desktop.plan_mission(git_edit_paths, skill);
         }
         Action::Approve { contract_digest } => desktop.approve_mission(&contract_digest),
         Action::Execute if desktop.mission["state"] == "approved" && desktop.run.is_null() => {
@@ -216,7 +233,7 @@ fn handle(desktop: &mut Desktop, action: Action) -> Result<Value, String> {
     }
     drain(desktop)?;
     Ok(
-        json!({"connected":desktop.connected,"cursor":desktop.cursor,"chat_id":desktop.active_chat,"messages":desktop.messages,
+        json!({"connected":desktop.connected,"project":desktop.project,"cursor":desktop.cursor,"chat_id":desktop.active_chat,"messages":desktop.messages,
         "conversation_job":desktop.job_id,"mission_id":desktop.mission_id,"proposal":desktop.plan,"mission":desktop.mission,
         "execution":desktop.run,"recovery":desktop.recovery}),
     )

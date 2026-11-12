@@ -1,6 +1,8 @@
 //! Fixed offline Python check phases. Core owns all staged paths and the profile.
 use std::path::Path;
 
+use crate::contracts::CheckKind;
+
 use super::{
     Control,
     windows::{Profile, Receipt},
@@ -29,6 +31,58 @@ if suite.countTestCases() == 0:
 result = unittest.TextTestRunner().run(suite)
 sys.exit(not result.wasSuccessful())
 "#;
+
+const CHECK_DOCUMENT: &str = include_str!("document_checks.py");
+
+pub(super) fn adapter_source(kind: CheckKind) -> Option<&'static str> {
+    match kind {
+        CheckKind::PythonUnittest | CheckKind::RustTest => None,
+        CheckKind::PythonCompile => Some(COMPILE),
+        _ => Some(CHECK_DOCUMENT),
+    }
+}
+
+pub(super) struct AdapterRun<'a> {
+    pub kind: CheckKind,
+    pub project: &'a Path,
+    pub entrypoint: &'a Path,
+    pub output: &'a Path,
+    pub temporary: &'a Path,
+}
+
+pub(super) fn run_adapter(
+    profile: &Profile,
+    interpreter: &Path,
+    run: AdapterRun<'_>,
+    control: &Control,
+) -> Result<(&'static str, Receipt), String> {
+    let extension = run.kind.extension();
+    if run.entrypoint.file_name() != Some(run.entrypoint.as_os_str())
+        || run.entrypoint.extension().and_then(|value| value.to_str()) != Some(extension)
+    {
+        return Err("adapter_entrypoint".into());
+    }
+    let source = run.project.join(run.entrypoint);
+    let source = source.to_str().ok_or("invalid_python_check_path")?;
+    let script = adapter_source(run.kind).ok_or("unsupported_adapter")?;
+    let (phase, arguments) = if run.kind == CheckKind::PythonCompile {
+        let bytecode = run.output.join("check.pyc");
+        let bytecode = bytecode.to_str().ok_or("invalid_python_check_path")?;
+        ("compile", [source.to_owned(), bytecode.to_owned()])
+    } else {
+        let check = match run.kind {
+            CheckKind::GameLevelValidate => "game_level",
+            CheckKind::PythonManifestValidate => "python_manifest",
+            _ => extension,
+        };
+        ("validate", [check.to_owned(), source.to_owned()])
+    };
+    let mut args = ["-I", "-S", "-B", "-c", script].map(str::to_owned).to_vec();
+    args.extend(arguments);
+    profile
+        .launch(interpreter, &args, run.project, run.temporary, control)
+        .map(|receipt| (phase, receipt))
+}
 
 pub(super) fn run(
     profile: &Profile,

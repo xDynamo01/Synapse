@@ -33,7 +33,14 @@ def _check_schema(kind, suffix):
 
 
 ARTIFACT_PATH_SCHEMA = {"type": "string", "minLength": 1, "maxLength": 128,
-                        "pattern": '^' + SAFE_COMPONENT + r'\.(?:rs|py|md|txt|toml)$'}
+                        "pattern": '^' + SAFE_COMPONENT + r'\.(?:rs|py|md|txt|toml|json|csv|svg|vtt)$'}
+
+
+CHECK_RECIPES = {
+    "python_unittest": "py", "rust_test": "rs", "python_compile": "py",
+    "json_validate": "json", "game_level_validate": "json", "toml_validate": "toml", "python_manifest_validate": "toml", "csv_validate": "csv",
+    "svg_validate": "svg", "markdown_validate": "md", "webvtt_validate": "vtt",
+}
 
 
 MISSION_PLAN_FORMAT = {"type": "json_schema", "json_schema": {"name": "mission_plan", "strict": True, "schema": {
@@ -47,7 +54,7 @@ MISSION_PLAN_FORMAT = {"type": "json_schema", "json_schema": {"name": "mission_p
                 "purpose": {"type": "string", "minLength": 1, "maxLength": 512}
             }}},
         "checks": {"type": "array", "minItems": 1, "maxItems": 8, "uniqueItems": True,
-                   "items": {"anyOf": [_check_schema("python_unittest", "py"), _check_schema("rust_test", "rs")]}}
+                   "items": {"anyOf": [_check_schema(kind, suffix) for kind, suffix in CHECK_RECIPES.items()]}}
     }
 }}}
 

@@ -5,6 +5,7 @@ mod context;
 pub mod contracts;
 mod conversation;
 mod core;
+mod git_workspace;
 mod integration;
 mod learning;
 #[cfg(windows)]

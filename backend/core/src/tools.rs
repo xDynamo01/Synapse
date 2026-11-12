@@ -177,6 +177,12 @@ impl Broker {
     pub fn create_owned(&self, _: &[u8]) -> CoreResult<(String, Vec<u8>)> {
         Err(CoreError::new("capability_unavailable", "Windows required"))
     }
+    pub fn read_binary_guarded(&self, _limit: u64) -> CoreResult<OwnedRead> {
+        Err(CoreError::new(
+            "capability_unavailable",
+            "Workspace tools currently require Windows",
+        ))
+    }
     pub fn read_owned_guarded(&self) -> CoreResult<OwnedRead> {
         Err(CoreError::new("capability_unavailable", "Windows required"))
     }
@@ -466,6 +472,23 @@ mod win {
         pub fn read_owned(&self) -> CoreResult<(String, Vec<u8>)> {
             let receipt = self.read_owned_guarded()?;
             Ok((receipt.identity, receipt.bytes))
+        }
+        pub fn read_binary_guarded(&self, limit: u64) -> CoreResult<OwnedRead> {
+            let mut file = self.open_owned(GENERIC_READ)?;
+            let identity = identity(info(&file, false)?);
+            let mut bytes = Vec::new();
+            (&mut file)
+                .take(limit + 1)
+                .read_to_end(&mut bytes)
+                .map_err(|_| fail("Cannot read metadata file"))?;
+            if bytes.len() as u64 > limit {
+                return Err(fail("Metadata file exceeds byte limit"));
+            }
+            Ok(OwnedRead {
+                identity,
+                bytes,
+                _file: file,
+            })
         }
         pub fn read_owned_guarded(&self) -> CoreResult<OwnedRead> {
             let mut file = self.open_owned(GENERIC_READ)?;

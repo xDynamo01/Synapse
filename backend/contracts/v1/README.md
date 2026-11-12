@@ -29,7 +29,7 @@ The available command shapes are:
 | `message_append` | `chat_id`, `message_id`, `role` (`user`, `assistant`, `system`), `content` |
 | `memory_put` | `scope`, `key`, `kind`, `content`, `expected_revision`, `provenance`, `status` |
 | `memory_get` | `scope`, `context_reference`, `key`; optional `after_revision` (default 0), `limit` (1–100, default 50) |
-| `mission_plan_start` | `mission_id`, `scope`, `model_id`, `objective`, required `review_model_id` and `review_generation`; optional exact `skill` and `context` references |
+| `mission_plan_start` | `mission_id`, `scope`, `model_id`, `objective`, required `review_model_id` and `review_generation`; optional exact `skill` and `context` references and `git_edit_paths` |
 | `mission_plan_get` | `mission_id`; returns job status, pinned job metadata and, on success, validated `plan` and proposed `mission` |
 | `project_check_start` | `mission_id`, zero-based `check_index`, and exact planned `artifacts` of `{path, content}` |
 | `project_check_get` | `check_id`; returns current status, cleanup state and completed phase receipt |
@@ -63,8 +63,11 @@ identity belong to at most one scope. Re-registering the same binding is safe.
 `project_get` reopens the recorded directory and returns `project_root_changed`
 if the directory cannot be verified or was replaced. Use a fresh request ID
 for a new observation. Both commands return `scope` and `root`. The registry
-uses storage schema 13. It records project bindings for selection and does
-not change the existing mission routing or the explicit memory reference gate.
+was introduced in storage schema 13. Schema 14 binds new missions to their
+registered project identity and routes effects, checks and recovery through it.
+Earlier or unregistered missions retain their original default Workspace.
+Mission queries return `project_root` when a binding exists. Memory uses its
+existing explicit reference gate.
 
 Scopes use exact `project:<id>` strings. Memory reads require an explicit `context_reference` equal to the stored scope. `memory_put` requires a current `expected_revision` (zero for a new key), `kind` of `constraint`, `decision`, `fact`, `reproduced_issue`, `root_cause`, or `recovery`, `status` of `active`, `resolved`, or `superseded`, and a provenance object containing `source_type`, `source_id`, and `evidence`. Each update creates a new revision.
 
@@ -140,18 +143,22 @@ and `learning`. The provider supplies a fixed strict JSON response schema. Core
 independently rejects unknown fields at every depth and validates the entire
 `{summary,artifacts,checks}` result atomically: summary 1..2048 UTF-8 bytes;
 artifacts 1..16 `{path,purpose}` entries, purpose 1..512 UTF-8 bytes; path 1..128
-ASCII bytes, a safe single Windows component with `.rs`, `.py`, `.md`, `.txt` or
-`.toml` suffix, no traversal, reserved devices, separators, streams, trailing
-space/dot or case-insensitive collisions. Checks are 1..8 unique `{kind,entrypoint}`
-entries; `python_unittest` must name an exact `.py` artifact and `rust_test` an
-exact `.rs` artifact. No content, executable, argv, environment, grant, approval,
+ASCII bytes, a safe single Windows component with `.rs`, `.py`, `.md`, `.txt`,
+`.toml`, `.json`, `.csv`, `.svg` or `.vtt` suffix. Paths exclude traversal, devices,
+separators, streams, trailing spaces or dots and case-insensitive collisions.
+Checks are 1..8 unique `{kind,entrypoint}` entries. The entrypoint must be an
+exact artifact with the recipe's required suffix. See the
+[Windows workspace guide](../../../docs/guides/windows-project-workspaces.md)
+for recipes and examples. No content, executable, argv, environment, grant, approval,
 command or Swarm fields are accepted. JSON schema bounds characters; Core enforces
 UTF-8 byte limits and cross-array constraints. Invalid output produces only the
 fixed `invalid_mission_plan` job error, with no raw output or partial proposal.
 
 On success Core derives actions exactly `mission_generate`, `project_check`,
 `artifact_create`, `workspace_read`, resources exactly the artifact paths, and
-rollback `owned verified removal`. The original owner objective/scope are retained.
+rollback `owned verified removal` in create-new plans. Git edit plans instead
+seal `artifact_replace`, the named tracked files and their prior SHA-256 values.
+The original owner objective and scope are retained.
 Optional `MissionContract.execution` is a strict `MissionExecutionSpec` containing
 `plan_id` (the source job ID), `primary_model`, `primary_model_digest`, `review_model`,
 `review_model_digest`, `review_generation`, validated `artifacts`/`checks`, and `limits`.
@@ -232,19 +239,29 @@ content limits.
 
 ## Automatic mission integration
 
-An approval for a sealed plan pins the Workspace directory identity. The
-initial Windows implementation publishes flat, create-new artifacts in a
-non-Git Workspace. It verifies the current approval, exact reviewed candidate,
+An approval for a sealed plan pins the Workspace directory identity. On Windows,
+publication supports flat create-new artifacts and explicitly requested tracked
+file edits in supported Git workspaces. It verifies the current approval, exact reviewed candidate,
 passing prechecks and Workspace identity before applying prepared intents.
 It checks the actual published bytes and repeats the approved checks using
 the same tool digests. `integrated` requires final identity and byte readback.
 
-A failed postcheck removes only files created by that run whose identity and
-bytes still match, while the original approval remains active. `rolled_back`
-reports verified removal. An ambiguous effect, changed target, abrupt exit or
+A failed postcheck reverses only effects whose identity and bytes still match
+while the original approval remains active. `rolled_back` reports verified
+removal for a new file or verified restoration for a tracked replacement. An ambiguous effect, changed target, abrupt exit or
 revocation after a write leaves `recovery_required` with the relevant file
 paths and intent IDs. The targets remain reserved. Ambiguous effects remain reserved until the owner can resolve them using the
 evidence. See the recovery commands below.
+
+A Git edit starts with an owner-provided `git_edit_paths` array of exact flat
+tracked files. Core observes the current HEAD, index, file identities and
+prior bytes before planning. Eligible files must match the index byte for byte.
+The planner must return exactly those paths. Candidate preparation and tests
+run in the dedicated isolated area, and approved effects are applied only
+while HEAD, index and target bytes match the recorded evidence. An unrelated
+worktree edit remains in place. The Core reads Git metadata locally without
+invoking Git commands, hooks or filters. `mission_run_get` returns `git_base`
+and, after QA accepts the candidate, `git_diff` with before/after text and hashes.
 
 Approvals from before Workspace identity pinning require a newly proposed
 mission for automatic integration. Earlier runs already stopped at

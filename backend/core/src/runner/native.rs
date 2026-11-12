@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use super::{Control, Event, Launch, Outcome, assets, python, rust, windows};
-use crate::contracts::CheckKind;
+use crate::{contracts::CheckKind, store};
 
 pub(crate) struct Tools(Config);
 enum Config {
@@ -29,13 +29,13 @@ impl Tools {
                 .ok_or("toolchain_unavailable")
         };
         Ok(Self(match kind {
-            CheckKind::PythonUnittest => Config::Python(path("SYNAPSE_CHECK_PYTHON_EXECUTABLE")?),
             CheckKind::RustTest => Config::Rust(assets::RustConfig {
                 sysroot: path("SYNAPSE_RUNNER_RUST_SYSROOT")?,
                 vc_x64_lib: path("SYNAPSE_RUNNER_VC_X64_LIB")?,
                 sdk_um_x64_lib: path("SYNAPSE_RUNNER_SDK_UM_X64_LIB")?,
                 sdk_ucrt_x64_lib: path("SYNAPSE_RUNNER_SDK_UCRT_X64_LIB")?,
             }),
+            _ => Config::Python(path("SYNAPSE_CHECK_PYTHON_EXECUTABLE")?),
         }))
     }
 }
@@ -140,7 +140,11 @@ pub(super) fn run(
                 .protect(path, true)
                 .map_err(|_| "containment_unavailable")?;
         }
-        let (staged, digest) = prepare(&launch.tools.0, &runtime, control)?;
+        let (staged, mut digest) = prepare(&launch.tools.0, &runtime, control)?;
+        if let Some(script) = python::adapter_source(launch.recipe.kind) {
+            digest = store::digest(&(digest, launch.recipe.kind, script))
+                .map_err(|_| "toolchain_unavailable")?;
+        }
         sender
             .send(Event::Prepared(digest))
             .map_err(|_| "cancelled")?;
@@ -161,22 +165,37 @@ pub(super) fn run(
         }
         let entrypoint = Path::new(&launch.recipe.entrypoint);
         match staged {
-            Staged::Python(interpreter) => python::run(
+            Staged::Python(interpreter) if launch.recipe.kind == CheckKind::PythonUnittest => {
+                python::run(
+                    package,
+                    &interpreter,
+                    &project,
+                    entrypoint,
+                    &output,
+                    &temp,
+                    control,
+                )
+                .map(|receipts| {
+                    receipts
+                        .into_iter()
+                        .zip(["compile", "test"])
+                        .map(|(r, p)| (p, r))
+                        .collect::<Vec<_>>()
+                })
+            }
+            Staged::Python(interpreter) => python::run_adapter(
                 package,
                 &interpreter,
-                &project,
-                entrypoint,
-                &output,
-                &temp,
+                python::AdapterRun {
+                    kind: launch.recipe.kind,
+                    project: &project,
+                    entrypoint,
+                    output: &output,
+                    temporary: &temp,
+                },
                 control,
             )
-            .map(|receipts| {
-                receipts
-                    .into_iter()
-                    .zip(["compile", "test"])
-                    .map(|(r, p)| (p, r))
-                    .collect::<Vec<_>>()
-            }),
+            .map(|phase| vec![phase]),
             Staged::Rust(tools) => rust::run(
                 package,
                 &tools,
@@ -225,9 +244,14 @@ pub(super) fn run(
     let cleanup_complete = profile_cleaned && root_cleaned;
     let (receipt, error) = match operation {
         Ok(phases) => {
+            let expected = match launch.recipe.kind {
+                CheckKind::PythonUnittest | CheckKind::RustTest => "test",
+                CheckKind::PythonCompile => "compile",
+                _ => "validate",
+            };
             let succeeded = phases
                 .last()
-                .is_some_and(|(name, phase)| *name == "test" && phase.exit_code == 0);
+                .is_some_and(|(name, phase)| *name == expected && phase.exit_code == 0);
             let phases: Vec<_> = phases
                 .into_iter()
                 .map(|(name, receipt)| phase(name, receipt))

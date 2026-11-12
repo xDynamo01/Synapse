@@ -49,3 +49,6 @@ Uma referência natural usa um nome conhecido após “projeto” ou “project�
 cliente usa metadados de eventos para descobrir chaves ativas e o Core carrega
 somente as referências exatas da mensagem. Na interface, os campos de projeto e
 chave permitem selecionar uma memória específica em caso de ambiguidade.
+
+Para cadastrar projetos, editar arquivos Git e escolher receitas por domínio,
+consulte o [guia de Workspaces](windows-project-workspaces.md).

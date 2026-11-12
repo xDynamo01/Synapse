@@ -59,6 +59,8 @@ struct Desktop {
     model: String,
     models: Vec<String>,
     scope: String,
+    project_path: String,
+    project: Value,
     chat_id: String,
     active_chat: String,
     chat_cursor: u64,
@@ -69,6 +71,8 @@ struct Desktop {
     job_id: Option<String>,
     mission_id: String,
     objective: String,
+    git_paths: String,
+    mission_skill: Option<Value>,
     mission: Value,
     plan: Value,
     run: Value,
@@ -95,6 +99,8 @@ impl Desktop {
             model: String::new(),
             models: Vec::new(),
             scope: String::new(),
+            project_path: String::new(),
+            project: Value::Null,
             chat_id: String::new(),
             active_chat: String::new(),
             chat_cursor: 0,
@@ -105,6 +111,8 @@ impl Desktop {
             job_id: None,
             mission_id,
             objective: String::new(),
+            git_paths: String::new(),
+            mission_skill: None,
             mission: Value::Null,
             plan: Value::Null,
             run: Value::Null,
@@ -125,6 +133,23 @@ impl Desktop {
             Ok(()) => self.pending += 1,
             Err(error) => self.error = error.to_string(),
         }
+    }
+
+    fn select_project(&mut self, scope: &str) {
+        if self.scope != scope {
+            self.scope = scope.into();
+            self.mission_skill = None;
+            self.git_paths.clear();
+        }
+        self.project = Value::Null;
+        self.send("project", json!({"type":"project_get","scope":scope}));
+    }
+
+    fn register_project(&mut self, scope: &str, root: &str) {
+        self.send(
+            "project",
+            json!({"type":"project_register","scope":scope,"root":root}),
+        );
     }
 
     fn chat(&mut self) {
@@ -151,6 +176,7 @@ impl Desktop {
                 if tag == "connection" {
                     self.pending = 0;
                     self.connected = false;
+                    self.project = Value::Null;
                     self.mission = Value::Null;
                     self.run = Value::Null;
                     self.recovery = Value::Null;
@@ -171,6 +197,17 @@ impl Desktop {
                 self.chat();
                 if !self.mission_id.is_empty() {
                     self.refresh();
+                }
+            }
+            "project" => {
+                if let Some(scope) = value["scope"].as_str() {
+                    if self.scope != scope {
+                        self.mission_skill = None;
+                        self.git_paths.clear();
+                    }
+                    self.scope = scope.into();
+                    self.catalog.projects.insert(scope.into());
+                    self.project = value;
                 }
             }
             "models" => {
@@ -251,7 +288,34 @@ impl Desktop {
         ui.separator();
         ui.horizontal(|ui| {
             ui.label("Projeto");
-            ui.add(egui::TextEdit::singleline(&mut self.scope).hint_text("project:meu-projeto"));
+            if ui
+                .add_enabled(
+                    self.pending == 0,
+                    egui::TextEdit::singleline(&mut self.scope).hint_text("project:meu-projeto"),
+                )
+                .changed()
+            {
+                self.project = Value::Null;
+                self.mission_skill = None;
+                self.git_paths.clear();
+            }
+            let mut selected = None;
+            ui.add_enabled_ui(self.connected && self.pending == 0, |ui| {
+                egui::ComboBox::from_id_salt("projects")
+                    .selected_text("Projetos cadastrados")
+                    .show_ui(ui, |ui| {
+                        for scope in &self.catalog.projects {
+                            if ui.selectable_label(self.scope == *scope, scope).clicked() {
+                                selected = Some(scope.clone());
+                            }
+                        }
+                    });
+            });
+            if let Some(scope) = selected {
+                self.select_project(&scope);
+            }
+        });
+        ui.horizontal_wrapped(|ui| {
             ui.label("Modelo local");
             ui.add(egui::TextEdit::singleline(&mut self.model).hint_text("ID registrado"));
             egui::ComboBox::from_id_salt("models")
@@ -370,6 +434,27 @@ impl Desktop {
                 self.rail = !self.rail;
             }
         });
+        ui.collapsing("Pasta do projeto", |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.project_path)
+                        .hint_text("Caminho absoluto"),
+                );
+                let ready = self.connected
+                    && self.pending == 0
+                    && !self.scope.is_empty()
+                    && !self.project_path.is_empty();
+                if ui
+                    .add_enabled(ready, egui::Button::new("Vincular pasta ao projeto"))
+                    .clicked()
+                {
+                    self.register_project(&self.scope.clone(), &self.project_path.clone());
+                }
+            });
+            if let Some(root) = self.project["root"].as_str() {
+                ui.label(root);
+            }
+        });
         ui.horizontal(|ui| {
             if ui
                 .add_enabled(
@@ -426,6 +511,32 @@ impl Desktop {
                 .desired_width(f32::INFINITY)
                 .hint_text("Objetivo da missão"),
         );
+        if let Some(skills) = self.catalog.skills.get(&self.scope) {
+            let selected = self
+                .mission_skill
+                .as_ref()
+                .map(skill_label)
+                .unwrap_or_else(|| "Sem Skill".into());
+            egui::ComboBox::from_id_salt("mission-skill")
+                .selected_text(selected)
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut self.mission_skill, None, "Sem Skill");
+                    for skill in skills {
+                        ui.selectable_value(
+                            &mut self.mission_skill,
+                            Some(skill.clone()),
+                            skill_label(skill),
+                        );
+                    }
+                });
+        }
+        ui.collapsing("Edição Git local", |ui| {
+            ui.add(
+                egui::TextEdit::multiline(&mut self.git_paths)
+                    .desired_rows(2)
+                    .hint_text("Um caminho rastreado por linha"),
+            );
+        });
         let ready = self.connected && self.pending == 0 && !self.mission_id.is_empty();
         if ui
             .add_enabled(
@@ -437,7 +548,14 @@ impl Desktop {
             )
             .clicked()
         {
-            self.plan_mission();
+            let paths = self
+                .git_paths
+                .lines()
+                .map(str::trim)
+                .filter(|path| !path.is_empty())
+                .map(str::to_owned)
+                .collect();
+            self.plan_mission(paths, self.mission_skill.clone());
         }
         ui.horizontal_wrapped(|ui| {
             let state = self.mission["state"]
@@ -542,7 +660,34 @@ impl Desktop {
     fn context_rail(&self, ui: &mut egui::Ui) {
         ui.heading("Context Rail");
         egui::ScrollArea::vertical().id_salt("rail").show(ui, |ui| {
-            ui.label(&self.scope);
+            let scope = self.mission["contract"]["scope"]
+                .as_str()
+                .unwrap_or(&self.scope);
+            ui.label(scope);
+            let root = if self.mission.is_null() {
+                self.plan["project_root"]
+                    .as_str()
+                    .or_else(|| self.project["root"].as_str())
+            } else {
+                self.mission["project_root"].as_str()
+            };
+            if let Some(root) = root {
+                ui.label(root);
+            }
+            if let Some(diff) = self.run["git_diff"].as_array() {
+                ui.collapsing("Alterações Git revisadas", |ui| {
+                    for file in diff {
+                        ui.collapsing(file["path"].as_str().unwrap_or_default(), |ui| {
+                            for (label, field) in [("Antes", "before"), ("Depois", "after")] {
+                                if let Some(text) = file[field].as_str() {
+                                    ui.label(label);
+                                    ui.monospace(text);
+                                }
+                            }
+                        });
+                    }
+                });
+            }
             for (title, value) in [
                 ("Proposta", &self.plan),
                 ("Contrato", &self.mission),
@@ -559,6 +704,14 @@ impl Desktop {
             }
         });
     }
+}
+
+fn skill_label(skill: &Value) -> String {
+    format!(
+        "{} · {}",
+        skill["id"].as_str().unwrap_or_default(),
+        skill["version"].as_str().unwrap_or_default()
+    )
 }
 
 impl Desktop {
@@ -582,8 +735,15 @@ impl Desktop {
         }
     }
 
-    fn plan_mission(&mut self) {
-        self.send("plan-start", json!({"type":"mission_plan_start","mission_id":self.mission_id,"scope":self.scope,"model_id":self.model,"review_model_id":self.model,"objective":self.objective,"review_generation":{"max_output_tokens":512,"timeout_ms":120000,"reasoning_effort":"none"}}));
+    fn plan_mission(&mut self, git_edit_paths: Vec<String>, skill: Option<Value>) {
+        let mut command = json!({"type":"mission_plan_start","mission_id":self.mission_id,"scope":self.scope,"model_id":self.model,"review_model_id":self.model,"objective":self.objective,"review_generation":{"max_output_tokens":512,"timeout_ms":120000,"reasoning_effort":"none"}});
+        if !git_edit_paths.is_empty() {
+            command["git_edit_paths"] = json!(git_edit_paths);
+        }
+        if let Some(skill) = skill {
+            command["skill"] = skill;
+        }
+        self.send("plan-start", command);
     }
 
     fn approve_mission(&mut self, digest: &str) {

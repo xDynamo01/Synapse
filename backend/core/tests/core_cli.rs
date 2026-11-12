@@ -1635,3 +1635,116 @@ fn project_bindings_survive_restart_and_detect_substitution() {
     error(&changed[2], "project_binding_conflict");
     assert_eq!(changed[3]["result"], initial[1]["result"]);
 }
+
+#[cfg(windows)]
+#[test]
+fn registered_mission_effects_use_only_the_pinned_project() {
+    let root = TempDir::new().unwrap();
+    let alpha = root.path().join("alpha");
+    let beta = root.path().join("beta");
+    std::fs::create_dir(&alpha).unwrap();
+    std::fs::create_dir(&beta).unwrap();
+    let propose = |id, scope| {
+        req(
+            id,
+            json!({"type":"mission_propose","mission_id":id,"contract":{
+                "version":1,"scope":scope,"objective":"Create report","actions":["artifact_create","workspace_read"],"resources":["report.txt"],"rollback":"manual removal",
+                "artifact_digests":{"report.txt":"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"}
+            }}),
+        )
+    };
+    let register = |id, scope, path: &std::path::Path| {
+        req(
+            id,
+            json!({"type":"project_register","scope":scope,"root":path}),
+        )
+    };
+    let initial = run(
+        &root,
+        &[
+            propose("legacy", "project:alpha"),
+            register("reg-alpha", "project:alpha", &alpha),
+            register("reg-beta", "project:beta", &beta),
+            propose("alpha", "project:alpha"),
+            propose("alpha-pending", "project:alpha"),
+            propose("beta", "project:beta"),
+        ],
+    );
+    for value in &initial {
+        ok(value);
+    }
+    assert!(initial[0]["result"].get("project_root").is_none());
+    assert_eq!(
+        initial[3]["result"]["project_root"],
+        initial[1]["result"]["root"]
+    );
+    assert_eq!(
+        initial[5]["result"]["project_root"],
+        initial[2]["result"]["root"]
+    );
+    let approve = |id, mission, index: usize| {
+        req(
+            id,
+            json!({"type":"mission_approve","mission_id":mission,"contract_digest":initial[index]["result"]["contract_digest"]}),
+        )
+    };
+    let effects = run(
+        &root,
+        &[
+            approve("approve-legacy", "legacy", 0),
+            approve("approve-alpha", "alpha", 3),
+            approve("approve-beta", "beta", 5),
+            tool(
+                "create-legacy",
+                "legacy",
+                "create",
+                "report.txt",
+                Some("hello"),
+            ),
+            tool(
+                "create-alpha",
+                "alpha",
+                "create",
+                "report.txt",
+                Some("hello"),
+            ),
+            tool("create-beta", "beta", "create", "report.txt", Some("hello")),
+        ],
+    );
+    for value in &effects {
+        ok(value);
+    }
+    for directory in [root.path(), &alpha, &beta] {
+        assert_eq!(
+            std::fs::read_to_string(directory.join("report.txt")).unwrap(),
+            "hello"
+        );
+    }
+    std::fs::rename(&alpha, root.path().join("original-alpha")).unwrap();
+    std::fs::create_dir(&alpha).unwrap();
+    let changed = run(
+        &root,
+        &[
+            approve("approve-pending", "alpha-pending", 4),
+            tool("read-alpha", "alpha", "read", "report.txt", None),
+            tool(
+                "fresh-alpha-create",
+                "alpha",
+                "create",
+                "report.txt",
+                Some("hello"),
+            ),
+            req(
+                "inspect-alpha",
+                json!({"type":"tool_recovery","intent_id":"create-alpha","mode":"inspect"}),
+            ),
+            tool("read-beta", "beta", "read", "report.txt", None),
+        ],
+    );
+    for value in &changed[..4] {
+        error(value, "project_root_changed");
+    }
+    ok(&changed[4]);
+    assert_eq!(changed[4]["result"]["content"], "hello");
+    assert!(!alpha.join("report.txt").exists());
+}

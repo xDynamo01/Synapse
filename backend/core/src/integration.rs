@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 use crate::{
     candidate, checks,
     contracts::{CandidateArtifact, CoreError, CoreResult, MissionContract, ToolOperation},
-    mission_recovery, mission_run, runner,
+    git_workspace, mission_recovery, mission_run, runner,
     store::{self, Store},
     tools,
 };
@@ -39,14 +39,32 @@ fn snapshot(tx: &Transaction<'_>, mission: &str) -> CoreResult<Snapshot> {
     };
     let artifacts: Vec<CandidateArtifact> = serde_json::from_str(&serialized)?;
     candidate::validate_artifacts(&contract, &artifacts)?;
+    let replace = !contract.artifact_previous_digests.is_empty();
+    let required_actions: Vec<_> = artifacts
+        .iter()
+        .map(|artifact| {
+            if contract
+                .artifact_previous_digests
+                .contains_key(&artifact.path)
+            {
+                "artifact_replace"
+            } else {
+                "artifact_create"
+            }
+        })
+        .collect();
     if sealed_contract != contract_digest
         || candidate_digest != store::digest(&artifacts)?
         || candidate::parse_review(&review)?["approved"] != true
-        || contract.rollback != "owned verified removal"
-        || !contract
-            .actions
+        || contract.rollback
+            != if replace {
+                "owned verified restoration"
+            } else {
+                "owned verified removal"
+            }
+        || required_actions
             .iter()
-            .any(|action| action == "artifact_create")
+            .any(|action| !contract.actions.iter().any(|approved| approved == action))
     {
         return Err(CoreError::new(
             "permission_denied",
@@ -71,11 +89,13 @@ fn snapshot(tx: &Transaction<'_>, mission: &str) -> CoreResult<Snapshot> {
         if pin.scope != contract.scope
             || digest != pin.digest
             || store::digest(&skill)? != digest
-            || !skill.tools.iter().any(|tool| tool == "artifact_create")
-            || !skill
-                .permissions
-                .iter()
-                .any(|permission| permission == "artifact_create")
+            || required_actions.iter().any(|action| {
+                !skill.tools.iter().any(|tool| tool == action)
+                    || !skill
+                        .permissions
+                        .iter()
+                        .any(|permission| permission == action)
+            })
         {
             return Err(CoreError::new(
                 "permission_denied",
@@ -128,11 +148,34 @@ fn original_check(
     Ok(check)
 }
 
-fn create(artifact: &CandidateArtifact) -> ToolOperation {
-    ToolOperation::Create {
-        path: artifact.path.clone(),
-        content: artifact.content.clone(),
+fn operation(contract: &MissionContract, artifact: &CandidateArtifact) -> ToolOperation {
+    let path = artifact.path.clone();
+    let content = artifact.content.clone();
+    if contract.artifact_previous_digests.contains_key(&path) {
+        ToolOperation::Replace { path, content }
+    } else {
+        ToolOperation::Create { path, content }
     }
+}
+
+fn verify_target(
+    broker: &mut tools::Broker,
+    prior: Option<&git_workspace::PreviousArtifact>,
+) -> CoreResult<()> {
+    let ready = match prior {
+        Some(prior) => {
+            let (identity, bytes) = broker.replacement_snapshot()?;
+            identity == prior.identity && bytes == prior.content.as_bytes()
+        }
+        None => broker.create_is_absent()?,
+    };
+    if !ready {
+        return Err(CoreError::new(
+            "artifact_conflict",
+            "An integration target changed before publication",
+        ));
+    }
+    Ok(())
 }
 
 fn read(artifact: &CandidateArtifact) -> ToolOperation {
@@ -162,10 +205,11 @@ pub(crate) fn bind_approval(
         |row| row.get(0),
     )?;
     let contract: MissionContract = serde_json::from_str(&raw)?;
-    let Some(policy) = contract.execution else {
+    let Some(policy) = &contract.execution else {
         return Ok(());
     };
     if cfg!(windows) {
+        git_workspace::bind(tx, mission, workspace, state, &contract)?;
         let path = &policy
             .artifacts
             .first()
@@ -184,21 +228,6 @@ pub(crate) fn bind_approval(
     Ok(())
 }
 
-fn require_non_git(workspace: &Path) -> CoreResult<()> {
-    for ancestor in workspace.ancestors() {
-        match std::fs::symlink_metadata(ancestor.join(".git")) {
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            _ => {
-                return Err(CoreError::new(
-                    "workspace_unsupported",
-                    "Automatic integration requires a non-Git workspace",
-                ));
-            }
-        }
-    }
-    Ok(())
-}
-
 fn preflight(
     tx: &Transaction<'_>,
     mission: &str,
@@ -206,7 +235,7 @@ fn preflight(
     state: &Path,
 ) -> CoreResult<String> {
     let data = snapshot(tx, mission)?;
-    require_non_git(workspace)?;
+    let _base = git_workspace::guard(tx, mission, workspace, state)?;
     let expected: Option<String> = tx
         .query_row(
             "SELECT identity FROM mission_workspace_approvals WHERE mission_id=?1",
@@ -225,7 +254,8 @@ fn preflight(
     }
     let mut root_identity = None;
     for artifact in &data.artifacts {
-        let broker = tools::prepare(workspace, state, &create(artifact))?;
+        let prior = git_workspace::original_for(tx, mission, &data.contract, &artifact.path)?;
+        let mut broker = tools::prepare(workspace, state, &operation(&data.contract, artifact))?;
         let current = broker.root_identity()?;
         if current != expected
             || root_identity
@@ -238,12 +268,13 @@ fn preflight(
             ));
         }
         root_identity = Some(current);
-        if reserve_conflict(tx, &broker.target(), None)? || !broker.create_is_absent()? {
+        if reserve_conflict(tx, &broker.target(), None)? {
             return Err(CoreError::new(
                 "artifact_conflict",
-                "An integration target is already occupied or reserved",
+                "An integration target is already reserved",
             ));
         }
+        verify_target(&mut broker, prior.as_ref())?;
     }
     root_identity.ok_or_else(|| CoreError::invalid("Candidate contains no artifacts"))
 }
@@ -274,7 +305,9 @@ pub(crate) fn advance(
                 "INSERT INTO mission_integrations(mission_id,status) VALUES(?1,'publishing')",
                 [&mission],
             )?;
-            match preflight(&tx, &mission, workspace, &state) {
+            let result = crate::projects::for_mission(&tx, &mission, workspace, &state)
+                .and_then(|project| preflight(&tx, &mission, project.path(), &state));
+            match result {
                 Ok(identity) => {
                     tx.execute(
                         "UPDATE mission_integrations SET workspace_identity=?2 WHERE mission_id=?1",
@@ -306,6 +339,15 @@ pub(crate) fn advance(
         tx.commit()?;
         return Ok(None);
     }
+    let project = match crate::projects::for_mission(&tx, &mission, workspace, &state) {
+        Ok(project) => project,
+        Err(error) => {
+            transition(&tx, &mission, "recovery_required", Some(&error.code))?;
+            tx.commit()?;
+            return Ok(None);
+        }
+    };
+    let workspace = project.path();
     tx.commit()?;
     match status.as_str() {
         "publishing" => publish_one(store, workspace, &state, &mission)?,
@@ -346,10 +388,13 @@ fn known_failure(tx: &Transaction<'_>, mission: &str, error: &str) -> CoreResult
 
 fn publish_one(store: &mut Store, workspace: &Path, state: &Path, mission: &str) -> CoreResult<()> {
     let tx = store.transaction()?;
-    if let Err(error) = require_non_git(workspace) {
-        transition(&tx, mission, "recovery_required", Some(&error.code))?;
-        return Ok(tx.commit()?);
-    }
+    let base = match git_workspace::guard(&tx, mission, workspace, state) {
+        Ok(base) => base,
+        Err(error) => {
+            transition(&tx, mission, "recovery_required", Some(&error.code))?;
+            return Ok(tx.commit()?);
+        }
+    };
     let data = snapshot(&tx, mission)?;
     let position: u32 = tx.query_row(
         "SELECT COUNT(*) FROM mission_integration_files WHERE mission_id=?1",
@@ -361,8 +406,9 @@ fn publish_one(store: &mut Store, workspace: &Path, state: &Path, mission: &str)
         return Ok(tx.commit()?);
     }
     let artifact = &data.artifacts[position as usize];
-    let operation = create(artifact);
-    let broker = match tools::prepare(workspace, state, &operation) {
+    let operation = operation(&data.contract, artifact);
+    let prior = git_workspace::original_for(&tx, mission, &data.contract, &artifact.path)?;
+    let mut broker = match tools::prepare(workspace, state, &operation) {
         Ok(broker) => broker,
         Err(error) => {
             known_failure(&tx, mission, &error.code)?;
@@ -374,7 +420,8 @@ fn publish_one(store: &mut Store, workspace: &Path, state: &Path, mission: &str)
         return Ok(tx.commit()?);
     }
     let target = broker.target();
-    if reserve_conflict(&tx, &target, None)? || !broker.create_is_absent()? {
+    if reserve_conflict(&tx, &target, None)? || verify_target(&mut broker, prior.as_ref()).is_err()
+    {
         known_failure(&tx, mission, "artifact_conflict")?;
         return Ok(tx.commit()?);
     }
@@ -420,7 +467,11 @@ fn publish_one(store: &mut Store, workspace: &Path, state: &Path, mission: &str)
         )?;
         return Ok(tx.commit()?);
     }
-    if let Err(error) = require_non_git(workspace) {
+    if let Err(error) = if base.is_some() {
+        Ok(())
+    } else {
+        git_workspace::guard(&tx, mission, workspace, state).map(|_| ())
+    } {
         tx.execute(
             "UPDATE tool_intents SET status='aborted' WHERE request_id=?1",
             [&intent],
@@ -432,7 +483,15 @@ fn publish_one(store: &mut Store, workspace: &Path, state: &Path, mission: &str)
         known_failure(&tx, mission, &error.code)?;
         return Ok(tx.commit()?);
     }
-    match broker.create_owned(artifact.content.as_bytes()) {
+    let outcome = if prior.is_some() {
+        verify_target(&mut broker, prior.as_ref()).and_then(|()| {
+            broker.replacement_write(artifact.content.as_bytes())?;
+            broker.replacement_snapshot()
+        })
+    } else {
+        broker.create_owned(artifact.content.as_bytes())
+    };
+    match outcome {
         Ok((identity, bytes)) if bytes == artifact.content.as_bytes() => {
             #[cfg(feature = "test-fault-injection")]
             if std::env::var_os("SYNAPSE_TEST_CRASH_AFTER_MISSION_PUBLISH_WRITE").is_some() {
@@ -444,7 +503,7 @@ fn publish_one(store: &mut Store, workspace: &Path, state: &Path, mission: &str)
                 &tx,
                 "tool_effect",
                 json!({"request_id":intent,"mission_id":mission,
-                "action":"artifact_create","target":target,"sha256":content_digest}),
+                "action":tools::details(&operation).0,"target":target,"sha256":content_digest}),
             )?;
         }
         Err(error) if error.code == "artifact_conflict" => {
@@ -483,7 +542,15 @@ fn verified_journal(
         if data
             .artifacts
             .get(entry.position as usize)
-            .is_none_or(|artifact| artifact.path != entry.path || artifact.content != entry.content)
+            .is_none_or(|artifact| {
+                artifact.path != entry.path
+                    || artifact.content != entry.content
+                    || entry.replacement
+                        != data
+                            .contract
+                            .artifact_previous_digests
+                            .contains_key(&artifact.path)
+            })
         {
             return Err(CoreError::new(
                 "journal_mismatch",
@@ -553,6 +620,14 @@ fn postcheck(
     busy: bool,
 ) -> CoreResult<Option<runner::Launch>> {
     let tx = store.transaction()?;
+    let _base = match git_workspace::guard(&tx, mission, workspace, state) {
+        Ok(base) => base,
+        Err(error) => {
+            transition(&tx, mission, "recovery_required", Some(&error.code))?;
+            tx.commit()?;
+            return Ok(None);
+        }
+    };
     let data = snapshot(&tx, mission)?;
     let (mut index, check_id, error): (u32, Option<String>, Option<String>) = tx.query_row(
         "SELECT post_index,check_id,error FROM mission_integrations WHERE mission_id=?1",
@@ -671,10 +746,13 @@ fn rollback_one(
     mission: &str,
 ) -> CoreResult<()> {
     let tx = store.transaction()?;
-    if let Err(error) = require_non_git(workspace) {
-        transition(&tx, mission, "recovery_required", Some(&error.code))?;
-        return Ok(tx.commit()?);
-    }
+    let base = match git_workspace::guard(&tx, mission, workspace, state) {
+        Ok(base) => base,
+        Err(error) => {
+            transition(&tx, mission, "recovery_required", Some(&error.code))?;
+            return Ok(tx.commit()?);
+        }
+    };
     let data = snapshot(&tx, mission)?;
     let entries = match verified_journal(&tx, mission, &data) {
         Ok(entries) => entries,
@@ -718,7 +796,8 @@ fn rollback_one(
         return Ok(tx.commit()?);
     };
     let intent = entry.intent_id;
-    let broker = match tools::prepare(workspace, state, &read(artifact)) {
+    let prior = git_workspace::original_for(&tx, mission, &data.contract, &artifact.path)?;
+    let mut broker = match tools::prepare(workspace, state, &operation(&data.contract, artifact)) {
         Ok(broker) => broker,
         Err(_) => {
             transition(
@@ -770,15 +849,35 @@ fn rollback_one(
         )?;
         return Ok(tx.commit()?);
     }
-    if let Err(error) = require_non_git(workspace) {
-        transition(&tx, mission, "recovery_required", Some(&error.code))?;
-        return Ok(tx.commit()?);
+    if base.is_none() {
+        if let Err(error) = git_workspace::guard(&tx, mission, workspace, state) {
+            transition(&tx, mission, "recovery_required", Some(&error.code))?;
+            return Ok(tx.commit()?);
+        }
     }
     #[cfg(feature = "test-fault-injection")]
     if std::env::var_os("SYNAPSE_TEST_CRASH_BEFORE_MISSION_ROLLBACK_DELETE").is_some() {
         std::process::exit(91);
     }
-    match broker.delete_owned(&identity, artifact.content.as_bytes()) {
+    let outcome = if let Some(prior) = prior {
+        broker
+            .replacement_snapshot()
+            .and_then(|(current_identity, current_bytes)| {
+                if current_identity != identity
+                    || current_identity != prior.identity
+                    || current_bytes != artifact.content.as_bytes()
+                {
+                    return Err(CoreError::new(
+                        "ownership_conflict",
+                        "Published replacement changed before restoration",
+                    ));
+                }
+                broker.replacement_write(prior.content.as_bytes())
+            })
+    } else {
+        broker.delete_owned(&identity, artifact.content.as_bytes())
+    };
+    match outcome {
         Ok(()) => {
             #[cfg(feature = "test-fault-injection")]
             if std::env::var_os("SYNAPSE_TEST_CRASH_AFTER_MISSION_ROLLBACK_DELETE").is_some() {
@@ -795,7 +894,11 @@ fn rollback_one(
             )?;
             store::event(
                 &tx,
-                "mission_artifact_removed",
+                if entry.replacement {
+                    "mission_artifact_restored"
+                } else {
+                    "mission_artifact_removed"
+                },
                 json!({"mission_id":mission,"intent_id":intent,"path":artifact.path}),
             )?;
         }
@@ -845,7 +948,7 @@ pub(crate) fn resolve(
             "Another integration is active",
         ));
     }
-    require_non_git(workspace)?;
+    let _base = git_workspace::guard(tx, mission, workspace, state)?;
     let data = snapshot(tx, mission)?;
     let recipe_count = data.contract.execution.as_ref().unwrap().checks.len() as u32;
     match mode {
@@ -916,11 +1019,26 @@ pub(crate) fn resolve(
                         "Another intent reserves this target",
                     ));
                 }
+                let prior =
+                    git_workspace::original_for(tx, mission, &data.contract, &artifact.path)?;
                 if broker.create_is_absent()? {
+                    if prior.is_some() {
+                        return Err(CoreError::new(
+                            "recovery_evidence_insufficient",
+                            "A tracked replacement target is absent",
+                        ));
+                    }
                     absent.push(intent);
                     continue;
                 }
                 let observed = broker.read_owned_guarded()?;
+                if prior.as_ref().is_some_and(|prior| {
+                    observed.identity == prior.identity
+                        && observed.bytes == prior.content.as_bytes()
+                }) {
+                    absent.push(intent);
+                    continue;
+                }
                 if !matches!(entry.journal_status.as_str(), "confirmed" | "removing")
                     || entry.identity.as_deref() != Some(observed.identity.as_str())
                     || observed.bytes != artifact.content.as_bytes()
@@ -943,7 +1061,7 @@ pub(crate) fn resolve(
                 )?;
                 store::event(
                     tx,
-                    "mission_recovery_absence_verified",
+                    "mission_recovery_reversal_verified",
                     json!({"mission_id":mission,"intent_id":intent}),
                 )?;
             }

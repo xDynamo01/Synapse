@@ -975,3 +975,310 @@ fn wait_recovery_exit(session: &mut Session, expected: i32) {
         thread::sleep(Duration::from_millis(50));
     }
 }
+
+#[test]
+#[ignore = "requires the dedicated Windows Python runtime configured by the owner"]
+fn domain_skills_bind_verified_native_deliverables() {
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    assert!(std::env::var_os("SYNAPSE_CHECK_PYTHON_EXECUTABLE").is_some());
+    let root = TempDir::new().unwrap();
+    let fixture = Fixture::new(false);
+    let provider = fixture.marker.parent().unwrap();
+    let mut session = Session::new(&root, None);
+    register(&mut session, &fixture.address);
+    let domains = [
+        (
+            "game-level",
+            "level.json",
+            "game_level_validate",
+            "Represent the tile map as a JSON object with dimensions and tile IDs.",
+            "{\"width\":2,\"height\":2,\"tiles\":[[0,1],[1,0]]}",
+        ),
+        (
+            "research-table",
+            "measurements.csv",
+            "csv_validate",
+            "Use a header, a sample identifier and an explicit measurement unit.",
+            "sample_id,value,unit\nA,2.5,mm\nB,3.0,mm\n",
+        ),
+        (
+            "document",
+            "brief.md",
+            "markdown_validate",
+            "Start with a Markdown title and state the purpose in the body.",
+            "# Brief\n\nThis document describes the project scope and acceptance criteria.\n",
+        ),
+        (
+            "design-icon",
+            "icon.svg",
+            "svg_validate",
+            "Use a local viewBox and passive SVG geometry only.",
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 32 32\"><rect x=\"1\" y=\"1\" width=\"30\" height=\"30\" fill=\"#123456\"/></svg>",
+        ),
+        (
+            "media-captions",
+            "captions.vtt",
+            "webvtt_validate",
+            "Write nonempty subtitle cues in chronological order.",
+            "WEBVTT\n\n00:00:00.000 --> 00:00:01.000\nOpening\n\n00:00:01.200 --> 00:00:03.000\nNext scene\n",
+        ),
+        (
+            "python-build",
+            "module.py",
+            "python_compile",
+            "Compile the Python source without executing it.",
+            "def add(a, b):\n    return a + b\n",
+        ),
+        (
+            "python-dependencies",
+            "pyproject.toml",
+            "python_manifest_validate",
+            "Use exact dependency pins in the Python project manifest.",
+            "[project]\nname = 'sample'\nversion = '1.0.0'\ndependencies = ['example==1.2.3']\n",
+        ),
+    ];
+    for (domain, path, kind, instructions, content) in domains {
+        let scope = format!("project:{domain}");
+        let directory = root.path().join(domain);
+        std::fs::create_dir(&directory).unwrap();
+        let binding = session.call(req(
+            &format!("bind-{domain}"),
+            json!({"type":"project_register","scope":scope,"root":directory}),
+        ));
+        assert_eq!(binding["ok"], true, "{binding}");
+        let skill = session.call(req(&format!("skill-{domain}"), json!({"type":"skill_register","skill":{
+            "id":domain,"scope":scope,"version":"1.0.0","provenance":"stage 12 fixture","tools":[],"permissions":[],"instructions":instructions
+        }})));
+        assert_eq!(skill["ok"], true, "{skill}");
+        let planned = json!({"summary":format!("Validate {domain}"),"artifacts":[{"path":path,"purpose":instructions}],"checks":[{"kind":kind,"entrypoint":path}]});
+        std::fs::write(provider.join("mission-response"), planned.to_string()).unwrap();
+        let plan_id = format!("plan-{domain}");
+        let mut plan = plan_command(domain);
+        plan["scope"] = json!(scope);
+        plan["skill"] =
+            json!({"scope":scope,"id":domain,"version":"1.0.0","digest":skill["result"]["digest"]});
+        let launched = session.call(req(&plan_id, plan));
+        assert_eq!(launched["ok"], true, "{launched}");
+        let job = poll(&mut session, &plan_id);
+        assert_eq!(job["status"], "succeeded", "{job}");
+        let posted = std::fs::read_to_string(&fixture.marker).unwrap();
+        assert!(
+            posted.contains(instructions),
+            "Skill instructions did not reach the planner"
+        );
+        let proposal = session.call(req(
+            &format!("proposal-{domain}"),
+            json!({"type":"mission_get","mission_id":domain}),
+        ));
+        assert_eq!(proposal["ok"], true, "{proposal}");
+        let approved = session.call(req(&format!("approve-{domain}"), json!({"type":"mission_approve","mission_id":domain,"contract_digest":proposal["result"]["contract_digest"]})));
+        assert_eq!(approved["ok"], true, "{approved}");
+        let check_id = format!("check-{domain}");
+        let check = session.call(req(&check_id, json!({"type":"project_check_start","mission_id":domain,"check_index":0,"artifacts":[{"path":path,"content":content}]})));
+        assert_eq!(check["ok"], true, "{check}");
+        let completed = wait_check(&mut session, &check_id, |result| {
+            result["cleanup"] == "complete"
+        });
+        assert_eq!(completed["status"], "succeeded", "{completed}");
+        assert_eq!(completed["receipt"]["token"]["lpac"], true, "{completed}");
+        assert_eq!(
+            completed["receipt"]["phases"][0]["phase"],
+            if kind == "python_compile" {
+                "compile"
+            } else {
+                "validate"
+            },
+            "{completed}"
+        );
+        assert!(
+            !directory.join(path).exists(),
+            "Validation wrote to the project directory"
+        );
+    }
+}
+
+#[cfg(feature = "test-fault-injection")]
+#[test]
+#[ignore = "requires the dedicated Windows Python runtime and Git"]
+fn git_tracked_edit_detects_changes_and_restores_verified_original() {
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let root = TempDir::new().unwrap();
+    let workspace = root.path().join("workspace");
+    std::fs::create_dir(&workspace).unwrap();
+    let git = |args: &[&str]| {
+        let result = Command::new("git")
+            .current_dir(&workspace)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "NUL")
+            .args(["-c", "core.hooksPath=NUL"])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+    };
+    let path = workspace.join("test_project.py");
+    let note = workspace.join("notes.txt");
+    let before = "import unittest\nclass Test(unittest.TestCase):\n def test_ok(self): self.assertEqual(1,1)\n";
+    let after = "import unittest\nclass Test(unittest.TestCase):\n def test_ok(self): self.assertEqual(2,2)\n";
+    git(&["init", "--quiet", "--object-format=sha1"]);
+    std::fs::write(&path, before).unwrap();
+    std::fs::write(&note, "old note").unwrap();
+    git(&["add", "--", "test_project.py", "notes.txt"]);
+    git(&[
+        "-c",
+        "user.name=Synapse QA",
+        "-c",
+        "user.email=qa@example.invalid",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "--quiet",
+        "-m",
+        "Baseline",
+    ]);
+    let index = std::fs::read(workspace.join(".git/index")).unwrap();
+    let head = std::fs::read(workspace.join(".git/HEAD")).unwrap();
+
+    let fixture = Fixture::new(false);
+    let provider = fixture.marker.parent().unwrap();
+    for (name, body) in [
+        ("mission-response", valid_plan()),
+        (
+            "mission_generate-response",
+            json!({"artifacts":[{"path":"test_project.py","content":after}]}),
+        ),
+        (
+            "mission_review-response",
+            json!({"approved":true,"reason":"fixture"}),
+        ),
+    ] {
+        std::fs::write(provider.join(name), body.to_string()).unwrap();
+    }
+    let mut session = Session::with_env(
+        &root,
+        None,
+        &[("SYNAPSE_TEST_CRASH_BEFORE_MISSION_FINALIZE", "1")],
+    );
+    register(&mut session, &fixture.address);
+    let project = session.call(req(
+        "bind",
+        json!({"type":"project_register","scope":"project:a","root":workspace}),
+    ));
+    assert_eq!(project["ok"], true, "{project}");
+    let plan = |id: &str| {
+        let mut command = plan_command(id);
+        command["git_edit_paths"] = json!(["test_project.py"]);
+        command
+    };
+    std::fs::write(&path, "user edit").unwrap();
+    let dirty = session.call(req("dirty", plan("dirty")));
+    assert_eq!(dirty["error"]["code"], "git_target_conflict", "{dirty}");
+    std::fs::write(&path, before).unwrap();
+    let mut expanded = valid_plan();
+    expanded["artifacts"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"path":"extra.txt","purpose":"Unauthorized extra output"}));
+    std::fs::write(provider.join("mission-response"), expanded.to_string()).unwrap();
+    let start = session.call(req("expanded-plan", plan("expanded")));
+    assert_eq!(start["ok"], true, "{start}");
+    assert_eq!(
+        poll(&mut session, "expanded-plan")["error"],
+        "invalid_mission_plan"
+    );
+    std::fs::write(provider.join("mission-response"), valid_plan().to_string()).unwrap();
+    let start = session.call(req("plan", plan("git-edit")));
+    assert_eq!(start["ok"], true, "{start}");
+    assert_eq!(poll(&mut session, "plan")["status"], "succeeded");
+    let proposal = session.call(req(
+        "proposal",
+        json!({"type":"mission_get","mission_id":"git-edit"}),
+    ));
+    assert_eq!(
+        proposal["result"]["contract"]["actions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|action| action == "artifact_replace"),
+        true,
+        "{proposal}"
+    );
+    let approval = session.call(req("approve", json!({"type":"mission_approve","mission_id":"git-edit","contract_digest":proposal["result"]["contract_digest"]})));
+    assert_eq!(approval["ok"], true, "{approval}");
+    std::fs::write(&path, "concurrent target edit").unwrap();
+    let execute = json!({"type":"mission_execute","mission_id":"git-edit"});
+    let refused = session.call(req("conflict", execute.clone()));
+    assert_eq!(refused["error"]["code"], "git_base_changed", "{refused}");
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "concurrent target edit"
+    );
+    std::fs::write(&path, before).unwrap();
+    std::fs::write(&note, "concurrent unrelated note").unwrap();
+    git(&["add", "--", "notes.txt"]);
+    let changed_index = std::fs::read(workspace.join(".git/index")).unwrap();
+    let refused = session.call(req("index-conflict", execute.clone()));
+    assert_eq!(refused["error"]["code"], "git_base_changed", "{refused}");
+    assert_eq!(
+        std::fs::read(workspace.join(".git/index")).unwrap(),
+        changed_index
+    );
+    std::fs::write(workspace.join(".git/index"), &index).unwrap();
+    let run = session.call(req("execute", execute));
+    assert_eq!(run["ok"], true, "{run}");
+    wait_recovery_exit(&mut session, 89);
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), after);
+    assert_eq!(
+        std::fs::read_to_string(&note).unwrap(),
+        "concurrent unrelated note"
+    );
+    session = Session::new(&root, None);
+    let inspection = session.call(req(
+        "inspect",
+        json!({"type":"mission_recovery_inspect","mission_id":"git-edit"}),
+    ));
+    assert_eq!(inspection["ok"], true, "{inspection}");
+    std::fs::write(&path, "postpublication user edit").unwrap();
+    let blocked = session.call(req(
+        "rollback-conflict",
+        json!({"type":"mission_recovery_resolve","mission_id":"git-edit","mode":"rollback"}),
+    ));
+    assert_eq!(
+        blocked["error"]["code"], "recovery_evidence_insufficient",
+        "{blocked}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "postpublication user edit"
+    );
+    std::fs::write(&path, after).unwrap();
+    let rollback = session.call(req(
+        "rollback",
+        json!({"type":"mission_recovery_resolve","mission_id":"git-edit","mode":"rollback"}),
+    ));
+    assert_eq!(rollback["ok"], true, "{rollback}");
+    let began = Instant::now();
+    for i in 0.. {
+        let run = session.call(req(
+            &format!("status-{i}"),
+            json!({"type":"mission_run_get","mission_id":"git-edit"}),
+        ));
+        assert_eq!(run["ok"], true, "{run}");
+        if run["result"]["status"] == "rolled_back" {
+            break;
+        }
+        assert!(began.elapsed() < Duration::from_secs(15), "{run}");
+        thread::sleep(Duration::from_millis(30));
+    }
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
+    assert_eq!(
+        std::fs::read_to_string(&note).unwrap(),
+        "concurrent unrelated note"
+    );
+    assert_eq!(std::fs::read(workspace.join(".git/index")).unwrap(), index);
+    assert_eq!(std::fs::read(workspace.join(".git/HEAD")).unwrap(), head);
+}

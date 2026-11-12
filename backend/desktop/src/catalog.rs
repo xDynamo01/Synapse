@@ -5,6 +5,8 @@ use std::collections::{BTreeMap, BTreeSet};
 pub struct Catalog {
     pub chats: BTreeMap<String, String>,
     pub missions: BTreeSet<String>,
+    pub projects: BTreeSet<String>,
+    pub skills: BTreeMap<String, Vec<Value>>,
     memory: BTreeMap<String, BTreeSet<String>>,
 }
 
@@ -18,6 +20,21 @@ impl Catalog {
             return;
         };
         match event["kind"].as_str() {
+            Some("workspace_project_registered") => {
+                self.projects.insert(scope.into());
+            }
+            Some("skill_registered") => {
+                if let (Some(id), Some(version), Some(digest)) = (
+                    payload["skill_id"].as_str(),
+                    payload["version"].as_str(),
+                    payload["digest"].as_str(),
+                ) {
+                    self.skills
+                        .entry(scope.into())
+                        .or_default()
+                        .push(json!({"scope":scope,"id":id,"version":version,"digest":digest}));
+                }
+            }
             Some("chat_created") => {
                 if let Some(id) = payload["chat_id"].as_str() {
                     self.chats.insert(id.into(), scope.into());

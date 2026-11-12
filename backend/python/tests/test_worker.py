@@ -124,17 +124,22 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual((artifacts['minItems'], artifacts['maxItems']), (1, 16))
         self.assertFalse(artifacts['items']['additionalProperties'])
         pattern = artifacts['items']['properties']['path']['pattern']
-        for good in ['file.py', 'hello-world.rs', "user's test.txt", 'config.toml']:
+        for good in ['file.py', 'hello-world.rs', "user's test.txt", 'config.toml', 'level.json', 'survey.csv', 'icon.svg', 'captions.vtt']:
             self.assertIsNotNone(re.fullmatch(pattern, good), good)
         for bad in ['CON.py', 'com1.foo.py', '../x.py', r'dir\\x.py', 'file.exe', 'x.py ', 'x.py.', 'café.py', '😀.py', 'CON .py', 'x?.py', '.py']:
             self.assertIsNone(re.fullmatch(pattern, bad), bad)
         checks = body['properties']['checks']
         self.assertEqual((checks['minItems'], checks['maxItems']), (1, 8))
-        for recipe in checks['items']['anyOf']:
+        expected = {'python_unittest': 'py', 'rust_test': 'rs', 'python_compile': 'py',
+                    'json_validate': 'json', 'game_level_validate': 'json', 'toml_validate': 'toml', 'python_manifest_validate': 'toml', 'csv_validate': 'csv',
+                    'svg_validate': 'svg', 'markdown_validate': 'md', 'webvtt_validate': 'vtt'}
+        recipes = checks['items']['anyOf']
+        self.assertEqual({recipe['properties']['kind']['enum'][0] for recipe in recipes}, set(expected))
+        for recipe in recipes:
             self.assertFalse(recipe['additionalProperties'])
             fields = recipe['properties']
             kind = fields['kind']['enum'][0]
-            suffix = 'py' if kind == 'python_unittest' else 'rs'
+            suffix = expected[kind]
             self.assertIsNotNone(re.fullmatch(fields['entrypoint']['pattern'], 'test.' + suffix))
             self.assertIsNone(re.fullmatch(fields['entrypoint']['pattern'], 'bad.' + ('rs' if suffix == 'py' else 'py')))
         self.assertNotIn('response_format', request)

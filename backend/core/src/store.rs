@@ -41,7 +41,7 @@ impl Store {
         connection.pragma_update(None, "synchronous", "FULL")?;
         let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let version: u32 = tx.pragma_query_value(None, "user_version", |r| r.get(0))?;
-        if version > 13 {
+        if version > 14 {
             return Err(CoreError::new(
                 "unsupported_storage_version",
                 "Database schema is newer than this Core",
@@ -161,6 +161,31 @@ PRAGMA user_version=12;")?;
         }
         if version < 13 {
             tx.execute_batch("CREATE TABLE workspace_projects(scope TEXT PRIMARY KEY,root TEXT NOT NULL UNIQUE,identity TEXT NOT NULL UNIQUE); PRAGMA user_version=13;")?;
+        }
+        if version < 14 {
+            tx.execute_batch(
+                "
+CREATE TABLE mission_project_bindings(
+    mission_id TEXT PRIMARY KEY,
+    scope TEXT NOT NULL REFERENCES workspace_projects(scope),
+    root TEXT NOT NULL,
+    identity TEXT NOT NULL
+);
+CREATE TABLE mission_git_bases(
+    mission_id TEXT PRIMARY KEY REFERENCES missions(id),
+    head TEXT NOT NULL,
+    index_digest TEXT NOT NULL
+);
+CREATE TABLE mission_git_edit_plans(
+    mission_id TEXT PRIMARY KEY REFERENCES mission_plans(mission_id),
+    root TEXT NOT NULL,
+    root_identity TEXT NOT NULL,
+    head TEXT NOT NULL,
+    index_digest TEXT NOT NULL,
+    artifacts TEXT NOT NULL
+);
+PRAGMA user_version=14;",
+            )?;
         }
         tx.execute("UPDATE learning_jobs SET status=CASE WHEN attempts<3 THEN 'queued' ELSE 'failed' END,error='worker_interrupted' WHERE status='running'", [])?;
         let recorded: String = tx.query_row(
