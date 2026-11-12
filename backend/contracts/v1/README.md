@@ -21,6 +21,8 @@ The available command shapes are:
 | Type | Additional fields |
 | --- | --- |
 | `health` | none |
+| `project_register` | `scope`, absolute `root` directory |
+| `project_get` | `scope`; verifies the registered directory |
 | `events_read` | `after` (cursor), `limit` (1–200) |
 | `chat_create` | `chat_id`, `title`, `scope` |
 | `chat_get` | `chat_id`; optional `after` (message sequence cursor, default 0), `limit` (1–100, default 50) |
@@ -54,6 +56,15 @@ The available command shapes are:
 | `mission_recovery_resolve` | `mission_id`, `mode` (`finalize` or `rollback`); schedules owner resolution |
 | `tool_execute` | `mission_id`, `operation`: `list`/`read` with `path`, `create`/`replace` with `path` and UTF-8 `content` |
 | `tool_recovery` | `intent_id`, `mode` (`inspect`, `finalize`, `restore`, `safe_abandon`); optional `expected_current_hash` for restore |
+
+On Windows, `project_register` binds an exact project scope to the canonical
+path and physical identity of a local NTFS directory. A directory and its
+identity belong to at most one scope. Re-registering the same binding is safe.
+`project_get` reopens the recorded directory and returns `project_root_changed`
+if the directory cannot be verified or was replaced. Use a fresh request ID
+for a new observation. Both commands return `scope` and `root`. The registry
+uses storage schema 13. It records project bindings for selection and does
+not change the existing mission routing or the explicit memory reference gate.
 
 Scopes use exact `project:<id>` strings. Memory reads require an explicit `context_reference` equal to the stored scope. `memory_put` requires a current `expected_revision` (zero for a new key), `kind` of `constraint`, `decision`, `fact`, `reproduced_issue`, `root_cause`, or `recovery`, `status` of `active`, `resolved`, or `superseded`, and a provenance object containing `source_type`, `source_id`, and `evidence`. Each update creates a new revision.
 

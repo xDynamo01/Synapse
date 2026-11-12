@@ -14,6 +14,7 @@ mod mission_recovery;
 mod mission_run;
 mod missions;
 mod planner;
+mod projects;
 mod registry;
 mod runner;
 mod skills;

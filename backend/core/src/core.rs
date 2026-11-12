@@ -1146,6 +1146,10 @@ fn dispatch_tx(
             )
         }
         Command::EventsRead { after, limit } => store::events_read(tx, *after, *limit),
+        Command::ProjectRegister { scope, root } => {
+            crate::projects::register(tx, scope, root, state_dir)
+        }
+        Command::ProjectGet { scope } => crate::projects::get(tx, scope, state_dir),
         Command::ChatCreate {
             chat_id,
             title,

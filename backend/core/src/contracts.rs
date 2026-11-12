@@ -17,6 +17,13 @@ pub struct Request {
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Command {
     Health,
+    ProjectRegister {
+        scope: String,
+        root: String,
+    },
+    ProjectGet {
+        scope: String,
+    },
     EventsRead {
         after: u64,
         limit: u32,

@@ -1564,3 +1564,74 @@ fn newer_storage_and_different_workspace_are_rejected_at_startup() {
     assert!(!newer.status.success());
     assert!(String::from_utf8_lossy(&newer.stderr).contains("unsupported_storage_version"));
 }
+
+#[cfg(windows)]
+#[test]
+fn project_bindings_survive_restart_and_detect_substitution() {
+    let root = TempDir::new().unwrap();
+    let alpha = root.path().join("alpha");
+    let beta = root.path().join("beta");
+    std::fs::create_dir(&alpha).unwrap();
+    std::fs::create_dir(&beta).unwrap();
+    let register = |id, scope, dir: &std::path::Path| {
+        req(
+            id,
+            json!({"type":"project_register","scope":scope,"root":dir}),
+        )
+    };
+    let get = |id, scope| req(id, json!({"type":"project_get","scope":scope}));
+    let initial = run(
+        &root,
+        &[
+            register("alpha", "project:alpha", &alpha),
+            register("beta", "project:beta", &beta),
+            register("alias", "project:alias", &alpha),
+            register("scope-conflict", "project:alpha", &beta),
+            req(
+                "memory",
+                json!({"type":"memory_put","scope":"project:alpha","key":"decision","kind":"decision","content":"Alpha only","expected_revision":0,"provenance":{"source_type":"human","source_id":"test","evidence":"Test scope"},"status":"active"}),
+            ),
+        ],
+    );
+    ok(&initial[0]);
+    ok(&initial[1]);
+    error(&initial[2], "project_binding_conflict");
+    error(&initial[3], "project_binding_conflict");
+    ok(&initial[4]);
+
+    let reopened = run(
+        &root,
+        &[
+            get("get-beta", "project:beta"),
+            get("get-alpha", "project:alpha"),
+            req(
+                "cross-scope",
+                json!({"type":"memory_get","scope":"project:alpha","context_reference":"project:beta","key":"decision"}),
+            ),
+            req(
+                "exact-scope",
+                json!({"type":"memory_get","scope":"project:alpha","context_reference":"project:alpha","key":"decision"}),
+            ),
+        ],
+    );
+    assert_eq!(reopened[0]["result"], initial[1]["result"]);
+    assert_eq!(reopened[1]["result"], initial[0]["result"]);
+    assert_eq!(reopened[2]["ok"], false);
+    ok(&reopened[3]);
+
+    std::fs::rename(&alpha, root.path().join("original-alpha")).unwrap();
+    std::fs::create_dir(&alpha).unwrap();
+    let changed = run(
+        &root,
+        &[
+            get("changed", "project:alpha"),
+            register("rebind", "project:alpha", &alpha),
+            register("claimed-path", "project:new", &alpha),
+            get("still-beta", "project:beta"),
+        ],
+    );
+    error(&changed[0], "project_root_changed");
+    error(&changed[1], "project_binding_conflict");
+    error(&changed[2], "project_binding_conflict");
+    assert_eq!(changed[3]["result"], initial[1]["result"]);
+}

@@ -41,7 +41,7 @@ impl Store {
         connection.pragma_update(None, "synchronous", "FULL")?;
         let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let version: u32 = tx.pragma_query_value(None, "user_version", |r| r.get(0))?;
-        if version > 12 {
+        if version > 13 {
             return Err(CoreError::new(
                 "unsupported_storage_version",
                 "Database schema is newer than this Core",
@@ -158,6 +158,9 @@ CREATE TABLE mission_integration_files(
     PRIMARY KEY(mission_id,position)
 );
 PRAGMA user_version=12;")?;
+        }
+        if version < 13 {
+            tx.execute_batch("CREATE TABLE workspace_projects(scope TEXT PRIMARY KEY,root TEXT NOT NULL UNIQUE,identity TEXT NOT NULL UNIQUE); PRAGMA user_version=13;")?;
         }
         tx.execute("UPDATE learning_jobs SET status=CASE WHEN attempts<3 THEN 'queued' ELSE 'failed' END,error='worker_interrupted' WHERE status='running'", [])?;
         let recorded: String = tx.query_row(
