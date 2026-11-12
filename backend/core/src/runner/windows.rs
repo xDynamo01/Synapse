@@ -40,7 +40,7 @@ fn own(h: HANDLE) -> OwnedHandle {
 fn error(stage: &str) -> String {
     format!("{stage}:{}", std::io::Error::last_os_error())
 }
-fn sid_text(sid: PSID) -> Result<String, String> {
+pub(crate) fn sid_text(sid: PSID) -> Result<String, String> {
     let mut output = null_mut();
     if unsafe { ConvertSidToStringSidW(sid, &mut output) } == 0 {
         return Err(error("sid_text"));
@@ -81,7 +81,7 @@ fn process_token(process: HANDLE) -> Result<OwnedHandle, String> {
     Ok(own(handle))
 }
 
-fn owner_sid() -> Result<String, String> {
+pub(crate) fn owner_sid() -> Result<String, String> {
     let owner = process_token(unsafe { GetCurrentProcess() })?;
     let info = token_info(raw(&owner), TokenUser)?;
     let user = unsafe { &*(info.as_ptr().cast::<TOKEN_USER>()) };

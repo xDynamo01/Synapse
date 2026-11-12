@@ -7,6 +7,8 @@ mod conversation;
 mod core;
 mod integration;
 mod learning;
+#[cfg(windows)]
+pub mod local_pipe;
 mod memory;
 mod mission_recovery;
 mod mission_run;

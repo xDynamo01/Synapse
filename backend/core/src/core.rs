@@ -1019,6 +1019,12 @@ impl Core {
         Ok(())
     }
 
+    /// The standalone host can finish already-started jobs without a client.
+    pub fn poll_local_host(&mut self) -> CoreResult<()> {
+        self.drain()?;
+        self.poll_mission()
+    }
+
     pub fn poll_mission(&mut self) -> CoreResult<()> {
         self.poll_project_check()?;
         if self.active.as_ref().is_some_and(|active| {

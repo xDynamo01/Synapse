@@ -9,6 +9,8 @@ mod python;
 mod rust;
 #[cfg(windows)]
 mod windows;
+#[cfg(windows)]
+pub(crate) use windows::{owner_sid, sid_text};
 
 #[cfg(not(windows))]
 use crate::contracts::CheckKind;

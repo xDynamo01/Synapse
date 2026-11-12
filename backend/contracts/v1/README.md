@@ -2,6 +2,12 @@
 
 Run `synapse-backend --state-dir PATH --workspace PATH` with an existing workspace directory. The process reads one UTF-8 JSON request per line from stdin and writes exactly one JSON response per line to stdout. A request line is limited to 65,536 bytes, excluding its line ending. Startup errors go to stderr and exit nonzero. The CLI is a local human-owned transport, not an authenticated network API.
 
+On Windows, `--local-endpoint NAME` selects the same v1 framing over an owner-only
+local named pipe. The Core stays running after the client disconnects and can
+finish active jobs while no client is attached. The host admits one pipe
+connection at a time. Desktop clients release it after each exchange. See the
+[Windows desktop guide](../../../docs/guides/windows-native-desktop.md).
+
 Every request has exactly `version`, `request_id`, and `command`. `version` is `1`; `request_id` is a nonempty string of at most 128 bytes. Unknown fields and protocol versions are rejected. Commands use a `type` tag in snake case. Every response has `version`, `request_id` (null if parsing failed), `ok`, `event_cursor`, `result`, and `error` with stable `code` and human-readable `message`.
 
 Example:
