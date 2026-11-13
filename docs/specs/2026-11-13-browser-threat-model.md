@@ -57,3 +57,18 @@ valida destinos HTTPS, redirecionamentos de mesma origem, respostas DNS e o
 endereço do par. A validação é determinística e não abre conexões. O
 transporte ainda precisa aplicar a política na resolução e na conexão TLS,
 e provar que o motor também respeita a política em requisições indiretas.
+
+### Prova de transporte de leitura
+
+`backend/python/synapse_ai/browser_read.py` é um protótipo de leitura manual,
+executado pelo proprietário. Ele usa HTTPS direto, valida todos os endereços
+DNS retornados, conecta ao endereço selecionado e preserva a validação TLS
+pelo nome original. Redirecionamentos repetem a validação de origem e DNS.
+A resposta tem limite de bytes e é convertida em texto sem executar scripts
+ou buscar subrecursos. O protótipo recusa anexos e não usa cookies.
+
+O teste no Windows obteve texto público de `www.iana.org`. Em `example.com`,
+a cadeia do certificado foi recusada pelo ambiente e a leitura falhou. A
+política Rust e o protótipo Python ainda são independentes. O processo do
+motor, a política única de rede, as missões, a quarentena e as sessões
+persistentes continuam pendentes de integração e verificação.
