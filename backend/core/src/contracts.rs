@@ -152,6 +152,34 @@ pub enum Command {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         context: Vec<ContextReference>,
     },
+    VoiceTranslatorStart {
+        session_id: String,
+        source_language: VoiceLanguage,
+        target_language: VoiceLanguage,
+    },
+    VoiceTranslatorGet {
+        session_id: String,
+    },
+    VoiceTranslatorStop {
+        session_id: String,
+    },
+    VoiceTurnStart {
+        session_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        chat_id: Option<String>,
+        model_id: String,
+        text: String,
+        language: VoiceLanguage,
+        #[serde(default, skip_serializing_if = "is_false")]
+        overlap: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        skill: Option<SkillPin>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        context: Vec<ContextReference>,
+    },
+    VoiceTranslationGet {
+        job_id: String,
+    },
     JobGet {
         job_id: String,
     },
@@ -398,6 +426,34 @@ impl From<serde_json::Error> for CoreError {
     }
 }
 pub type CoreResult<T> = Result<T, CoreError>;
+
+fn is_false(value: &bool) -> bool {
+    !value
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum VoiceLanguage {
+    #[serde(rename = "pt-BR")]
+    PtBr,
+    #[serde(rename = "en-US")]
+    EnUs,
+}
+
+impl VoiceLanguage {
+    pub(crate) fn tag(self) -> &'static str {
+        match self {
+            Self::PtBr => "pt-BR",
+            Self::EnUs => "en-US",
+        }
+    }
+
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Self::PtBr => "Brazilian Portuguese",
+            Self::EnUs => "US English",
+        }
+    }
+}
 
 pub fn bounded(value: &str, name: &str, max: usize) -> CoreResult<()> {
     if value.trim().is_empty() || value.len() > max || value.contains('\0') {

@@ -4,7 +4,7 @@ use crate::{
     conversation, integration, learning, memory, mission_recovery, mission_run, missions, planner,
     projects, registry, runner,
     store::{self, Store},
-    tools, worker,
+    tools, voice, worker,
 };
 use rusqlite::{OptionalExtension, Transaction, params};
 use serde_json::{Value, json};
@@ -29,6 +29,7 @@ pub struct Core {
     active: Option<Active>,
     check: Option<runner::Active>,
     check_event: Option<runner::Event>,
+    translations: voice::RecentResults,
 }
 impl Core {
     pub fn open(state_dir: impl AsRef<Path>, workspace_root: impl AsRef<Path>) -> CoreResult<Self> {
@@ -45,15 +46,66 @@ impl Core {
             active: None,
             check: None,
             check_event: None,
+            translations: voice::RecentResults::default(),
         })
     }
+    fn cancel_translation(&mut self, id: &str) {
+        if self.active.as_ref().is_some_and(|active| {
+            active.id == id && active.purpose == conversation::Purpose::Translation
+        }) {
+            let active = self.active.take().unwrap();
+            // The durable job is already cancelled. Join the worker before
+            // allowing the next spoken turn to acquire the single model slot.
+            active.stop.cancel();
+            let _ = active.result.recv();
+        }
+    }
+
     pub fn dispatch(&mut self, request: Request) -> Response {
         if let Err(error) = self.poll_project_check().and_then(|()| self.drain()) {
             return Response::failure(Some(request.request_id), self.event_cursor(), error);
         }
+        if let Command::VoiceTranslationGet { job_id } = &request.command {
+            let id = Some(request.request_id.clone());
+            let cursor = self.event_cursor();
+            let result = (|| {
+                if request.version != PROTOCOL_VERSION {
+                    return Err(CoreError::new(
+                        "unsupported_version",
+                        "Only protocol version 1 is supported",
+                    ));
+                }
+                bounded(&request.request_id, "request_id", 128)?;
+                let tx = self.store.transaction()?;
+                let already_bound: bool = tx.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM receipts WHERE request_id=?1 UNION ALL SELECT 1 FROM tool_intents WHERE request_id=?1 UNION ALL SELECT 1 FROM recovery_writes WHERE request_id=?1)",
+                    [&request.request_id],
+                    |row| row.get(0),
+                )?;
+                if already_bound {
+                    return Err(CoreError::new(
+                        "idempotency_conflict",
+                        "Request ID already binds a durable request",
+                    ));
+                }
+                voice::translation_get(&tx, job_id, self.translations.get(job_id))
+            })();
+            return match result {
+                Ok(value) => Response {
+                    version: PROTOCOL_VERSION,
+                    request_id: id,
+                    ok: true,
+                    event_cursor: cursor,
+                    result: Some(value),
+                    error: None,
+                },
+                Err(error) => Response::failure(id, cursor, error),
+            };
+        }
         if matches!(
             &request.command,
             Command::ConversationStart { .. }
+                | Command::VoiceTurnStart { .. }
                 | Command::Inference { .. }
                 | Command::MissionPlanStart { .. }
                 | Command::MissionExecute { .. }
@@ -81,6 +133,8 @@ impl Core {
             Ok(response) => {
                 if response.ok {
                     if let Command::JobCancel { job_id } = &request.command {
+                        self.translations.remove(job_id);
+                        self.cancel_translation(job_id);
                         if let Some(active) = &self.active {
                             if active.id == *job_id
                                 && !matches!(
@@ -98,6 +152,21 @@ impl Core {
             }
             Err(error) => Response::failure(id, self.store.event_cursor().unwrap_or(0), error),
         };
+        if response.ok
+            && matches!(
+                request.command,
+                Command::VoiceTranslatorStop { .. } | Command::VoiceTurnStart { .. }
+            )
+        {
+            if let Some(value) = &response.result {
+                if let Some(mode) = value["stopped_mode_id"].as_str() {
+                    self.translations.clear_mode(mode);
+                }
+                if let Some(id) = value["cancelled_job_id"].as_str() {
+                    self.cancel_translation(id);
+                }
+            }
+        }
         if response.ok {
             if let Command::MissionCancel { mission_id, .. }
             | Command::MissionRevoke { mission_id, .. } = &request.command
@@ -1065,6 +1134,7 @@ impl Core {
     }
 
     pub fn poll_mission(&mut self) -> CoreResult<()> {
+        self.translations.prune();
         self.poll_project_check()?;
         if self.active.as_ref().is_some_and(|active| {
             matches!(
@@ -1092,16 +1162,21 @@ impl Core {
         let outcome = active.outcome.clone().unwrap();
         let id = active.id.clone();
         let tx = self.store.transaction()?;
+        let mut translation = None;
         match active.purpose {
             conversation::Purpose::Learning => learning::complete(&tx, &id, outcome)?,
             conversation::Purpose::Conversation => conversation::complete(&tx, &id, outcome)?,
             conversation::Purpose::MissionPlan => planner::complete(&tx, &id, outcome)?,
+            conversation::Purpose::Translation => translation = voice::complete(&tx, &id, outcome)?,
             purpose @ (conversation::Purpose::MissionGenerate
             | conversation::Purpose::MissionReview) => {
                 mission_run::complete(&tx, &id, purpose, outcome)?
             }
         }
         tx.commit()?;
+        if let Some((mode, text)) = translation {
+            self.translations.insert(id, mode, text);
+        }
         self.active = None;
         Ok(())
     }
@@ -1117,7 +1192,7 @@ impl Core {
         let parsed = serde_json::from_slice::<Request>(line).and_then(|request| {
             let mut value = serde_json::from_slice::<Value>(line)?;
             // Empty explicit context is equivalent to its omitted wire form.
-            if matches!(&request.command, Command::ConversationStart { context, .. } | Command::MissionPlanStart { context, .. } if context.is_empty())
+            if matches!(&request.command, Command::ConversationStart { context, .. } | Command::MissionPlanStart { context, .. } | Command::VoiceTurnStart { context, .. } if context.is_empty())
                 && value["command"]["context"] == json!([])
             {
                 value["command"].as_object_mut().unwrap().remove("context");
@@ -1126,6 +1201,11 @@ impl Core {
                 && value["command"]["git_edit_paths"] == json!([])
             {
                 value["command"].as_object_mut().unwrap().remove("git_edit_paths");
+            }
+            if matches!(&request.command, Command::VoiceTurnStart { overlap:false, .. })
+                && value["command"]["overlap"] == json!(false)
+            {
+                value["command"].as_object_mut().unwrap().remove("overlap");
             }
             // Internally tagged unit variants can silently ignore extra fields.
             // Reconstructing the envelope rejects those fields at every depth.
@@ -1376,7 +1456,7 @@ fn dispatch_tx(
                 ));
             }
             let (result, launch) =
-                conversation::start(tx, request_id, None, model_id, prompt, None, &[])?;
+                conversation::start(tx, request_id, None, model_id, prompt, None, &[], None)?;
             *pending = Some(launch);
             Ok(result)
         }
@@ -1401,10 +1481,55 @@ fn dispatch_tx(
                 content,
                 skill.as_ref(),
                 context,
+                None,
             )?;
             *pending = Some(launch);
             Ok(result)
         }
+        Command::VoiceTranslatorStart {
+            session_id,
+            source_language,
+            target_language,
+        } => voice::translator_start(
+            tx,
+            session_id,
+            request_id,
+            *source_language,
+            *target_language,
+        ),
+        Command::VoiceTranslatorGet { session_id } => voice::translator_get(tx, session_id),
+        Command::VoiceTranslatorStop { session_id } => voice::translator_stop(tx, session_id),
+        Command::VoiceTurnStart {
+            session_id,
+            chat_id,
+            model_id,
+            text,
+            language,
+            overlap,
+            skill,
+            context,
+        } => {
+            let (result, launch) = voice::turn(
+                tx,
+                request_id,
+                voice::Turn {
+                    session: session_id,
+                    chat: chat_id.as_deref(),
+                    model: model_id,
+                    text,
+                    language: *language,
+                    overlap: *overlap,
+                    skill: skill.as_ref(),
+                    context,
+                },
+                busy,
+            )?;
+            *pending = launch;
+            Ok(result)
+        }
+        Command::VoiceTranslationGet { .. } => Err(CoreError::invalid(
+            "Translation output is available only as a live read",
+        )),
         Command::JobGet { job_id } => conversation::get(tx, job_id),
         Command::LearningGet { source_job_id } => learning::get(tx, source_job_id),
         Command::JobCancel { job_id } => conversation::cancel(tx, job_id),

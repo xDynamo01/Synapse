@@ -34,8 +34,11 @@ class Handler(BaseHTTPRequestHandler):
         assert request["model"] == "selected" and request["stream"] is False
         purpose = request.get("response_format", {}).get("json_schema", {}).get("name")
         is_plan = purpose == "mission_plan"
+        is_translation = purpose == "translation"
         is_mission_stage = purpose in ("mission_generate", "mission_review")
-        if is_mission_stage:
+        if is_translation:
+            posted = marker.parent / "translation-post"
+        elif is_mission_stage:
             posted = marker.parent / f"{purpose}-post"
         else:
             posted = marker.parent / "learning-post" if "response_format" in request and not is_plan else marker
@@ -54,12 +57,16 @@ class Handler(BaseHTTPRequestHandler):
             time.sleep(.01)
         while is_mission_stage and (marker.parent / f"{purpose}-hold").exists():
             time.sleep(.01)
-        while "response_format" in request and not is_plan and not is_mission_stage and (marker.parent / "learning-hold").exists():
+        while is_translation and (marker.parent / "translation-hold").exists():
+            time.sleep(.01)
+        while "response_format" in request and not is_plan and not is_mission_stage and not is_translation and (marker.parent / "learning-hold").exists():
             time.sleep(.01)
         try:
             scripted = marker.parent / "learning-response"
             mapping = marker.parent / "learning-map"
-            if is_plan:
+            if is_translation:
+                content = (marker.parent / "translation-response").read_text(encoding="utf-8")
+            elif is_plan:
                 content = (marker.parent / "mission-response").read_text(encoding="utf-8")
             elif is_mission_stage:
                 content = (marker.parent / f"{purpose}-response").read_text(encoding="utf-8")

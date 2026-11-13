@@ -1,12 +1,25 @@
+mod audio;
+#[cfg(windows)]
+mod audio_tray;
 mod bridge;
 mod catalog;
 mod transport;
+mod voice;
 
 use catalog::Catalog;
 use eframe::egui::{self, Color32, RichText};
 use serde_json::{Value, json};
 use std::time::{Duration, Instant};
 use transport::Connection;
+use voice::{Phase, Transcript, Voice};
+
+const VOICE_SESSION: &str = "presence-voice";
+
+struct VoiceJob {
+    id: String,
+    translation: bool,
+    language: String,
+}
 
 fn main() -> eframe::Result {
     let mut args = std::env::args().skip(1);
@@ -55,6 +68,17 @@ struct Desktop {
     pending: usize,
     error: String,
     workspace: bool,
+    voice: Voice,
+    voice_job: Option<VoiceJob>,
+    voice_language: String,
+    voice_turn_cancelled: bool,
+    translator: Value,
+    translator_source: String,
+    voice_reply: Option<String>,
+    voice_background: bool,
+    voice_devices: Option<audio::Devices>,
+    #[cfg(windows)]
+    tray: Option<audio_tray::Tray>,
     rail: bool,
     model: String,
     models: Vec<String>,
@@ -95,6 +119,17 @@ impl Desktop {
             pending: 0,
             error: String::new(),
             workspace: !mission_id.is_empty(),
+            voice: Voice::new(),
+            voice_job: None,
+            voice_language: "pt-BR".into(),
+            voice_turn_cancelled: false,
+            translator: Value::Null,
+            translator_source: "pt-BR".into(),
+            voice_reply: None,
+            voice_background: false,
+            voice_devices: None,
+            #[cfg(windows)]
+            tray: None,
             rail: true,
             model: String::new(),
             models: Vec::new(),
@@ -176,11 +211,20 @@ impl Desktop {
                 if tag == "connection" {
                     self.pending = 0;
                     self.connected = false;
+                    self.voice.disable();
+                    self.voice_job = None;
                     self.project = Value::Null;
                     self.mission = Value::Null;
                     self.run = Value::Null;
                     self.recovery = Value::Null;
                     self.recovery_mode = None;
+                }
+                if matches!(tag, "voice-turn" | "voice-job" | "voice-mode-change") {
+                    self.voice_job = None;
+                    self.voice.error = Some(error.clone());
+                    if self.voice.phase == Phase::Processing {
+                        self.voice.resume();
+                    }
                 }
                 if !matches!(tag, "mission_run_get" | "mission_plan_get")
                     || !error.starts_with("not_found ·")
@@ -194,11 +238,23 @@ impl Desktop {
             "health" => {
                 self.connected = true;
                 self.send("models", json!({"type":"models_list","limit":100}));
+                self.send(
+                    "voice-mode",
+                    json!({"type":"voice_translator_get","session_id":VOICE_SESSION}),
+                );
                 self.chat();
                 if !self.mission_id.is_empty() {
                     self.refresh();
                 }
             }
+            "voice-mode" | "voice-mode-change" => {
+                self.update_voice_mode(value);
+                if tag == "voice-mode-change" && self.voice.phase == Phase::Processing {
+                    self.voice.resume();
+                }
+            }
+            "voice-turn" => self.voice_turn_received(value),
+            "voice-job" => self.voice_job_received(value),
             "project" => {
                 if let Some(scope) = value["scope"].as_str() {
                     if self.scope != scope {
@@ -216,6 +272,9 @@ impl Desktop {
                         .iter()
                         .filter_map(|model| model["id"].as_str().map(str::to_owned))
                         .collect();
+                    if self.model.is_empty() && self.models.len() == 1 {
+                        self.model.clone_from(&self.models[0]);
+                    }
                 }
             }
             "chat-create" => {
@@ -260,6 +319,17 @@ impl Desktop {
                     self.events.extend(events.iter().cloned());
                     let overflow = self.events.len().saturating_sub(300);
                     self.events.drain(..overflow);
+                    if events.iter().any(|event| {
+                        matches!(
+                            event["kind"].as_str(),
+                            Some("voice_translator_started" | "voice_translator_stopped")
+                        ) && event["payload"]["session_id"] == VOICE_SESSION
+                    }) {
+                        self.send(
+                            "voice-mode",
+                            json!({"type":"voice_translator_get","session_id":VOICE_SESSION}),
+                        );
+                    }
                 }
             }
             _ => {}
@@ -338,6 +408,7 @@ impl Desktop {
 
     fn presence(&mut self, ui: &mut egui::Ui) {
         ui.heading("A.R.T.E.M.I.S");
+        self.voice_controls(ui);
         ui.horizontal(|ui| {
             ui.add(egui::TextEdit::singleline(&mut self.chat_id).hint_text("Identificador da conversa"));
             let ready = self.connected && self.pending == 0 && self.job_id.is_none() && !self.chat_id.is_empty();
@@ -757,13 +828,375 @@ impl Desktop {
         );
     }
 
+    fn voice_controls(&mut self, ui: &mut egui::Ui) {
+        let levels = self.voice.audio.levels();
+        let (region, _) = ui.allocate_exact_size(
+            egui::vec2(ui.available_width(), 105.0),
+            egui::Sense::hover(),
+        );
+        let center = region.center();
+        let time = ui.input(|input| input.time) as f32;
+        let amplitude = match self.voice.phase {
+            Phase::Listening => levels.input.clamp(0.0, 1.0),
+            Phase::Speaking => levels.output.clamp(0.0, 1.0),
+            _ => 0.0,
+        };
+        let radius = 23.0
+            + if self.voice.phase == Phase::Speaking {
+                amplitude.sqrt() * 19.0
+            } else {
+                0.0
+            };
+        let brightness = (125.0 + amplitude.sqrt() * 130.0) as u8;
+        let color = Color32::from_rgb(28, brightness, 220);
+        let painter = ui.painter();
+        for offset in [7.0, 13.0] {
+            painter.circle_stroke(
+                center,
+                radius + offset,
+                egui::Stroke::new(1.0, color.gamma_multiply(0.4)),
+            );
+        }
+        painter.circle_stroke(center, radius, egui::Stroke::new(1.5, color));
+        painter.circle_filled(center, radius / 5.0, color);
+        if self.voice.phase == Phase::Processing {
+            let offset = egui::Vec2::angled(time * 3.4) * (radius + 13.0);
+            painter.circle_filled(center + offset, 3.5, color);
+        }
+        ui.horizontal_wrapped(|ui| {
+            ui.label(if self.voice.phase == Phase::Wake {
+                format!("Aguardando {}", self.voice.wake_name)
+            } else {
+                self.voice.phase.label().into()
+            });
+            if levels.capturing {
+                ui.colored_label(Color32::LIGHT_GREEN, "Microfone ativo");
+            }
+            if !levels.eligible && self.voice.phase != Phase::Off {
+                ui.label("Sessão de áudio indisponível");
+            }
+            if self.voice.phase == Phase::Off {
+                if ui
+                    .add_enabled(self.connected, egui::Button::new("Ativar microfone"))
+                    .clicked()
+                {
+                    if let Err(error) = self.voice.enable(false) {
+                        self.voice.error = Some(error);
+                    }
+                }
+            } else {
+                if ui.button("Desativar microfone").clicked() {
+                    self.mute_voice();
+                }
+                if ui.button("Interromper").clicked() {
+                    self.interrupt_voice();
+                }
+            }
+            if self.voice.translator {
+                ui.label(format!(
+                    "Tradutor · {} ↔ {}",
+                    self.translator["source_language"]
+                        .as_str()
+                        .unwrap_or_default(),
+                    self.translator["target_language"]
+                        .as_str()
+                        .unwrap_or_default()
+                ));
+                if ui.button("Encerrar tradução").clicked() {
+                    self.stop_translator();
+                }
+            } else {
+                egui::ComboBox::from_id_salt("voice-source")
+                    .selected_text(&self.translator_source)
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut self.translator_source,
+                            "pt-BR".into(),
+                            "Português → inglês",
+                        );
+                        ui.selectable_value(
+                            &mut self.translator_source,
+                            "en-US".into(),
+                            "Inglês → português",
+                        );
+                    });
+                if ui
+                    .add_enabled(
+                        self.connected && self.pending == 0,
+                        egui::Button::new("Iniciar tradução"),
+                    )
+                    .clicked()
+                {
+                    let source = self.translator_source.clone();
+                    let target = if source == "pt-BR" { "en-US" } else { "pt-BR" };
+                    self.start_translator(&source, target);
+                }
+            }
+        });
+        if let Some(error) = &self.voice.error {
+            ui.colored_label(Color32::LIGHT_RED, error);
+        }
+        if self.voice.translator {
+            if let Some(reply) = &self.voice_reply {
+                ui.label(reply);
+            }
+        }
+        ui.collapsing("Áudio", |ui| {
+            ui.add_enabled(
+                self.voice.phase == Phase::Off,
+                egui::TextEdit::singleline(&mut self.voice.wake_name)
+                    .hint_text("Palavra de ativação"),
+            );
+            if ui.button("Listar dispositivos").clicked() {
+                match self.voice.audio.devices() {
+                    Ok(devices) => self.voice_devices = Some(devices),
+                    Err(error) => self.voice.error = Some(error),
+                }
+            }
+            if let Some(devices) = &self.voice_devices {
+                let mut input = self.voice.input.clone();
+                let mut output = self.voice.output.clone();
+                choose_audio_device(
+                    ui,
+                    "voice-input",
+                    "Microfone padrão",
+                    &mut input,
+                    &devices.inputs,
+                );
+                choose_audio_device(
+                    ui,
+                    "voice-output",
+                    "Saída padrão",
+                    &mut output,
+                    &devices.outputs,
+                );
+                if input != self.voice.input || output != self.voice.output {
+                    self.interrupt_voice();
+                    if let Err(error) = self.voice.switch(input, output) {
+                        self.voice.error = Some(error);
+                    }
+                }
+            }
+            #[cfg(windows)]
+            {
+                let mut enabled = self.voice_background;
+                if ui
+                    .checkbox(&mut enabled, "Manter áudio ativo na bandeja ao fechar")
+                    .changed()
+                {
+                    if enabled {
+                        let context = ui.ctx().clone();
+                        match audio_tray::Tray::with_wakeup(move || context.request_repaint()) {
+                            Ok(tray) => {
+                                self.tray = Some(tray);
+                                self.voice_background = true;
+                            }
+                            Err(error) => self.voice.error = Some(error),
+                        }
+                    } else {
+                        self.tray = None;
+                        self.voice_background = false;
+                    }
+                }
+            }
+        });
+    }
+
+    #[cfg(windows)]
+    fn tick_tray(&mut self, ctx: &egui::Context) {
+        if let Some(event) = self.tray.as_ref().and_then(audio_tray::Tray::take_event) {
+            match event {
+                audio_tray::Event::Open => {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                }
+                audio_tray::Event::Mute => {
+                    self.mute_voice();
+                }
+                audio_tray::Event::Exit => {
+                    self.voice_background = false;
+                    self.mute_voice();
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+            }
+        }
+        if self.voice_background && ctx.input(|input| input.viewport().close_requested()) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+        }
+    }
+
+    fn update_voice_mode(&mut self, value: Value) {
+        let active = value["active"] == true;
+        if self.voice.translator != active {
+            self.voice_reply = None;
+        }
+        self.translator = value;
+        self.voice.set_translator(active);
+    }
+
+    fn start_translator(&mut self, source: &str, target: &str) {
+        self.send("voice-mode-change", json!({"type":"voice_translator_start","session_id":VOICE_SESSION,"source_language":source,"target_language":target}));
+    }
+
+    fn stop_translator(&mut self) {
+        self.interrupt_voice();
+        self.send(
+            "voice-mode-change",
+            json!({"type":"voice_translator_stop","session_id":VOICE_SESSION}),
+        );
+    }
+
+    fn cancel_voice_turn(&mut self) {
+        self.voice_turn_cancelled = true;
+        self.voice_reply = None;
+        if let Some(job) = self.voice_job.take() {
+            if self.connected {
+                self.send("voice-cancel", json!({"type":"job_cancel","job_id":job.id}));
+            }
+        }
+    }
+
+    fn interrupt_voice(&mut self) {
+        self.cancel_voice_turn();
+        self.voice.interrupt();
+    }
+
+    fn mute_voice(&mut self) {
+        self.cancel_voice_turn();
+        self.voice.disable();
+    }
+
+    fn accept_transcript(&mut self, turn: Transcript) {
+        if turn.overlap {
+            self.voice.error =
+                Some("Fala sobreposta ou idioma incerto. Fale um de cada vez.".into());
+            self.voice.resume();
+            return;
+        }
+        if !self.voice.translator {
+            if let Some(target) = spoken_translation_target(&turn.text) {
+                if target != turn.language {
+                    self.start_translator(&turn.language, target);
+                } else {
+                    self.voice.error = Some("Escolha um idioma de destino diferente.".into());
+                    self.voice.resume();
+                }
+                return;
+            }
+        }
+        if self.model.is_empty()
+            || (!self.voice.translator && self.active_chat.is_empty())
+            || self.job_id.is_some()
+            || self.voice_job.is_some()
+        {
+            self.voice.error =
+                Some("Selecione um modelo e abra uma conversa antes de falar.".into());
+            self.voice.resume();
+            return;
+        }
+        self.voice.error = None;
+        self.voice_turn_cancelled = false;
+        self.voice_language.clone_from(&turn.language);
+        let mut command = json!({"type":"voice_turn_start","session_id":VOICE_SESSION,"model_id":self.model,"text":turn.text,"language":turn.language});
+        if !self.active_chat.is_empty() {
+            command["chat_id"] = json!(self.active_chat);
+        }
+        if !self.voice.translator {
+            let refs = if self.context_scope.is_empty() && self.context_key.is_empty() {
+                self.catalog.references(&turn.text)
+            } else if !self.context_scope.is_empty() && !self.context_key.is_empty() {
+                Ok(vec![
+                    json!({"scope":self.context_scope,"key":self.context_key}),
+                ])
+            } else {
+                Err("Informe o projeto e a chave de memória.")
+            };
+            match refs {
+                Ok(refs) if !refs.is_empty() => command["context"] = json!(refs),
+                Ok(_) => (),
+                Err(error) => {
+                    self.voice.error = Some(error.into());
+                    self.voice.resume();
+                    return;
+                }
+            }
+        }
+        self.send("voice-turn", command);
+    }
+
+    fn voice_turn_received(&mut self, value: Value) {
+        if self.voice_turn_cancelled {
+            if let Some(id) = value["job_id"].as_str() {
+                self.send("voice-cancel", json!({"type":"job_cancel","job_id":id}));
+            }
+            return;
+        }
+        if value["status"] == "stopped" {
+            self.update_voice_mode(json!({"active":false}));
+            if self.voice.phase == Phase::Processing {
+                self.voice.resume();
+            }
+        } else if let Some(id) = value["job_id"].as_str() {
+            let translation = value["mode"] == "translator";
+            self.voice_job = Some(VoiceJob {
+                id: id.into(),
+                translation,
+                language: value["target_language"]
+                    .as_str()
+                    .unwrap_or(&self.voice_language)
+                    .into(),
+            });
+        } else if self.voice.phase == Phase::Processing {
+            self.voice.resume();
+        }
+    }
+
+    fn voice_job_received(&mut self, value: Value) {
+        if value["status"] == "running" {
+            return;
+        }
+        let Some(job) = self.voice_job.take() else {
+            return;
+        };
+        if !job.translation {
+            self.chat();
+        }
+        if self.voice_turn_cancelled || self.voice.phase != Phase::Processing {
+            return;
+        }
+        if value["status"] == "succeeded" {
+            if let Some(text) = value["content"].as_str() {
+                self.voice_reply = Some(text.into());
+                self.voice.speak(text, &job.language);
+                return;
+            }
+        }
+        self.voice.error = Some(format!(
+            "Resposta de voz: {}",
+            value["status"].as_str().unwrap_or("falhou")
+        ));
+        self.voice.resume();
+    }
+
     fn tick(&mut self) {
         while let Ok((tag, reply)) = self.connection.replies.try_recv() {
             self.receive(tag, reply);
         }
+        if let Some(turn) = self.voice.tick() {
+            self.accept_transcript(turn);
+        }
         if self.connected && self.pending == 0 && self.poll.elapsed() >= Duration::from_millis(850)
         {
             self.poll = Instant::now();
+            if let Some(job) = &self.voice_job {
+                let command = if job.translation {
+                    "voice_translation_get"
+                } else {
+                    "job_get"
+                };
+                self.send("voice-job", json!({"type":command,"job_id":job.id}));
+            }
             if let Some(job) = &self.job_id {
                 self.send("job", json!({"type":"job_get","job_id":job}));
             }
@@ -800,9 +1233,57 @@ impl Desktop {
     }
 }
 
+fn choose_audio_device(
+    ui: &mut egui::Ui,
+    id: &str,
+    default: &str,
+    selected: &mut Option<String>,
+    names: &[String],
+) {
+    egui::ComboBox::from_id_salt(id)
+        .selected_text(selected.as_deref().unwrap_or(default))
+        .show_ui(ui, |ui| {
+            ui.selectable_value(selected, None, default);
+            for name in names {
+                ui.selectable_value(selected, Some(name.clone()), name);
+            }
+        });
+}
+
+fn spoken_translation_target(text: &str) -> Option<&'static str> {
+    let words = text
+        .to_lowercase()
+        .replace(['ê', 'é'], "e")
+        .replace('ç', "c")
+        .replace('ã', "a");
+    match words.trim_matches(|ch: char| !ch.is_alphabetic() && !ch.is_ascii_digit()) {
+        "traduza para ingles" | "iniciar traducao para ingles" | "translate to english" => {
+            Some("en-US")
+        }
+        "translate to portuguese"
+        | "start translating to portuguese"
+        | "traduza para portugues"
+        | "iniciar traducao para portugues" => Some("pt-BR"),
+        _ => None,
+    }
+}
+
 impl eframe::App for Desktop {
-    fn ui(&mut self, ui: &mut egui::Ui, _: &mut eframe::Frame) {
+    fn logic(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
         self.tick();
+        #[cfg(windows)]
+        self.tick_tray(ctx);
+        let delay = if self.voice.phase != Phase::Off {
+            30
+        } else if self.pending > 0 || self.voice_background {
+            80
+        } else {
+            250
+        };
+        ctx.request_repaint_after(Duration::from_millis(delay));
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, _: &mut eframe::Frame) {
         egui::Frame::new().inner_margin(14).show(ui, |ui| {
             self.header(ui);
             ui.add_space(12.0);
@@ -812,11 +1293,5 @@ impl eframe::App for Desktop {
                 self.presence(ui);
             }
         });
-        ui.ctx()
-            .request_repaint_after(Duration::from_millis(if self.pending > 0 {
-                80
-            } else {
-                250
-            }));
     }
 }

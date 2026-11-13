@@ -23,7 +23,7 @@ def validate(request):
         raise ValueError("invalid_request")
     if type(request["version"]) is not int or request["version"] != VERSION:
         raise ValueError("unsupported_version")
-    if request["purpose"] not in ("conversation", "learning", "mission_plan", "mission_generate", "mission_review"):
+    if request["purpose"] not in ("conversation", "learning", "mission_plan", "mission_generate", "mission_review", "translation"):
         raise ValueError("invalid_request")
     generation = request['generation']
     if (not isinstance(generation, dict) or set(generation) != {'max_output_tokens', 'timeout_ms', 'reasoning_effort'}

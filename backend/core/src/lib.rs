@@ -21,6 +21,7 @@ mod runner;
 mod skills;
 mod store;
 mod tools;
+mod voice;
 mod worker;
 pub use contracts::{Command, CoreError, CoreResult, Request, Response};
 pub use core::Core;

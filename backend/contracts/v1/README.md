@@ -294,3 +294,39 @@ If Core stops during recovery, restart exposes `recovery_required`. A retry
 of the original request ID does not restart work. Inspect again and submit
 a new owner decision when the evidence permits it. Revocation prevents
 subsequent resolution effects under the old approval.
+
+## Spoken turns and translator
+
+`voice_translator_start` takes `session_id`, `source_language` (the owner's
+language) and `target_language` (the other speaker's language). The installed
+contract accepts `pt-BR` and `en-US`, in either order. The two tags must differ.
+`voice_translator_get` takes `session_id` and returns `active`, with both tags
+when active. Mode survives process restarts and ends with
+`voice_translator_stop` for the same session or an exact spoken exit command.
+Both stop paths cancel a pending translation. Starting the same pair again is
+idempotent. Stop the active pair before changing languages.
+
+`voice_turn_start` takes `session_id`, `model_id`, `text` and the detected
+`language`. When the translator is inactive, supply `chat_id`. The turn uses
+the normal saved chat, optional exact `skill` and `context`, and a same-language
+response instruction. It returns `mode:conversation`, `job_id`, `status`,
+`source_language` and `target_language`. Read the response through `job_get`.
+
+In translator mode the Core routes the owner's detected language to the other
+language and the other speaker's detected language back to the owner. It
+returns `mode:translator`, `speaker:owner` or `speaker:other`, the two language
+tags, and a `job_id`. This direction label describes language-based turn
+routing. The device client must omit turns with unreliable detection and may
+set `overlap:true` to receive `voice_overlap` without launching a job. Skills
+and memory context are rejected in translator mode. Exact exit phrases include
+“Artemis, pare a tradução” and “stop translating”. A spoken exit returns
+`mode:translator`, `status:stopped` and `active:false`.
+
+Read translation text with `voice_translation_get {job_id}`. This is a live
+read with no durable receipt or replay semantics. It uses the job response
+shape with plain translated text in `content` on success. `job_get` exposes
+only metadata for translation jobs. Source utterances and translations are
+excluded from chats, learning and durable state. Translated output remains in
+Core memory for up to two minutes and expires earlier on interruption, mode
+stop, process restart or buffer eviction. Use `job_cancel {job_id}` to stop
+one job and discard its output while keeping the translator active.

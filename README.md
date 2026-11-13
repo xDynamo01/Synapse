@@ -63,10 +63,10 @@ de cada etapa estão no [roteiro até a finalização](docs/superpowers/plans/20
 - [x] **10. Recuperação de missões interrompidas pelo CLI no Windows.** [Evidência](docs/evidence/backend/2026-11-12-mission-recovery.md)
 - [x] **11. Aplicativo Rust nativo no Windows, com Presence, Workspace e ponte local.** [Evidência](docs/evidence/backend/2026-11-12-native-desktop.md)
 - [x] **12. Workspaces por projeto, edição Git local e receitas por domínio no Windows.** [Evidência](docs/evidence/backend/2026-11-12-workspace-expansion.md)
+- [x] **13. Presence por voz e tradução bidirecional no Windows.** [Evidência](docs/evidence/backend/2026-11-12-presence-voice.md)
 
 ### Etapas a seguir
 
-- [ ] **13. Voz e tradução.** Ativar por “Artemis”, responder com voz fixa, animar com áudio real e traduzir nos dois sentidos.
 - [ ] **14. Navegador interno.** Usar sessões autenticadas e executar ações autorizadas pela missão.
 - [ ] **15. Evolução de Skills, MoM e Swarm.** Validar promoção de Skills, orquestração local de modelos e agentes temporários sob aceite.
 - [ ] **16. Distribuição e aceite final da 0.3.** Validar instalação, atualização e fluxos reais no Windows. Preparar builds de Linux e macOS e registrar o estado de validação de cada plataforma.

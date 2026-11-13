@@ -649,13 +649,13 @@ fn conversation_fixture_persists_once_and_replays_across_restart() {
     drop(session);
     // Recreate the prior schema with its existing unguided job and receipt.
     let db = rusqlite::Connection::open(root.path().join("state/core.sqlite3")).unwrap();
-    db.execute_batch("DROP TABLE mission_git_edit_plans; DROP TABLE mission_git_bases; DROP TABLE mission_project_bindings; DROP TABLE workspace_projects; DROP TABLE mission_integration_files; DROP TABLE mission_workspace_approvals; DROP TABLE mission_integrations; DROP TABLE mission_runs; DROP TABLE project_checks; DROP TABLE mission_plans; ALTER TABLE ai_jobs DROP COLUMN context; ALTER TABLE ai_jobs DROP COLUMN skill; PRAGMA user_version=6;")
+    db.execute_batch("DROP TABLE voice_translation_jobs; DROP TABLE voice_translators; DROP TABLE mission_git_edit_plans; DROP TABLE mission_git_bases; DROP TABLE mission_project_bindings; DROP TABLE workspace_projects; DROP TABLE mission_integration_files; DROP TABLE mission_workspace_approvals; DROP TABLE mission_integrations; DROP TABLE mission_runs; DROP TABLE project_checks; DROP TABLE mission_plans; ALTER TABLE ai_jobs DROP COLUMN context; ALTER TABLE ai_jobs DROP COLUMN skill; PRAGMA user_version=6;")
         .unwrap();
     drop(db);
     let mut session = Session::new(&root, None);
     assert_eq!(
         session.call(req("migrated-health", json!({"type":"health"})))["result"]["storage_schema"],
-        14
+        15
     );
     let migrated = session.call(req(
         "migrated-job",
@@ -1811,4 +1811,188 @@ fn context_finalization_preserves_later_history_system_roles_and_order() {
         json!({"role":"assistant","content":"OLD_ASSISTANT"})
     );
     assert_eq!(messages[4], json!({"role":"user","content":"NEW_USER"}));
+}
+
+#[test]
+fn voice_translator_is_bidirectional_restart_safe_and_transcript_free() {
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let root = TempDir::new().unwrap();
+    let fixture = Fixture::new(false);
+    let directory = fixture.marker.parent().unwrap();
+    let mut session = Session::new(&root, None);
+    register(&mut session, &fixture.address);
+    let start = json!({"type":"voice_translator_start","session_id":"presence-voice","source_language":"pt-BR","target_language":"en-US"});
+    let state = json!({"type":"voice_translator_get","session_id":"presence-voice"});
+    let inactive = session.call(req("inactive", state.clone()));
+    assert_eq!(inactive["result"]["active"], false, "{inactive}");
+    let started = session.call(req("start", start.clone()));
+    assert_eq!(started["result"]["active"], true, "{started}");
+    let turn = |language: &str, text: &str| json!({"type":"voice_turn_start","session_id":"presence-voice","model_id":"selected","language":language,"text":text});
+    let mut overlap = turn("pt-BR", "olá");
+    overlap["overlap"] = json!(true);
+    let rejected = session.call(req("overlap", overlap));
+    assert_eq!(rejected["error"]["code"], "voice_overlap", "{rejected}");
+    let volatile = |id: &str| json!({"type":"voice_translation_get","job_id":id});
+    let poll_translation = |session: &mut Session, job: &str| {
+        let started = Instant::now();
+        loop {
+            let reply = session.call(req("volatile-poll", volatile(job)));
+            assert_eq!(reply["ok"], true, "{reply}");
+            if reply["result"]["status"] != "running" {
+                break reply["result"].clone();
+            }
+            assert!(started.elapsed() < Duration::from_secs(15), "{reply}");
+            thread::sleep(Duration::from_millis(20));
+        }
+    };
+    for (id, language, source, translated, speaker, target, expected_instruction) in [
+        (
+            "owner-turn",
+            "pt-BR",
+            "Fonte confidencial A",
+            "Translated private A",
+            "owner",
+            "en-US",
+            "Brazilian Portuguese into US English",
+        ),
+        (
+            "other-turn",
+            "en-US",
+            "Source private B",
+            "Traduzido confidencial B",
+            "other",
+            "pt-BR",
+            "US English into Brazilian Portuguese",
+        ),
+    ] {
+        std::fs::write(
+            directory.join("translation-response"),
+            json!({"translation":translated}).to_string(),
+        )
+        .unwrap();
+        let launch = session.call(req(id, turn(language, source)));
+        assert_eq!(launch["result"]["speaker"], speaker, "{launch}");
+        assert_eq!(launch["result"]["target_language"], target, "{launch}");
+        let result = poll_translation(&mut session, id);
+        assert_eq!(result["content"], translated, "{result}");
+        let posted: Value = serde_json::from_str(
+            &std::fs::read_to_string(directory.join("translation-post")).unwrap(),
+        )
+        .unwrap();
+        assert!(
+            posted["messages"][0]["content"]
+                .as_str()
+                .unwrap()
+                .contains(expected_instruction)
+        );
+        assert_eq!(posted["messages"][1]["content"], source);
+        let durable = session.call(req(
+            &format!("status-{id}"),
+            json!({"type":"job_get","job_id":id}),
+        ));
+        assert!(durable["result"]["content"].is_null(), "{durable}");
+        let learning = session.call(req(
+            &format!("learn-{id}"),
+            json!({"type":"learning_get","source_job_id":id}),
+        ));
+        assert_eq!(learning["error"]["code"], "not_found", "{learning}");
+    }
+    drop(session);
+    let state_path = root.path().join("state");
+    for file in ["core.sqlite3", "core.sqlite3-wal"] {
+        if let Ok(bytes) = std::fs::read(state_path.join(file)) {
+            for secret in [
+                "Fonte confidencial A",
+                "Translated private A",
+                "Source private B",
+                "Traduzido confidencial B",
+            ] {
+                assert!(
+                    !bytes
+                        .windows(secret.len())
+                        .any(|part| part == secret.as_bytes()),
+                    "translation content persisted"
+                );
+            }
+        }
+    }
+    let mut session = Session::new(&root, None);
+    let resumed = session.call(req("resumed", state.clone()));
+    assert_eq!(resumed["result"]["active"], true, "{resumed}");
+    let expired = session.call(req("volatile-poll", volatile("other-turn")));
+    assert_eq!(expired["result"]["status"], "expired", "{expired}");
+    std::fs::write(directory.join("translation-hold"), b"hold").unwrap();
+    let pending = session.call(req("in-flight", turn("en-US", "Still working")));
+    assert_eq!(pending["result"]["status"], "running", "{pending}");
+    let stopped = session.call(req(
+        "spoken-stop",
+        turn("pt-BR", "Artemis, pare a tradução!"),
+    ));
+    assert_eq!(stopped["result"]["status"], "stopped", "{stopped}");
+    let cancelled = session.call(req("pending-status", volatile("in-flight")));
+    assert_eq!(cancelled["result"]["status"], "cancelled", "{cancelled}");
+    let inactive = session.call(req("now-inactive", state.clone()));
+    assert_eq!(inactive["result"]["active"], false, "{inactive}");
+    std::fs::remove_file(directory.join("translation-hold")).unwrap();
+    let resumed = session.call(req("start-fresh", start));
+    assert_eq!(resumed["result"]["active"], true, "{resumed}");
+    let launched = session.call(req("fresh-output", turn("en-US", "Fresh translation")));
+    assert_eq!(launched["result"]["status"], "running", "{launched}");
+    let ready = poll_translation(&mut session, "fresh-output");
+    assert_eq!(ready["status"], "succeeded", "{ready}");
+    let replay = session.call(req(
+        "spoken-stop",
+        turn("pt-BR", "Artemis, pare a tradução!"),
+    ));
+    assert_eq!(replay, stopped);
+    let still_present = session.call(req("fresh-read", volatile("fresh-output")));
+    assert_eq!(
+        still_present["result"]["status"], "succeeded",
+        "{still_present}"
+    );
+    let cancel = session.call(req(
+        "interrupt-playback",
+        json!({"type":"job_cancel","job_id":"fresh-output"}),
+    ));
+    assert_eq!(cancel["ok"], true, "{cancel}");
+    let expired = session.call(req("after-interrupt", volatile("fresh-output")));
+    assert_eq!(expired["result"]["status"], "expired", "{expired}");
+    let still_active = session.call(req("after-interrupt-mode", state));
+    assert_eq!(still_active["result"]["active"], true, "{still_active}");
+    let stopped = session.call(req(
+        "manual-stop",
+        json!({"type":"voice_translator_stop","session_id":"presence-voice"}),
+    ));
+    assert_eq!(stopped["result"]["active"], false, "{stopped}");
+}
+
+#[test]
+fn ordinary_voice_turn_reuses_chat_and_sets_response_language() {
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let root = TempDir::new().unwrap();
+    let fixture = Fixture::new(false);
+    let mut session = Session::new(&root, None);
+    register(&mut session, &fixture.address);
+    let chat = session.call(req(
+        "chat",
+        json!({"type":"chat_create","chat_id":"one","title":"One","scope":"project:a"}),
+    ));
+    assert_eq!(chat["ok"], true, "{chat}");
+    let result = session.call(req("spoken", json!({"type":"voice_turn_start","session_id":"presence-voice","chat_id":"one","model_id":"selected","language":"en-US","text":"Please speak with me.","overlap":false,"context":[]})));
+    assert_eq!(result["result"]["mode"], "conversation", "{result}");
+    assert_eq!(result["result"]["target_language"], "en-US", "{result}");
+    assert_eq!(poll(&mut session, "spoken")["status"], "succeeded");
+    let posted: Value =
+        serde_json::from_str(&std::fs::read_to_string(&fixture.marker).unwrap()).unwrap();
+    assert!(
+        posted["messages"][0]["content"]
+            .as_str()
+            .unwrap()
+            .contains("US English")
+    );
+    assert_eq!(posted["messages"][1]["content"], "Please speak with me.");
+    let history = session.call(req("history", json!({"type":"chat_get","chat_id":"one"})));
+    let messages = history["result"]["messages"].as_array().unwrap();
+    assert_eq!(messages.len(), 2, "{history}");
+    assert_eq!(messages[0]["content"], "Please speak with me.");
 }

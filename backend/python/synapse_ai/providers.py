@@ -78,7 +78,13 @@ MISSION_REVIEW_FORMAT = {"type": "json_schema", "json_schema": {"name": "mission
     }
 }}}
 
+TRANSLATION_FORMAT = {"type": "json_schema", "json_schema": {"name": "translation", "strict": True, "schema": {
+    "type": "object", "additionalProperties": False, "required": ["translation"],
+    "properties": {"translation": {"type": "string", "minLength": 1, "maxLength": 8192}}
+}}}
+
 RESPONSE_FORMATS = {
+    "translation": TRANSLATION_FORMAT,
     "learning": LEARNING_FORMAT,
     "mission_plan": MISSION_PLAN_FORMAT,
     "mission_review": MISSION_REVIEW_FORMAT,

@@ -2,7 +2,7 @@ use crate::{
     chats, context,
     contracts::{
         ContextReference, CoreError, CoreResult, Generation, MessageRole, ModelManifest, SkillPin,
-        bounded,
+        VoiceLanguage, bounded,
     },
     skills, store,
 };
@@ -18,6 +18,7 @@ pub(crate) enum Purpose {
     MissionPlan,
     MissionGenerate,
     MissionReview,
+    Translation,
 }
 
 pub(crate) struct Launch {
@@ -37,18 +38,8 @@ fn message_id(job_id: &str, role: &str) -> String {
     )
 }
 
-pub(crate) fn start(
-    tx: &Transaction<'_>,
-    id: &str,
-    chat_id: Option<&str>,
-    model_id: &str,
-    prompt: &str,
-    skill: Option<&SkillPin>,
-    references: &[ContextReference],
-) -> CoreResult<(Value, Launch)> {
-    bounded(id, "job_id", 128)?;
+pub(crate) fn registered_model(tx: &Transaction<'_>, model_id: &str) -> CoreResult<ModelManifest> {
     bounded(model_id, "model_id", 128)?;
-    bounded(prompt, "prompt", 32_768)?;
     let manifest: Option<String> = tx
         .query_row("SELECT manifest FROM models WHERE id=?1", [model_id], |r| {
             r.get(0)
@@ -63,6 +54,22 @@ pub(crate) fn start(
             "Model has no supported chat provider",
         ));
     }
+    Ok(manifest)
+}
+
+pub(crate) fn start(
+    tx: &Transaction<'_>,
+    id: &str,
+    chat_id: Option<&str>,
+    model_id: &str,
+    prompt: &str,
+    skill: Option<&SkillPin>,
+    references: &[ContextReference],
+    language: Option<VoiceLanguage>,
+) -> CoreResult<(Value, Launch)> {
+    bounded(id, "job_id", 128)?;
+    bounded(prompt, "prompt", 32_768)?;
+    let manifest = registered_model(tx, model_id)?;
     // Resolve the complete immutable pin before appending the human source.
     // Guidance remains ephemeral worker context, separate from chat and memory.
     let guidance = match (skill, chat_id) {
@@ -71,7 +78,10 @@ pub(crate) fn start(
         (None, _) => None,
     };
     let selected = context::select(tx, references)?;
-    let mut messages: Vec<Value> = guidance.into_iter().collect();
+    let mut messages: Vec<Value> = language.into_iter().map(|language| json!({
+        "role":"system", "content":format!("Respond to this spoken turn in {}. Use natural speech-friendly wording.", language.name())
+    })).collect();
+    messages.extend(guidance);
     messages.extend(selected.messages);
     if let Some(chat_id) = chat_id {
         let mut statement = tx.prepare(

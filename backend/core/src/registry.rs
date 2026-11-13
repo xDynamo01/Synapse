@@ -221,6 +221,8 @@ pub(crate) fn capabilities() -> Value {
         {"id":"skill_registry","status":"operational"},
         {"id":"skill_guidance","status":"implemented","requires":"explicit exact project Skill pin and an available conversation model; no discovery, evolution or execution authority"},
         {"id":"inference","status":"implemented","requires":"registered lm_studio chat model and configured Python executable"},
+        {"id":"voice_turn","status":"implemented","requires":"detected pt-BR or en-US transcript, registered local model and saved chat"},
+        {"id":"voice_translator","status":"implemented","requires":"registered local model and reliable pt-BR/en-US turn detection"},
         {"id":"workspace_tools","status":"implemented","requires":"Windows and an approved exact mission"},
         {"id":"project_check","status":"implemented","requires":"Windows LPAC, configured native toolchain and approved sealed mission"},
         {"id":"mission_candidate_review","status":"implemented","requires":"approved sealed mission, configured native checks and local models"},

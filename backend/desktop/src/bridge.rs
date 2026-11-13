@@ -12,6 +12,27 @@ use std::{
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 enum Action {
     State,
+    VoiceEnable {
+        #[serde(default)]
+        diagnostic: bool,
+        model: Option<String>,
+    },
+    VoiceDisable,
+    VoiceDevices,
+    VoiceConfigure {
+        wake_name: Option<String>,
+        input: Option<String>,
+        output: Option<String>,
+    },
+    VoiceFeedPcm {
+        pcm: String,
+    },
+    VoiceInterrupt,
+    TranslatorStart {
+        source_language: String,
+        target_language: String,
+    },
+    TranslatorStop,
     RegisterProject {
         scope: String,
         root: String,
@@ -128,6 +149,32 @@ fn handle(desktop: &mut Desktop, action: Action) -> Result<Value, String> {
     }
     match action {
         Action::State => (),
+        Action::VoiceEnable { diagnostic, model } => {
+            if let Some(model) = model {
+                desktop.model = model;
+            }
+            desktop.voice.enable(diagnostic)?;
+        }
+        Action::VoiceDevices => desktop.voice_devices = Some(desktop.voice.audio.devices()?),
+        Action::VoiceDisable => desktop.mute_voice(),
+        Action::VoiceConfigure {
+            wake_name,
+            input,
+            output,
+        } => {
+            if let Some(name) = wake_name {
+                desktop.voice.wake_name = name;
+            }
+            desktop.interrupt_voice();
+            desktop.voice.switch(input, output)?;
+        }
+        Action::VoiceFeedPcm { pcm } => desktop.voice.diagnostic_pcm(&pcm)?,
+        Action::VoiceInterrupt => desktop.interrupt_voice(),
+        Action::TranslatorStart {
+            source_language,
+            target_language,
+        } => desktop.start_translator(&source_language, &target_language),
+        Action::TranslatorStop => desktop.stop_translator(),
         Action::RegisterProject { scope, root } => desktop.register_project(&scope, &root),
         Action::SelectProject { scope } => desktop.select_project(&scope),
         Action::OpenChat { chat_id } => {
@@ -233,7 +280,9 @@ fn handle(desktop: &mut Desktop, action: Action) -> Result<Value, String> {
     }
     drain(desktop)?;
     Ok(
-        json!({"connected":desktop.connected,"project":desktop.project,"cursor":desktop.cursor,"chat_id":desktop.active_chat,"messages":desktop.messages,
+        json!({"connected":desktop.connected,"project":desktop.project,"voice":desktop.voice.status(),"translator":desktop.translator,
+        "voice_devices":desktop.voice_devices.as_ref().map(|devices| json!({"inputs":devices.inputs,"outputs":devices.outputs})),
+        "voice_job":desktop.voice_job.as_ref().map(|job| &job.id),"voice_reply":desktop.voice_reply,"cursor":desktop.cursor,"chat_id":desktop.active_chat,"messages":desktop.messages,
         "conversation_job":desktop.job_id,"mission_id":desktop.mission_id,"proposal":desktop.plan,"mission":desktop.mission,
         "execution":desktop.run,"recovery":desktop.recovery}),
     )

@@ -41,7 +41,7 @@ impl Store {
         connection.pragma_update(None, "synchronous", "FULL")?;
         let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let version: u32 = tx.pragma_query_value(None, "user_version", |r| r.get(0))?;
-        if version > 14 {
+        if version > 15 {
             return Err(CoreError::new(
                 "unsupported_storage_version",
                 "Database schema is newer than this Core",
@@ -185,6 +185,24 @@ CREATE TABLE mission_git_edit_plans(
     artifacts TEXT NOT NULL
 );
 PRAGMA user_version=14;",
+            )?;
+        }
+        if version < 15 {
+            tx.execute_batch(
+                "
+CREATE TABLE voice_translators(
+    session_id TEXT PRIMARY KEY,
+    source_language TEXT NOT NULL,
+    target_language TEXT NOT NULL,
+    mode_id TEXT NOT NULL
+);
+CREATE TABLE voice_translation_jobs(
+    job_id TEXT PRIMARY KEY REFERENCES ai_jobs(id),
+    session_id TEXT NOT NULL,
+    mode_id TEXT NOT NULL
+);
+CREATE INDEX voice_translation_session ON voice_translation_jobs(session_id);
+PRAGMA user_version=15;",
             )?;
         }
         tx.execute("UPDATE learning_jobs SET status=CASE WHEN attempts<3 THEN 'queued' ELSE 'failed' END,error='worker_interrupted' WHERE status='running'", [])?;
