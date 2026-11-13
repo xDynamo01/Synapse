@@ -30,3 +30,12 @@ class BrowserReadTests(unittest.TestCase):
         for url in ('https://127.1', 'https://example.com:8443', 'https://u@example.com', 'https://host.local', 'file:///x'):
             with self.subTest(url=url), self.assertRaises(ValueError):
                 reader.target(url)
+
+    def test_parser_lists_image_sources_without_requesting_them(self):
+        parser = reader.PageText()
+        with patch.object(reader.socket, 'getaddrinfo') as resolve:
+            parser.feed('<img src="/photo.png" srcset="/automatic.jpg 2x">'
+                        '<script><img src="/hidden.png"></script>'
+                        '<img src="broken address"><iframe src="/frame"></iframe>')
+            resolve.assert_not_called()
+        self.assertEqual(parser.images, ['/photo.png'])

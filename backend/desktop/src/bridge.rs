@@ -12,6 +12,10 @@ use std::{
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 enum Action {
     State,
+    #[cfg(windows)]
+    BrowserLoadImage {
+        url: String,
+    },
     BrowserOpen {
         url: String,
     },
@@ -152,6 +156,8 @@ fn handle(desktop: &mut Desktop, action: Action) -> Result<Value, String> {
     }
     match action {
         Action::State => (),
+        #[cfg(windows)]
+        Action::BrowserLoadImage { url } => desktop.browser.load_image(url)?,
         Action::BrowserOpen { url } => desktop.browser.open(url)?,
         Action::VoiceEnable { diagnostic, model } => {
             if let Some(model) = model {

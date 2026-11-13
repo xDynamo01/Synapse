@@ -72,3 +72,21 @@ a cadeia do certificado foi recusada pelo ambiente e a leitura falhou. A
 política Rust e o protótipo Python ainda são independentes. O processo do
 motor, a política única de rede, as missões, a quarentena e as sessões
 persistentes continuam pendentes de integração e verificação.
+
+### Imagens raster sob demanda
+
+O desktop lista até 32 referências `img src` da origem aberta. O leitor faz
+uma requisição de imagem apenas após seleção explícita. O decodificador usa
+o launcher LPAC do runner, com zero capacidades verificadas, Job Object e
+área temporária de leitura. A saída aceita pelo Core consiste em dimensões
+e bytes RGBA de comprimento exato. O binário isolado é empacotado ao lado do
+desktop. A imagem original não é entregue à interface nem ao modelo.
+
+A ponte do desktop abriu `www.python.org`, confirmou que a imagem não estava
+carregada na abertura, recusou uma seleção externa e recebeu as dimensões do
+PNG somente após a seleção. Os testes do Windows executaram PNG e JPEG no
+LPAC e recusaram SVG, PNG truncado e dimensão excessiva. A evidência confirma
+a configuração do token e do Job. Sondagens diretas de acesso a rede e arquivos
+privados pelo binário de imagem ainda não foram executadas.
+
+[Guia do navegador de leitura](../guides/windows-browser-reader.md).

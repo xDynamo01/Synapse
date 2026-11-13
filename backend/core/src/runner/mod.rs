@@ -2,6 +2,8 @@
 #[cfg(windows)]
 mod assets;
 #[cfg(windows)]
+pub(crate) mod image;
+#[cfg(windows)]
 mod native;
 #[cfg(windows)]
 mod python;
@@ -36,11 +38,15 @@ pub(crate) struct Control {
 }
 impl Control {
     fn new() -> Arc<Self> {
+        Self::with_output_limit(32 * 1024)
+    }
+
+    fn with_output_limit(limit: usize) -> Arc<Self> {
         Arc::new(Self {
             cancelled: AtomicBool::new(false),
             began: Instant::now(),
             execution: OnceLock::new(),
-            output_remaining: Arc::new(AtomicUsize::new(32 * 1024)),
+            output_remaining: Arc::new(AtomicUsize::new(limit)),
             resume: Mutex::new(()),
         })
     }

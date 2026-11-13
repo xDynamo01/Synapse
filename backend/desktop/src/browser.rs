@@ -12,6 +12,7 @@ use std::{
 struct Page {
     origin: String,
     text: String,
+    images: Vec<String>,
 }
 
 #[derive(Default)]
@@ -20,10 +21,19 @@ pub struct Browser {
     page: Option<Page>,
     error: Option<String>,
     pending: Option<Receiver<Result<Page, String>>>,
+    #[cfg(windows)]
+    image: Option<Receiver<Result<synapse_core::browser_image::Pixels, String>>>,
+    texture: Option<egui::TextureHandle>,
+    #[cfg(windows)]
+    pixels: Option<synapse_core::browser_image::Pixels>,
 }
 
 impl Browser {
     pub fn open(&mut self, address: String) -> Result<(), String> {
+        #[cfg(windows)]
+        if self.image.is_some() {
+            return Err("Aguarde o carregamento da imagem.".into());
+        }
         if self.pending.is_some() {
             return Err("Uma página já está sendo carregada.".into());
         }
@@ -36,6 +46,12 @@ impl Browser {
         }
         self.address = address.clone();
         self.page = None;
+        self.texture = None;
+        #[cfg(windows)]
+        {
+            self.image = None;
+            self.pixels = None;
+        }
         self.error = None;
         let (send, receive) = mpsc::channel();
         std::thread::spawn(move || {
@@ -46,6 +62,8 @@ impl Browser {
     }
 
     pub fn poll(&mut self) {
+        #[cfg(windows)]
+        self.poll_image();
         let Some(pending) = &self.pending else {
             return;
         };
@@ -59,11 +77,94 @@ impl Browser {
     }
 
     pub fn state(&self) -> Value {
-        json!({"loading":self.pending.is_some(),"error":self.error,
-            "page":self.page.as_ref().map(|page| json!({"origin":page.origin,"text":page.text}))})
+        let mut state = json!({"loading":self.pending.is_some(),"error":self.error,
+            "page":self.page.as_ref().map(|page| json!({"origin":page.origin,"text":page.text,"images":page.images}))});
+        #[cfg(windows)]
+        {
+            state["image_loading"] = json!(self.image.is_some());
+            state["image"] = json!(
+                self.pixels
+                    .as_ref()
+                    .map(|image| [image.width, image.height])
+            );
+        }
+        state
+    }
+
+    #[cfg(windows)]
+    pub fn load_image(&mut self, address: String) -> Result<(), String> {
+        let origin = self
+            .page
+            .as_ref()
+            .filter(|page| page.images.contains(&address))
+            .ok_or("Escolha uma imagem listada na página aberta.")?
+            .origin
+            .clone();
+        use base64::{Engine, engine::general_purpose::STANDARD};
+        if self.image.is_some() {
+            return Err("Uma imagem já está sendo carregada.".into());
+        }
+        self.pixels = None;
+        self.error = None;
+        self.texture = None;
+        let (send, receive) = mpsc::channel();
+        std::thread::spawn(move || {
+            let result = (|| {
+                let response =
+                    read_json(&["--origin", &origin, "--image", "--", &address], 3_000_000)?;
+                let encoded = response["image"].as_str().ok_or("Imagem ausente.")?;
+                let bytes = STANDARD
+                    .decode(encoded)
+                    .map_err(|_| "Resposta de imagem inválida.")?;
+                synapse_core::browser_image::decode(&bytes)
+            })();
+            let _ = send.send(result);
+        });
+        self.image = Some(receive);
+        Ok(())
+    }
+
+    #[cfg(windows)]
+    fn poll_image(&mut self) {
+        if let Some(receive) = &self.image {
+            match receive.try_recv() {
+                Ok(Ok(image)) => {
+                    self.pixels = Some(image);
+                    self.image = None;
+                }
+                Ok(Err(error)) => {
+                    self.error = Some(error);
+                    self.image = None;
+                }
+                Err(TryRecvError::Disconnected) => {
+                    self.error = Some("O leitor de imagens encerrou.".into());
+                    self.image = None;
+                }
+                Err(TryRecvError::Empty) => {}
+            }
+        }
     }
 
     pub fn show(&mut self, ui: &mut egui::Ui) {
+        #[cfg(windows)]
+        {
+            if self.image.is_some() {
+                ui.spinner();
+            }
+            if self.texture.is_none() {
+                if let Some(image) = &self.pixels {
+                    let pixels = egui::ColorImage::from_rgba_unmultiplied(
+                        [image.width as usize, image.height as usize],
+                        &image.rgba,
+                    );
+                    self.texture = Some(ui.ctx().load_texture(
+                        "browser-image",
+                        pixels,
+                        egui::TextureOptions::LINEAR,
+                    ));
+                }
+            }
+        }
         ui.heading("Navegador");
         ui.horizontal(|ui| {
             let response = ui.add(
@@ -89,17 +190,43 @@ impl Browser {
         if let Some(error) = &self.error {
             ui.colored_label(egui::Color32::LIGHT_RED, error);
         }
+        #[cfg(windows)]
+        let mut selected = None;
         if let Some(page) = &self.page {
             ui.label(&page.origin);
             ui.separator();
             egui::ScrollArea::vertical().show(ui, |ui| {
+                if let Some(texture) = &self.texture {
+                    ui.add(egui::Image::from_texture(texture).max_width(ui.available_width()));
+                }
+                #[cfg(windows)]
+                for address in &page.images {
+                    if ui
+                        .add_enabled(self.image.is_none(), egui::Button::new("Carregar imagem"))
+                        .on_hover_text(address)
+                        .clicked()
+                    {
+                        selected = Some(address.clone());
+                    }
+                }
                 ui.add(egui::Label::new(&page.text).selectable(true));
             });
+        }
+        #[cfg(windows)]
+        if let Some(address) = selected {
+            if let Err(error) = self.load_image(address) {
+                self.error = Some(error);
+            }
         }
     }
 }
 
 fn read(address: &str) -> Result<Page, String> {
+    serde_json::from_value(read_json(&["--", address], 1_000_000)?)
+        .map_err(|_| "O leitor devolveu uma página inválida.".into())
+}
+
+fn read_json(args: &[&str], limit: u64) -> Result<Value, String> {
     let python = std::env::var_os("SYNAPSE_PYTHON_EXECUTABLE")
         .ok_or("Configure o Python local do Synapse.")?;
     if !Path::new(&python).is_absolute() {
@@ -112,9 +239,8 @@ fn read(address: &str) -> Result<Page, String> {
             "-B",
             "-c",
             include_str!("../../python/synapse_ai/browser_read.py"),
-            "--",
-            address,
         ])
+        .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -127,7 +253,7 @@ fn read(address: &str) -> Result<Page, String> {
     // Drain the pipes concurrently so long pages do not block the process.
     let output = child.stdout.take().unwrap();
     let errors = child.stderr.take().unwrap();
-    let output = std::thread::spawn(move || bounded(output, 1_000_000));
+    let output = std::thread::spawn(move || bounded(output, limit));
     let errors = std::thread::spawn(move || bounded(errors, 4096));
     let start = Instant::now();
     let status = loop {

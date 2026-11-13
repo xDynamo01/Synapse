@@ -1,5 +1,6 @@
 """Owner-invoked HTTPS text reader. No cookies, scripts or subresources."""
 import argparse
+import base64
 from html.parser import HTMLParser
 from http.client import HTTPResponse
 import ipaddress
@@ -15,8 +16,13 @@ class PageText(HTMLParser):
         super().__init__()
         self.parts = []
         self.hidden = None
+        self.images = []
 
     def handle_starttag(self, tag, attrs):
+        if tag == "img" and self.hidden is None and len(self.images) < 32:
+            src = dict(attrs).get("src")
+            if src and len(src) <= 4096 and not any(c.isspace() or ord(c) < 32 or c == "\\" for c in src):
+                self.images.append(src)
         if self.hidden is None and tag in {"script", "style", "template", "noscript"}:
             self.hidden = tag
 
@@ -62,7 +68,7 @@ def resolve(host):
     return addresses
 
 
-def fetch(origin, destination):
+def fetch(origin, destination, image=False):
     approved = target(origin)
     if approved.path not in ("", "/") or approved.query or approved.fragment:
         raise ValueError("Approval must identify an origin")
@@ -82,7 +88,8 @@ def fetch(origin, destination):
                 path = url.path or "/"
                 if url.query:
                     path += "?" + url.query
-                tls.sendall(f"GET {path} HTTP/1.1\r\nHost: {url.hostname}\r\nAccept: text/html, text/plain\r\nConnection: close\r\n\r\n".encode("ascii"))
+                accept = "image/png, image/jpeg" if image else "text/html, text/plain"
+                tls.sendall(f"GET {path} HTTP/1.1\r\nHost: {url.hostname}\r\nAccept: {accept}\r\nConnection: close\r\n\r\n".encode("ascii"))
                 with HTTPResponse(tls) as response:
                     response.begin()
                     if response.status in (301, 302, 303, 307, 308):
@@ -97,38 +104,51 @@ def fetch(origin, destination):
                     if response.status != 200 or response.getheader("Content-Encoding", "identity").lower() != "identity":
                         raise ValueError("Unsupported HTTP response")
                     media = response.headers.get_content_type()
-                    if media not in ("text/html", "text/plain") or response.getheader("Content-Disposition"):
+                    allowed = ("image/png", "image/jpeg") if image else ("text/html", "text/plain")
+                    if media not in allowed or response.getheader("Content-Disposition"):
                         raise ValueError("Only inline HTML and plain text are supported")
+                    limit = 2 * 1024 * 1024 if image else 262144
                     body = bytearray()
-                    while len(body) <= 262144:
+                    while len(body) <= limit:
                         remaining = expires - time.monotonic()
                         if remaining <= 0:
                             raise TimeoutError("Read deadline exceeded")
                         tls.settimeout(remaining)
-                        part = response.read1(min(16384, 262145 - len(body)))
+                        part = response.read1(min(16384, limit + 1 - len(body)))
                         if not part:
                             break
                         body.extend(part)
-                    if len(body) > 262144:
+                    if len(body) > limit:
                         raise ValueError("Response exceeds size limit")
+                    if image:
+                        return {"image": base64.b64encode(body).decode("ascii")}
+                    images = []
                     text = body.decode("utf-8", errors="replace")
                     if media == "text/html":
                         parser = PageText()
                         parser.feed(text)
                         parser.close()
                         text = "\n".join(parser.parts)
-                    return {"origin": origin, "text": text[:64000]}
+                        for src in parser.images:
+                            try:
+                                candidate = target(urljoin(destination, src))
+                            except ValueError:
+                                continue
+                            if candidate.hostname == approved.hostname:
+                                images.append(candidate.geturl())
+                    return {"origin": origin, "text": text[:64000], "images": list(dict.fromkeys(images))}
     raise ValueError("Redirect limit exceeded")
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--origin")
+    parser.add_argument("--image", action="store_true")
     parser.add_argument("url")
     args = parser.parse_args()
     try:
         url = target(args.url)
-        print(json.dumps(fetch(args.origin or f"https://{url.hostname}", args.url)))
+        print(json.dumps(fetch(args.origin or f"https://{url.hostname}", args.url, image=args.image)))
     except (ValueError, OSError) as error:
         parser.exit(1, f"Reading failed: {error}\n")
 

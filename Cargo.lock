@@ -1554,6 +1554,8 @@ dependencies = [
  "num-traits",
  "png",
  "tiff",
+ "zune-core",
+ "zune-jpeg",
 ]
 
 [[package]]
@@ -2999,6 +3001,8 @@ dependencies = [
 name = "synapse-core"
 version = "0.1.0"
 dependencies = [
+ "base64",
+ "image",
  "rusqlite",
  "serde",
  "serde_json",
