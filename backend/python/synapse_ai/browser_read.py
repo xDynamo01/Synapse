@@ -123,11 +123,12 @@ def fetch(origin, destination):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--origin", required=True)
+    parser.add_argument("--origin")
     parser.add_argument("url")
     args = parser.parse_args()
     try:
-        print(json.dumps(fetch(args.origin, args.url)))
+        url = target(args.url)
+        print(json.dumps(fetch(args.origin or f"https://{url.hostname}", args.url)))
     except (ValueError, OSError) as error:
         parser.exit(1, f"Reading failed: {error}\n")
 

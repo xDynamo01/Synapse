@@ -12,6 +12,9 @@ use std::{
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 enum Action {
     State,
+    BrowserOpen {
+        url: String,
+    },
     VoiceEnable {
         #[serde(default)]
         diagnostic: bool,
@@ -149,6 +152,7 @@ fn handle(desktop: &mut Desktop, action: Action) -> Result<Value, String> {
     }
     match action {
         Action::State => (),
+        Action::BrowserOpen { url } => desktop.browser.open(url)?,
         Action::VoiceEnable { diagnostic, model } => {
             if let Some(model) = model {
                 desktop.model = model;
@@ -280,7 +284,7 @@ fn handle(desktop: &mut Desktop, action: Action) -> Result<Value, String> {
     }
     drain(desktop)?;
     Ok(
-        json!({"connected":desktop.connected,"project":desktop.project,"voice":desktop.voice.status(),"translator":desktop.translator,
+        json!({"connected":desktop.connected,"browser":desktop.browser.state(),"project":desktop.project,"voice":desktop.voice.status(),"translator":desktop.translator,
         "voice_devices":desktop.voice_devices.as_ref().map(|devices| json!({"inputs":devices.inputs,"outputs":devices.outputs})),
         "voice_job":desktop.voice_job.as_ref().map(|job| &job.id),"voice_reply":desktop.voice_reply,"cursor":desktop.cursor,"chat_id":desktop.active_chat,"messages":desktop.messages,
         "conversation_job":desktop.job_id,"mission_id":desktop.mission_id,"proposal":desktop.plan,"mission":desktop.mission,

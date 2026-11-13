@@ -2,6 +2,7 @@ mod audio;
 #[cfg(windows)]
 mod audio_tray;
 mod bridge;
+mod browser;
 mod catalog;
 mod transport;
 mod voice;
@@ -68,6 +69,8 @@ struct Desktop {
     pending: usize,
     error: String,
     workspace: bool,
+    browser_visible: bool,
+    browser: browser::Browser,
     voice: Voice,
     voice_job: Option<VoiceJob>,
     voice_language: String,
@@ -119,6 +122,8 @@ impl Desktop {
             pending: 0,
             error: String::new(),
             workspace: !mission_id.is_empty(),
+            browser_visible: false,
+            browser: browser::Browser::default(),
             voice: Voice::new(),
             voice_job: None,
             voice_language: "pt-BR".into(),
@@ -345,8 +350,26 @@ impl Desktop {
     fn header(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.heading("SYNAPSE");
-            ui.selectable_value(&mut self.workspace, false, "Presence");
-            ui.selectable_value(&mut self.workspace, true, "Workspace");
+            if ui
+                .selectable_label(!self.workspace && !self.browser_visible, "Presence")
+                .clicked()
+            {
+                self.workspace = false;
+                self.browser_visible = false;
+            }
+            if ui
+                .selectable_label(self.workspace && !self.browser_visible, "Workspace")
+                .clicked()
+            {
+                self.workspace = true;
+                self.browser_visible = false;
+            }
+            if ui
+                .selectable_label(self.browser_visible, "Navegador")
+                .clicked()
+            {
+                self.browser_visible = true;
+            }
             if self.connected {
                 ui.label(RichText::new("Core conectado").color(Color32::LIGHT_GREEN));
             } else if ui.button("Reconectar").clicked() && self.pending == 0 {
@@ -1185,6 +1208,7 @@ impl Desktop {
     }
 
     fn tick(&mut self) {
+        self.browser.poll();
         while let Ok((tag, reply)) = self.connection.replies.try_recv() {
             self.receive(tag, reply);
         }
@@ -1292,7 +1316,9 @@ impl eframe::App for Desktop {
         egui::Frame::new().inner_margin(14).show(ui, |ui| {
             self.header(ui);
             ui.add_space(12.0);
-            if self.workspace {
+            if self.browser_visible {
+                self.browser.show(ui);
+            } else if self.workspace {
                 self.workspace(ui);
             } else {
                 self.presence(ui);
