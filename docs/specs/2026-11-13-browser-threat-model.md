@@ -90,3 +90,13 @@ a configuração do token e do Job. Sondagens diretas de acesso a rede e arquivo
 privados pelo binário de imagem ainda não foram executadas.
 
 [Guia do navegador de leitura](../guides/windows-browser-reader.md).
+
+### CSS externo sob demanda
+
+A ponte abriu `www.python.org`, recusou uma folha de origem externa e
+analisou uma folha `text/css` da própria página somente após seleção. Outra
+folha do mesmo site foi recusada por ultrapassar 256 KiB. O teste do Core
+executou a análise CSS no LPAC e confirmou as contagens de importação e URL.
+O analisador recebe o texto e devolve contagens, sem interpretar estilos no
+desktop nem buscar dependências. Sessões autenticadas, autorização de ações
+por missão e quarentena continuam abertas no roteiro.

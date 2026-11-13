@@ -36,6 +36,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if input.len() > MAX_INPUT {
         return Err("Input too large".into());
     }
+    if std::env::args().nth(1).as_deref() == Some("--css") {
+        let mut summary = Summary {
+            css_blocks: 1,
+            ..Summary::default()
+        };
+        scan_css(&mut Parser::new(&input), &mut summary, 0);
+        println!("{}", serde_json::to_string(&summary)?);
+        return Ok(());
+    }
     let page = Html::parse_document(&input);
     let count = |selector: &str| page.select(&Selector::parse(selector).unwrap()).count() as u32;
     let mut summary = Summary {

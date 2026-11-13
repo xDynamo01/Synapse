@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 pub const MAX_INPUT: usize = 384 * 1024;
 const MAX_OUTPUT: usize = 4096;
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Default)]
 #[serde(deny_unknown_fields)]
 pub struct Summary {
     pub headings: u32,
@@ -18,25 +18,35 @@ pub struct Summary {
 }
 
 pub fn analyze(html: &str) -> Result<Summary, String> {
+    analyze_content(html, false)
+}
+
+pub fn analyze_css(css: &str) -> Result<Summary, String> {
+    analyze_content(css, true)
+}
+
+fn analyze_content(html: &str, css: bool) -> Result<Summary, String> {
     if html.len() > MAX_INPUT {
-        return Err("HTML excede o limite da análise.".into());
+        return Err("HTML excede o limite da anÃ¡lise.".into());
     }
     #[cfg(windows)]
     {
+        let args = if css { vec!["--css".into()] } else { vec![] };
         let output = crate::runner::browser_content::run(
             "synapse-page-analyzer.exe",
             html.as_bytes(),
             MAX_OUTPUT,
+            &args,
         )?;
         parse(&output)
     }
     #[cfg(not(windows))]
-    Err("Análise isolada indisponível nesta plataforma.".into())
+    Err("AnÃ¡lise isolada indisponÃ­vel nesta plataforma.".into())
 }
 
 #[cfg(any(windows, test))]
 fn parse(output: &str) -> Result<Summary, String> {
-    let invalid = || "O analisador devolveu um resumo inválido.".to_owned();
+    let invalid = || "O analisador devolveu um resumo invÃ¡lido.".to_owned();
     let summary: Summary = serde_json::from_str(output).map_err(|_| invalid())?;
     if [
         summary.headings,

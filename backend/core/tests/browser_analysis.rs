@@ -34,4 +34,12 @@ fn passive_analysis_returns_only_validated_counts() {
     );
     let too_large = "x".repeat(synapse_core::browser_analysis::MAX_INPUT + 1);
     assert!(synapse_core::browser_analysis::analyze(&too_large).is_err());
+    let css = synapse_core::browser_analysis::analyze_css(
+        "@import 'blocked.css'; p { background: url(blocked.png) }",
+    )
+    .unwrap();
+    assert_eq!(
+        (css.headings, css.css_blocks, css.css_imports, css.css_urls),
+        (0, 1, 1, 1)
+    );
 }

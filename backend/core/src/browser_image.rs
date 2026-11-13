@@ -20,6 +20,7 @@ pub fn decode(bytes: &[u8]) -> Result<Pixels, String> {
             "synapse-image-decoder.exe",
             bytes,
             limit.div_ceil(3) * 4 + 128,
+            &[],
         )?)
     }
     #[cfg(not(windows))]

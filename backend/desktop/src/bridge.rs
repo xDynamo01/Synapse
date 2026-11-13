@@ -16,6 +16,10 @@ enum Action {
     BrowserLoadImage {
         url: String,
     },
+    #[cfg(windows)]
+    BrowserAnalyzeCss {
+        url: String,
+    },
     BrowserOpen {
         url: String,
     },
@@ -158,6 +162,8 @@ fn handle(desktop: &mut Desktop, action: Action) -> Result<Value, String> {
         Action::State => (),
         #[cfg(windows)]
         Action::BrowserLoadImage { url } => desktop.browser.load_image(url)?,
+        #[cfg(windows)]
+        Action::BrowserAnalyzeCss { url } => desktop.browser.load_stylesheet(url)?,
         Action::BrowserOpen { url } => desktop.browser.open(url)?,
         Action::VoiceEnable { diagnostic, model } => {
             if let Some(model) = model {

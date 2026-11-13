@@ -31,5 +31,9 @@ restantes da [etapa 14](../specs/2026-11-13-browser-threat-model.md).
 No Windows, abra **Estrutura da página** para ver contagens de títulos,
 tabelas, links, formulários e referências CSS. O `synapse-page-analyzer.exe`,
 compilado junto do Core, roda em LPAC e devolve somente essas contagens.
-O CSS embutido é analisado. Folhas externas e referências CSS são apenas
-contabilizadas. O painel fica indisponível se o analisador isolado falhar.
+O CSS embutido é analisado ao abrir a página. Em **Folhas CSS da página**,
+use **Analisar folha CSS** para buscar uma referência da mesma origem, com
+limite de 256 KiB. O resultado conta `@import` e URLs sem buscar seus destinos.
+Na ponte, `browser_analyze_css` recebe a `url` listada e o estado publica o
+resumo em `stylesheet`. O painel mostra uma falha se o analisador isolado
+estiver indisponível.

@@ -17,8 +17,14 @@ class PageText(HTMLParser):
         self.parts = []
         self.hidden = None
         self.images = []
+        self.stylesheets = []
 
     def handle_starttag(self, tag, attrs):
+        if tag == "link" and self.hidden is None and len(self.stylesheets) < 32:
+            attrs_by_name = dict(attrs)
+            href = attrs_by_name.get("href")
+            if href and "stylesheet" in (attrs_by_name.get("rel") or "").lower().split():
+                self.stylesheets.append(href)
         if tag == "img" and self.hidden is None and len(self.images) < 32:
             src = dict(attrs).get("src")
             if src and len(src) <= 4096 and not any(c.isspace() or ord(c) < 32 or c == "\\" for c in src):
@@ -68,7 +74,7 @@ def resolve(host):
     return addresses
 
 
-def fetch(origin, destination, image=False):
+def fetch(origin, destination, image=False, css=False):
     approved = target(origin)
     if approved.path not in ("", "/") or approved.query or approved.fragment:
         raise ValueError("Approval must identify an origin")
@@ -88,7 +94,7 @@ def fetch(origin, destination, image=False):
                 path = url.path or "/"
                 if url.query:
                     path += "?" + url.query
-                accept = "image/png, image/jpeg" if image else "text/html, text/plain"
+                accept = "image/png, image/jpeg" if image else "text/css" if css else "text/html, text/plain"
                 tls.sendall(f"GET {path} HTTP/1.1\r\nHost: {url.hostname}\r\nAccept: {accept}\r\nConnection: close\r\n\r\n".encode("ascii"))
                 with HTTPResponse(tls) as response:
                     response.begin()
@@ -104,7 +110,7 @@ def fetch(origin, destination, image=False):
                     if response.status != 200 or response.getheader("Content-Encoding", "identity").lower() != "identity":
                         raise ValueError("Unsupported HTTP response")
                     media = response.headers.get_content_type()
-                    allowed = ("image/png", "image/jpeg") if image else ("text/html", "text/plain")
+                    allowed = ("image/png", "image/jpeg") if image else ("text/css",) if css else ("text/html", "text/plain")
                     if media not in allowed or response.getheader("Content-Disposition"):
                         raise ValueError("Only inline HTML and plain text are supported")
                     limit = 2 * 1024 * 1024 if image else 262144
@@ -122,33 +128,38 @@ def fetch(origin, destination, image=False):
                         raise ValueError("Response exceeds size limit")
                     if image:
                         return {"image": base64.b64encode(body).decode("ascii")}
+                    if css:
+                        return {"css": body.decode("utf-8", errors="replace")}
                     images = []
+                    stylesheets = []
                     text = body.decode("utf-8", errors="replace")
                     if media == "text/html":
                         parser = PageText()
                         parser.feed(text)
                         parser.close()
                         text = "\n".join(parser.parts)
-                        for src in parser.images:
+                        for src, items in [(src, images) for src in parser.images] + [(src, stylesheets) for src in parser.stylesheets]:
                             try:
                                 candidate = target(urljoin(destination, src))
                             except ValueError:
                                 continue
                             if candidate.hostname == approved.hostname:
-                                images.append(candidate.geturl())
-                    return {"origin": origin, "text": text[:64000], "images": list(dict.fromkeys(images)), "markup": body.decode("utf-8", errors="replace") if media == "text/html" else None}
+                                items.append(candidate.geturl())
+                    return {"origin": origin, "text": text[:64000], "images": list(dict.fromkeys(images)), "stylesheets": list(dict.fromkeys(stylesheets)), "markup": body.decode("utf-8", errors="replace") if media == "text/html" else None}
     raise ValueError("Redirect limit exceeded")
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--origin")
-    parser.add_argument("--image", action="store_true")
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--image", action="store_true")
+    modes.add_argument("--css", action="store_true")
     parser.add_argument("url")
     args = parser.parse_args()
     try:
         url = target(args.url)
-        print(json.dumps(fetch(args.origin or f"https://{url.hostname}", args.url, image=args.image)))
+        print(json.dumps(fetch(args.origin or f"https://{url.hostname}", args.url, image=args.image, css=args.css)))
     except (ValueError, OSError) as error:
         parser.exit(1, f"Reading failed: {error}\n")
 

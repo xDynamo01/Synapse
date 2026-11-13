@@ -13,6 +13,7 @@ struct Page {
     origin: String,
     text: String,
     images: Vec<String>,
+    stylesheets: Vec<String>,
     markup: Option<String>,
     analysis: Option<Value>,
     analysis_error: Option<String>,
@@ -28,14 +29,17 @@ pub struct Browser {
     image: Option<Receiver<Result<synapse_core::browser_image::Pixels, String>>>,
     texture: Option<egui::TextureHandle>,
     #[cfg(windows)]
+    stylesheet: Option<Receiver<Result<Value, String>>>,
+    stylesheet_summary: Option<Value>,
+    #[cfg(windows)]
     pixels: Option<synapse_core::browser_image::Pixels>,
 }
 
 impl Browser {
     pub fn open(&mut self, address: String) -> Result<(), String> {
         #[cfg(windows)]
-        if self.image.is_some() {
-            return Err("Aguarde o carregamento da imagem.".into());
+        if self.image.is_some() || self.stylesheet.is_some() {
+            return Err("Aguarde o carregamento do recurso.".into());
         }
         if self.pending.is_some() {
             return Err("Uma página já está sendo carregada.".into());
@@ -49,6 +53,7 @@ impl Browser {
         }
         self.address = address.clone();
         self.page = None;
+        self.stylesheet_summary = None;
         self.texture = None;
         #[cfg(windows)]
         {
@@ -66,7 +71,20 @@ impl Browser {
 
     pub fn poll(&mut self) {
         #[cfg(windows)]
-        self.poll_image();
+        {
+            self.poll_image();
+            if let Some(receiver) = &self.stylesheet {
+                match receiver.try_recv() {
+                    Ok(Ok(summary)) => self.stylesheet_summary = Some(summary),
+                    Ok(Err(error)) => self.error = Some(error),
+                    Err(TryRecvError::Disconnected) => {
+                        self.error = Some("O analisador CSS encerrou.".into())
+                    }
+                    Err(TryRecvError::Empty) => return,
+                }
+                self.stylesheet = None;
+            }
+        }
         let Some(pending) = &self.pending else {
             return;
         };
@@ -81,9 +99,11 @@ impl Browser {
 
     pub fn state(&self) -> Value {
         let mut state = json!({"loading":self.pending.is_some(),"error":self.error,
-            "page":self.page.as_ref().map(|page| json!({"origin":page.origin,"text":page.text,"images":page.images,"analysis":page.analysis,"analysis_error":page.analysis_error}))});
+            "page":self.page.as_ref().map(|page| json!({"origin":page.origin,"text":page.text,"images":page.images,"stylesheets":page.stylesheets,"analysis":page.analysis,"analysis_error":page.analysis_error}))});
         #[cfg(windows)]
         {
+            state["stylesheet"] = json!(self.stylesheet_summary);
+            state["stylesheet_loading"] = json!(self.stylesheet.is_some());
             state["image_loading"] = json!(self.image.is_some());
             state["image"] = json!(
                 self.pixels
@@ -92,6 +112,36 @@ impl Browser {
             );
         }
         state
+    }
+
+    #[cfg(windows)]
+    pub fn load_stylesheet(&mut self, address: String) -> Result<(), String> {
+        let origin = self
+            .page
+            .as_ref()
+            .filter(|page| page.stylesheets.contains(&address))
+            .ok_or("Escolha uma folha CSS listada na página aberta.")?
+            .origin
+            .clone();
+        if self.stylesheet.is_some() {
+            return Err("Uma folha CSS já está sendo analisada.".into());
+        }
+        self.error = None;
+        self.stylesheet_summary = None;
+        let (send, receive) = mpsc::channel();
+        std::thread::spawn(move || {
+            let result = (|| {
+                let response =
+                    read_json(&["--origin", &origin, "--css", "--", &address], 2_000_000)?;
+                let css = response["css"]
+                    .as_str()
+                    .ok_or("A folha CSS está ausente.")?;
+                synapse_core::browser_analysis::analyze_css(css).map(|summary| json!(summary))
+            })();
+            let _ = send.send(result);
+        });
+        self.stylesheet = Some(receive);
+        Ok(())
     }
 
     #[cfg(windows)]
@@ -195,8 +245,36 @@ impl Browser {
         }
         #[cfg(windows)]
         let mut selected = None;
+        #[cfg(windows)]
+        let mut stylesheet = None;
         if let Some(page) = &self.page {
             ui.label(&page.origin);
+            #[cfg(windows)]
+            if !page.stylesheets.is_empty() {
+                ui.collapsing("Folhas CSS da página", |ui| {
+                    for address in &page.stylesheets {
+                        if ui
+                            .add_enabled(
+                                self.stylesheet.is_none(),
+                                egui::Button::new("Analisar folha CSS"),
+                            )
+                            .on_hover_text(address)
+                            .clicked()
+                        {
+                            stylesheet = Some(address.clone());
+                        }
+                    }
+                    if self.stylesheet.is_some() {
+                        ui.spinner();
+                    }
+                    if let Some(summary) = &self.stylesheet_summary {
+                        ui.label(format!(
+                            "Importações: {} · Referências URL: {}",
+                            summary["css_imports"], summary["css_urls"]
+                        ));
+                    }
+                });
+            }
             if let Some(summary) = &page.analysis {
                 ui.collapsing("Estrutura da página", |ui| {
                     for (label, field) in [
@@ -233,6 +311,12 @@ impl Browser {
                 }
                 ui.add(egui::Label::new(&page.text).selectable(true));
             });
+        }
+        #[cfg(windows)]
+        if let Some(address) = stylesheet {
+            if let Err(error) = self.load_stylesheet(address) {
+                self.error = Some(error);
+            }
         }
         #[cfg(windows)]
         if let Some(address) = selected {

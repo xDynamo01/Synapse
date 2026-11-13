@@ -3,7 +3,12 @@ use super::{
     windows::{Profile, create_private_directory as windows_private},
 };
 
-pub(crate) fn run(binary: &str, bytes: &[u8], output_limit: usize) -> Result<String, String> {
+pub(crate) fn run(
+    binary: &str,
+    bytes: &[u8],
+    output_limit: usize,
+    args: &[String],
+) -> Result<String, String> {
     let root = tempfile::Builder::new()
         .prefix("Synapse.Content.")
         .tempdir()
@@ -26,7 +31,7 @@ pub(crate) fn run(binary: &str, bytes: &[u8], output_limit: usize) -> Result<Str
     let profile = Profile::create(name)?;
     profile.protect(&path, false)?;
     let control = Control::with_output_limit(output_limit);
-    let result = profile.launch(&staged, &[], &path, &path.join("scratch"), &control);
+    let result = profile.launch(&staged, args, &path, &path.join("scratch"), &control);
     if result
         .as_ref()
         .is_err_and(|e| e == "descendant_cleanup_failed")
