@@ -247,6 +247,19 @@ impl Browser {
             }
         }
         ui.heading("Navegador");
+        #[cfg(windows)]
+        ui.collapsing("Wikipedia de testes · perfis Chromium", |ui| {
+            use crate::chromium_profile::Profile;
+            ui.label("Abre uma janela separada para login manual.");
+            for (label, profile) in [
+                ("Abrir perfil de teste", Profile::Primary),
+                ("Abrir perfil de comparação", Profile::Comparison),
+            ] {
+                if ui.button(label).clicked() {
+                    self.error = profile.open().err();
+                }
+            }
+        });
         if ui
             .add_enabled(
                 self.login.is_none(),

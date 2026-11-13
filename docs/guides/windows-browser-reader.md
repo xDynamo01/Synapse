@@ -48,3 +48,15 @@ repetiriam o POST são recusados. O Synapse só indica sessão confirmada se a
 API da wiki devolver a identidade da conta esperada. Se a conta for confirmada, os cookies ficam cifrados com DPAPI no Windows.
 Use **Verificar sessão da Wikipedia** após reabrir o aplicativo para consultar
 a sessão armazenada. A senha não é armazenada.
+
+## Perfis Chromium dedicados para teste manual
+
+No Windows, **Wikipedia de testes · perfis Chromium** abre uma janela separada
+no Chrome ou Edge instalado. O perfil de teste e o de comparação usam
+pastas diferentes sob `%LOCALAPPDATA%\Synapse\browser\chromium`. O login
+é feito na janela do navegador. Os perfis desta seção são independentes
+do formulário experimental e do cofre DPAPI do leitor interno.
+
+O teste local com Edge confirmou que `localStorage` sobrevive à reabertura
+do processo e permanece separado entre os perfis. Essa verificação é local
+e não comprova autenticação ou persistência de cookies na Wikimedia.

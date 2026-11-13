@@ -4,6 +4,8 @@ mod audio_tray;
 mod bridge;
 mod browser;
 mod catalog;
+#[cfg(windows)]
+mod chromium_profile;
 mod transport;
 mod voice;
 
