@@ -3,6 +3,7 @@ import argparse
 import base64
 from html.parser import HTMLParser
 from http.client import HTTPException, HTTPResponse
+import hashlib
 import ipaddress
 import json
 import os
@@ -78,6 +79,27 @@ def save_session(username, cookies):
             os.replace(temporary, destination)
         finally:
             temporary.unlink(missing_ok=True)
+
+
+def quarantine_text(body):
+    # The preview download path only accepts inert UTF-8 text. The raw body
+    # remains encrypted and has no executable filename or automatic opener.
+    text = body.decode("utf-8", errors="strict")
+    if not text or any(not char.isprintable() and char not in "\r\n\t" for char in text):
+        raise ValueError("Download não passou na validação de texto UTF-8")
+    digest = hashlib.sha256(body).hexdigest()
+    directory = session_file().parent / "quarantine"
+    directory.mkdir(parents=True, exist_ok=True)
+    encrypted = protect_session(body)
+    with tempfile.NamedTemporaryFile(dir=directory, delete=False) as file:
+        temporary = Path(file.name)
+        try:
+            file.write(encrypted)
+            file.close()
+            os.replace(temporary, directory / (digest + ".dpapi"))
+        finally:
+            temporary.unlink(missing_ok=True)
+    return {"sha256": digest, "bytes": len(body), "media_type": "text/plain"}
 
 
 def load_session():
@@ -198,7 +220,7 @@ def resolve(host):
     return addresses
 
 
-def fetch(origin, destination, image=False, css=False, login=None, session=None):
+def fetch(origin, destination, image=False, css=False, login=None, session=None, download=False):
     approved = target(origin)
     if approved.path not in ("", "/") or approved.query or approved.fragment:
         raise ValueError("Approval must identify an origin")
@@ -262,9 +284,11 @@ def fetch(origin, destination, image=False, css=False, login=None, session=None)
                         raise ValueError("Unsupported HTTP encoding")
                     media = response.headers.get_content_type()
                     allowed = ("image/png", "image/jpeg") if image else ("text/css",) if css else ("text/html", "text/plain")
+                    if download:
+                        allowed = ("text/plain",)
                     if verifying:
                         allowed = ("application/json",)
-                    if media not in allowed or response.getheader("Content-Disposition"):
+                    if media not in allowed or (not download and response.getheader("Content-Disposition")):
                         raise ValueError("Only inline HTML and plain text are supported")
                     limit = 2 * 1024 * 1024 if image else 262144
                     body = bytearray()
@@ -279,6 +303,8 @@ def fetch(origin, destination, image=False, css=False, login=None, session=None)
                         body.extend(part)
                     if len(body) > limit:
                         raise ValueError("Response exceeds size limit")
+                    if download:
+                        return {"quarantine": quarantine_text(bytes(body))}
                     if verifying:
                         username = session[0] if session is not None else login["username"]
                         authenticated = verified_identity(body, username)
@@ -349,6 +375,7 @@ def main():
     modes.add_argument("--css", action="store_true")
     modes.add_argument("--login", action="store_true")
     modes.add_argument("--check-session", action="store_true")
+    modes.add_argument("--quarantine-text", action="store_true")
     parser.add_argument("url")
     args = parser.parse_args()
     try:
@@ -368,7 +395,7 @@ def main():
             if (not isinstance(login, dict) or set(login) != {"action", "username_field", "password_field", "username", "password"}
                     or any(not isinstance(value, str) or not value or len(value) > 4096 for value in login.values())):
                 raise ValueError("Invalid login request")
-        print(json.dumps(fetch(args.origin or f"https://{url.hostname}", args.url, image=args.image, css=args.css, login=login)))
+        print(json.dumps(fetch(args.origin or f"https://{url.hostname}", args.url, image=args.image, css=args.css, login=login, download=args.quarantine_text)))
     except NavigationDenied as error:
         parser.exit(1, f"{error}\n")
     except (ValueError, OSError, HTTPException) as error:

@@ -113,3 +113,19 @@ class BrowserReadTests(unittest.TestCase):
             username, restored = reader.load_session()
             self.assertEqual(username, 'fictional-account')
             self.assertEqual(next(iter(restored)).value, 'fictional-test-cookie')
+
+    @unittest.skipUnless(__import__('os').name == 'nt', 'Windows DPAPI')
+    def test_quarantine_encrypts_valid_text_and_rejects_binary(self):
+        import tempfile
+        import hashlib
+        with tempfile.TemporaryDirectory() as directory, patch.object(reader, 'session_file', return_value=Path(directory) / 'profile'):
+            with self.assertRaises(ValueError):
+                reader.quarantine_text(b'MZ\x00\xff')
+            self.assertFalse((Path(directory) / 'quarantine').exists())
+            body = b'Disposable fixture\n'
+            receipt = reader.quarantine_text(body)
+            self.assertEqual(receipt['sha256'], hashlib.sha256(body).hexdigest())
+            files = list((Path(directory) / 'quarantine').iterdir())
+            self.assertEqual(len(files), 1)
+            self.assertNotIn(body, files[0].read_bytes())
+            self.assertEqual(reader.protect_session(files[0].read_bytes(), decrypt=True), body)

@@ -60,3 +60,11 @@ do formulário experimental e do cofre DPAPI do leitor interno.
 O teste local com Edge confirmou que `localStorage` sobrevive à reabertura
 do processo e permanece separado entre os perfis. Essa verificação é local
 e não comprova autenticação ou persistência de cookies na Wikimedia.
+
+## Quarentena de texto
+
+No Windows, informe a URL pública em **Navegador** e use **Guardar endereço
+como texto em quarentena**. O leitor aceita `text/plain` UTF-8 de até 256 KiB,
+valida o conteúdo e grava uma cópia cifrada com DPAPI sob a pasta de dados do
+Synapse. O aplicativo mostra tipo, tamanho e SHA-256. A ação é manual e a
+quarentena mantém o conteúdo sem abrir o arquivo ou executar comandos.

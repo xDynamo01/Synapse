@@ -22,6 +22,8 @@ struct Page {
 #[derive(Default)]
 pub struct Browser {
     address: String,
+    quarantine: Option<Receiver<Result<Value, String>>>,
+    quarantine_receipt: Option<Value>,
     loaded_address: String,
     login_action: String,
     username_field: String,
@@ -83,6 +85,23 @@ impl Browser {
     }
 
     pub fn poll(&mut self) {
+        if let Some(receiver) = &self.quarantine {
+            match receiver.try_recv() {
+                Ok(Ok(receipt)) => {
+                    self.quarantine_receipt = Some(receipt);
+                    self.quarantine = None;
+                }
+                Ok(Err(error)) => {
+                    self.error = Some(error);
+                    self.quarantine = None;
+                }
+                Err(TryRecvError::Disconnected) => {
+                    self.error = Some("O leitor de downloads encerrou.".into());
+                    self.quarantine = None;
+                }
+                Err(TryRecvError::Empty) => {}
+            }
+        }
         if let Some(reply) = self.login.as_ref().and_then(|job| match job.try_recv() {
             Ok(reply) => Some(reply),
             Err(TryRecvError::Disconnected) => Some(Err("O processo de login encerrou.".into())),
@@ -247,6 +266,30 @@ impl Browser {
             }
         }
         ui.heading("Navegador");
+        #[cfg(windows)]
+        if ui
+            .add_enabled(
+                self.quarantine.is_none() && !self.address.is_empty(),
+                egui::Button::new("Guardar endereço como texto em quarentena"),
+            )
+            .clicked()
+        {
+            let address = self.address.trim().to_owned();
+            self.error = None;
+            self.quarantine_receipt = None;
+            let (send, receive) = mpsc::channel();
+            std::thread::spawn(move || {
+                let _ = send.send(read_json(&["--quarantine-text", "--", &address], 4096));
+            });
+            self.quarantine = Some(receive);
+        }
+        if let Some(receipt) = &self.quarantine_receipt {
+            ui.label(format!(
+                "Texto em quarentena · {} bytes · SHA-256 {}",
+                receipt["quarantine"]["bytes"],
+                receipt["quarantine"]["sha256"].as_str().unwrap_or_default()
+            ));
+        }
         #[cfg(windows)]
         ui.collapsing("Wikipedia de testes · perfis Chromium", |ui| {
             use crate::chromium_profile::Profile;
