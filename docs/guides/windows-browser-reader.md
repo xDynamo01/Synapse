@@ -37,3 +37,14 @@ limite de 256 KiB. O resultado conta `@import` e URLs sem buscar seus destinos.
 Na ponte, `browser_analyze_css` recebe a `url` listada e o estado publica o
 resumo em `stylesheet`. O painel mostra uma falha se o analisador isolado
 estiver indisponível.
+
+## Login experimental na Wikipedia de testes
+
+Abra `https://auth.wikimedia.org/testwiki/wiki/Special:UserLogin` e confirme
+esse mesmo endereço como destino do formulário, com os campos `wpName` e
+`wpPassword`. A exceção de retorno se aplica a esse fluxo de login e permite
+seguir para `test.wikipedia.org` depois do envio. Redirecionamentos que
+repetiriam o POST são recusados. O Synapse só indica sessão confirmada se a
+API da wiki devolver a identidade da conta esperada. Se a conta for confirmada, os cookies ficam cifrados com DPAPI no Windows.
+Use **Verificar sessão da Wikipedia** após reabrir o aplicativo para consultar
+a sessão armazenada. A senha não é armazenada.

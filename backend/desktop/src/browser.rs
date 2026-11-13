@@ -22,6 +22,14 @@ struct Page {
 #[derive(Default)]
 pub struct Browser {
     address: String,
+    loaded_address: String,
+    login_action: String,
+    username_field: String,
+    password_field: String,
+    username: String,
+    password: String,
+    login: Option<Receiver<Result<Value, String>>>,
+    login_notice: Option<String>,
     page: Option<Page>,
     error: Option<String>,
     pending: Option<Receiver<Result<Page, String>>>,
@@ -41,7 +49,7 @@ impl Browser {
         if self.image.is_some() || self.stylesheet.is_some() {
             return Err("Aguarde o carregamento do recurso.".into());
         }
-        if self.pending.is_some() {
+        if self.pending.is_some() || self.login.is_some() {
             return Err("Uma página já está sendo carregada.".into());
         }
         if address.len() > 4096
@@ -52,7 +60,12 @@ impl Browser {
             return Err("Informe um endereço HTTPS válido.".into());
         }
         self.address = address.clone();
+        self.loaded_address = address.clone();
         self.page = None;
+        self.password.clear();
+        self.username.clear();
+        self.login_action.clear();
+        self.login_notice = None;
         self.stylesheet_summary = None;
         self.texture = None;
         #[cfg(windows)]
@@ -70,6 +83,21 @@ impl Browser {
     }
 
     pub fn poll(&mut self) {
+        if let Some(reply) = self.login.as_ref().and_then(|job| match job.try_recv() {
+            Ok(reply) => Some(reply),
+            Err(TryRecvError::Disconnected) => Some(Err("O processo de login encerrou.".into())),
+            Err(TryRecvError::Empty) => None,
+        }) {
+            self.login_notice = Some(match reply {
+                Ok(value) if value["authenticated"] == true => "Sessão confirmada na Wikipedia de testes nesta tentativa.".into(),
+                Ok(value) if value["authenticated"] == false => "A Wikipedia de testes não confirmou a sessão para esta conta.".into(),
+                Ok(value) if value["submitted"] == true && value["login_form_present"] == false =>
+                    "Formulário enviado. A resposta deixou de mostrar o formulário; a autenticação ainda precisa ser verificada.".into(),
+                Ok(_) => "O servidor ainda mostra um formulário de login.".into(),
+                Err(error) => error,
+            });
+            self.login = None;
+        }
         #[cfg(windows)]
         {
             self.poll_image();
@@ -219,6 +247,60 @@ impl Browser {
             }
         }
         ui.heading("Navegador");
+        if ui
+            .add_enabled(
+                self.login.is_none(),
+                egui::Button::new("Verificar sessão da Wikipedia"),
+            )
+            .clicked()
+        {
+            let (send, receive) = mpsc::channel();
+            std::thread::spawn(move || {
+                let _ = send.send(read_json(
+                    &["--check-session", "--", "https://test.wikipedia.org/"],
+                    4096,
+                ));
+            });
+            self.login = Some(receive);
+            self.login_notice = None;
+        }
+        if let Some(notice) = &self.login_notice {
+            ui.label(notice);
+        }
+        if let Some(page) = &self.page {
+            if page
+                .analysis
+                .as_ref()
+                .and_then(|summary| summary["forms"].as_u64())
+                .unwrap_or(0)
+                > 0
+            {
+                ui.collapsing("Login manual (teste)", |ui| {
+                    ui.label("Informe o destino HTTPS exato e os nomes dos campos do formulário.");
+                    ui.add(egui::TextEdit::singleline(&mut self.login_action).hint_text("Destino do formulário"));
+                    ui.add(egui::TextEdit::singleline(&mut self.username_field).hint_text("Nome do campo de usuário"));
+                    ui.add(egui::TextEdit::singleline(&mut self.password_field).hint_text("Nome do campo de senha"));
+                    ui.add(egui::TextEdit::singleline(&mut self.username).hint_text("Usuário"));
+                    ui.add(egui::TextEdit::singleline(&mut self.password).password(true).hint_text("Senha"));
+                    let ready = self.login.is_none() && [&self.login_action, &self.username_field, &self.password_field, &self.username, &self.password].iter().all(|field| !field.is_empty());
+                    if ui.add_enabled(ready, egui::Button::new("Enviar login ao destino indicado")).clicked() {
+                        let origin = page.origin.clone();
+                        let address = self.loaded_address.clone();
+                        let data = json!({"action":self.login_action,"username_field":self.username_field,"password_field":self.password_field,"username":std::mem::take(&mut self.username),"password":std::mem::take(&mut self.password)});
+                        let (send, receive) = mpsc::channel();
+                        std::thread::spawn(move || {
+                            let reply = serde_json::to_vec(&data).map_err(|_| "Login inválido.".into())
+                                .and_then(|input| read_process(&["--origin", &origin, "--login", "--", &address], 4096, Some(&input)));
+                            let _ = send.send(reply);
+                        });
+                        self.login = Some(receive);
+                        self.login_notice = None;
+                    }
+                    if self.login.is_some() { ui.spinner(); }
+
+                });
+            }
+        }
         ui.horizontal(|ui| {
             let response = ui.add(
                 egui::TextEdit::singleline(&mut self.address)
@@ -343,6 +425,10 @@ fn read(address: &str) -> Result<Page, String> {
 }
 
 fn read_json(args: &[&str], limit: u64) -> Result<Value, String> {
+    read_process(args, limit, None)
+}
+
+fn read_process(args: &[&str], limit: u64, input: Option<&[u8]>) -> Result<Value, String> {
     let python = std::env::var_os("SYNAPSE_PYTHON_EXECUTABLE")
         .ok_or("Configure o Python local do Synapse.")?;
     if !Path::new(&python).is_absolute() {
@@ -357,7 +443,11 @@ fn read_json(args: &[&str], limit: u64) -> Result<Value, String> {
             include_str!("../../python/synapse_ai/browser_read.py"),
         ])
         .args(args)
-        .stdin(Stdio::null())
+        .stdin(if input.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     #[cfg(windows)]
@@ -365,7 +455,18 @@ fn read_json(args: &[&str], limit: u64) -> Result<Value, String> {
         use std::os::windows::process::CommandExt;
         command.creation_flags(0x08000000);
     }
+    if input.is_some_and(|bytes| bytes.len() > 8192) {
+        return Err("Login excede o limite de entrada.".into());
+    }
     let mut child = command.spawn().map_err(|error| error.to_string())?;
+    if let Some(input) = input {
+        use std::io::Write;
+        if child.stdin.take().unwrap().write_all(input).is_err() {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("Falha ao entregar o formulário ao leitor.".into());
+        }
+    }
     // Drain the pipes concurrently so long pages do not block the process.
     let output = child.stdout.take().unwrap();
     let errors = child.stderr.take().unwrap();
