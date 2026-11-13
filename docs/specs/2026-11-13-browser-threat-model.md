@@ -51,3 +51,9 @@ atribuir vulnerabilidades observadas a um navegador que ainda não foi instalado
 3. Adicionar perfil autenticado persistente com cofre do sistema e ação de
    teste de efeito explícito. Validar isolamento, reinício e falhas ambíguas
    antes de marcar a etapa como concluída.
+
+O primeiro componente de código é `backend/core/src/browser_policy.rs`. Ele
+valida destinos HTTPS, redirecionamentos de mesma origem, respostas DNS e o
+endereço do par. A validação é determinística e não abre conexões. O
+transporte ainda precisa aplicar a política na resolução e na conexão TLS,
+e provar que o motor também respeita a política em requisições indiretas.

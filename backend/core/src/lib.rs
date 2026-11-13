@@ -1,3 +1,4 @@
+pub mod browser_policy;
 mod candidate;
 mod chats;
 mod checks;
