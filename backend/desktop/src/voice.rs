@@ -87,6 +87,8 @@ pub struct Voice {
     pub output: Option<String>,
     pub wake_name: String,
     pub translator: bool,
+    pub idle_seconds: u64,
+    conversation_open: bool,
     pub error: Option<String>,
     pub voice_id: Option<String>,
     worker: Option<Worker>,
@@ -109,6 +111,8 @@ impl Voice {
             output: None,
             wake_name: "Artemis".into(),
             translator: false,
+            idle_seconds: 30,
+            conversation_open: false,
             error: None,
             voice_id: None,
             worker: None,
@@ -142,6 +146,7 @@ impl Voice {
         self.pending = None;
         self.worker = None;
         self.armed = false;
+        self.conversation_open = false;
         self.queued.clear();
         self.speech.clear();
         self.turn = Turn::default();
@@ -162,7 +167,7 @@ impl Voice {
         self.since = Instant::now();
         if !self.armed {
             self.phase = Phase::Off;
-        } else if self.translator {
+        } else if self.translator || self.conversation_open {
             self.phase = Phase::Listening;
         } else {
             self.phase = Phase::Wake;
@@ -209,6 +214,7 @@ impl Voice {
             return;
         }
         self.translator = active;
+        self.conversation_open = false;
         if self.armed
             && self.pending.is_none()
             && matches!(self.phase, Phase::Wake | Phase::Listening)
@@ -304,6 +310,7 @@ impl Voice {
                             self.since = Instant::now();
                         }
                         "wake" if value["detected"] == true || self.translator => {
+                            self.conversation_open = !self.translator;
                             self.queued.clear();
                             while self.audio.take_frame().is_some() {}
                             self.turn = Turn::default();
@@ -383,10 +390,9 @@ impl Voice {
                         self.phase = Phase::Processing;
                         self.request("transcribe", json!({"pcm":encode(&turn.samples)}));
                     }
-                } else if !self.translator
-                    && self.turn.voice == 0
-                    && self.since.elapsed() > Duration::from_secs(9)
-                {
+                }
+                if self.phase == Phase::Listening && self.conversation_idle(self.since.elapsed()) {
+                    self.conversation_open = false;
                     self.resume();
                 }
             }
@@ -401,6 +407,13 @@ impl Voice {
         None
     }
 
+    fn conversation_idle(&self, elapsed: Duration) -> bool {
+        self.conversation_open
+            && !self.translator
+            && self.turn.voice == 0
+            && elapsed >= Duration::from_secs(self.idle_seconds)
+    }
+
     pub fn status(&self) -> Value {
         let levels = self.audio.levels();
         let phase = if self.phase == Phase::Wake {
@@ -411,7 +424,7 @@ impl Voice {
         json!({"phase":phase,"capturing":levels.capturing,"speaking":levels.speaking,
             "input_level":levels.input,"output_level":levels.output,"eligible":levels.eligible,
             "wake_name":self.wake_name,"voice":self.voice_id,"error":self.error,"diagnostic":self.diagnostic,
-            "queued_samples":self.queued.len()})
+            "queued_samples":self.queued.len(),"idle_seconds":self.idle_seconds})
     }
 }
 
@@ -535,6 +548,23 @@ impl Drop for Worker {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn conversation_window_survives_reply_and_expires_only_while_idle() {
+        let mut voice = Voice::new();
+        voice.armed = true;
+        voice.conversation_open = true;
+        voice.phase = Phase::Speaking;
+        voice.resume();
+        assert!(voice.phase == Phase::Listening);
+        assert!(!voice.conversation_idle(Duration::from_secs(29)));
+        assert!(voice.conversation_idle(Duration::from_secs(30)));
+        voice.turn.voice = MIN_VOICE;
+        assert!(!voice.conversation_idle(Duration::from_secs(60)));
+        voice.turn.voice = 0;
+        voice.translator = true;
+        assert!(!voice.conversation_idle(Duration::from_secs(60)));
+    }
 
     #[test]
     fn segments_speech_and_bounds_pcm() {

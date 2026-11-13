@@ -2,7 +2,9 @@
 
 A escuta começa desativada. Abra uma conversa e selecione o modelo local. Em
 **Presence**, use **Ativar microfone** e diga “Artemis”. Aguarde o estado
-**Ouvindo** para falar. O controle **Interromper** cancela a resposta em curso.
+**Ouvindo** para falar. Após cada resposta, o Presence volta a ouvir. Depois
+de 30 segundos sem fala, volta a aguardar o nome de ativação. O tempo é
+ajustável em **Áudio**, entre 5 e 120 segundos. O controle **Interromper** cancela a resposta em curso.
 Em **Áudio**, selecione a entrada, a saída e o nome de ativação. A mudança de
 nome fica disponível com o microfone desativado.
 

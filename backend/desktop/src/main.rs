@@ -942,6 +942,11 @@ impl Desktop {
             }
         }
         ui.collapsing("Áudio", |ui| {
+            ui.add(
+                egui::Slider::new(&mut self.voice.idle_seconds, 5..=120)
+                    .suffix(" s")
+                    .text("Tempo sem fala"),
+            );
             ui.add_enabled(
                 self.voice.phase == Phase::Off,
                 egui::TextEdit::singleline(&mut self.voice.wake_name)
