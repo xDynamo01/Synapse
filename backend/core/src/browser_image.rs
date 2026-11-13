@@ -15,7 +15,12 @@ pub fn decode(bytes: &[u8]) -> Result<Pixels, String> {
     }
     #[cfg(windows)]
     {
-        parse(&crate::runner::image::run(bytes)?)
+        let limit = (MAX_DIMENSION as usize).pow(2) * 4;
+        parse(&crate::runner::browser_content::run(
+            "synapse-image-decoder.exe",
+            bytes,
+            limit.div_ceil(3) * 4 + 128,
+        )?)
     }
     #[cfg(not(windows))]
     {

@@ -136,7 +136,7 @@ def fetch(origin, destination, image=False):
                                 continue
                             if candidate.hostname == approved.hostname:
                                 images.append(candidate.geturl())
-                    return {"origin": origin, "text": text[:64000], "images": list(dict.fromkeys(images))}
+                    return {"origin": origin, "text": text[:64000], "images": list(dict.fromkeys(images)), "markup": body.decode("utf-8", errors="replace") if media == "text/html" else None}
     raise ValueError("Redirect limit exceeded")
 
 

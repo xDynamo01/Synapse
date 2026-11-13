@@ -25,3 +25,11 @@ O estado retorna as dimensões depois da validação. A exibição é local.
 Este fluxo é de leitura pública acionada pelo proprietário. Perfis com
 login, ações de missão e quarentena de downloads pertencem aos critérios
 restantes da [etapa 14](../specs/2026-11-13-browser-threat-model.md).
+
+## Estrutura da página
+
+No Windows, abra **Estrutura da página** para ver contagens de títulos,
+tabelas, links, formulários e referências CSS. O `synapse-page-analyzer.exe`,
+compilado junto do Core, roda em LPAC e devolve somente essas contagens.
+O CSS embutido é analisado. Folhas externas e referências CSS são apenas
+contabilizadas. O painel fica indisponível se o analisador isolado falhar.

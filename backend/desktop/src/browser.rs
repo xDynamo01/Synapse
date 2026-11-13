@@ -13,6 +13,9 @@ struct Page {
     origin: String,
     text: String,
     images: Vec<String>,
+    markup: Option<String>,
+    analysis: Option<Value>,
+    analysis_error: Option<String>,
 }
 
 #[derive(Default)]
@@ -78,7 +81,7 @@ impl Browser {
 
     pub fn state(&self) -> Value {
         let mut state = json!({"loading":self.pending.is_some(),"error":self.error,
-            "page":self.page.as_ref().map(|page| json!({"origin":page.origin,"text":page.text,"images":page.images}))});
+            "page":self.page.as_ref().map(|page| json!({"origin":page.origin,"text":page.text,"images":page.images,"analysis":page.analysis,"analysis_error":page.analysis_error}))});
         #[cfg(windows)]
         {
             state["image_loading"] = json!(self.image.is_some());
@@ -194,6 +197,25 @@ impl Browser {
         let mut selected = None;
         if let Some(page) = &self.page {
             ui.label(&page.origin);
+            if let Some(summary) = &page.analysis {
+                ui.collapsing("Estrutura da página", |ui| {
+                    for (label, field) in [
+                        ("Títulos", "headings"),
+                        ("Tabelas", "tables"),
+                        ("Links", "links"),
+                        ("Formulários", "forms"),
+                        ("Folhas externas", "external_stylesheets"),
+                        ("Blocos CSS", "css_blocks"),
+                        ("Importações CSS", "css_imports"),
+                        ("URLs em CSS", "css_urls"),
+                    ] {
+                        ui.label(format!("{label} · {}", summary[field]));
+                    }
+                });
+            }
+            if let Some(error) = &page.analysis_error {
+                ui.label(error);
+            }
             ui.separator();
             egui::ScrollArea::vertical().show(ui, |ui| {
                 if let Some(texture) = &self.texture {
@@ -222,8 +244,18 @@ impl Browser {
 }
 
 fn read(address: &str) -> Result<Page, String> {
-    serde_json::from_value(read_json(&["--", address], 1_000_000)?)
-        .map_err(|_| "O leitor devolveu uma página inválida.".into())
+    let mut page: Page = serde_json::from_value(read_json(&["--", address], 4_000_000)?)
+        .map_err(|_| "O leitor devolveu uma página inválida.")?;
+    if let Some(markup) = page.markup.take() {
+        #[cfg(windows)]
+        match synapse_core::browser_analysis::analyze(&markup) {
+            Ok(summary) => page.analysis = Some(json!(summary)),
+            Err(error) => page.analysis_error = Some(error),
+        }
+        #[cfg(not(windows))]
+        let _ = markup;
+    }
+    Ok(page)
 }
 
 fn read_json(args: &[&str], limit: u64) -> Result<Value, String> {

@@ -15,6 +15,10 @@ path = "src/main.rs"
 name = "synapse-image-decoder"
 path = "src/bin/image_decoder.rs"
 
+[[bin]]
+name = "synapse-page-analyzer"
+path = "src/bin/page_analyzer.rs"
+
 [dependencies]
 base64 = "=0.22.1"
 image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg"] }
@@ -25,6 +29,8 @@ serde_json.workspace = true
 sha1 = "=0.11.0"
 sha2.workspace = true
 url = "=2.5.8"
+scraper = { version = "=0.29.0", default-features = false }
+cssparser = "=0.38.0"
 
 [features]
 test-fault-injection = []

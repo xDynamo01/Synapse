@@ -2,7 +2,7 @@
 #[cfg(windows)]
 mod assets;
 #[cfg(windows)]
-pub(crate) mod image;
+pub(crate) mod browser_content;
 #[cfg(windows)]
 mod native;
 #[cfg(windows)]
