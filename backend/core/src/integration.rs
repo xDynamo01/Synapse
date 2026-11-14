@@ -86,16 +86,20 @@ fn snapshot(tx: &Transaction<'_>, mission: &str) -> CoreResult<Snapshot> {
             ));
         };
         let skill: crate::contracts::SkillManifest = serde_json::from_str(&raw)?;
-        if pin.scope != contract.scope
+        // An inspected, declarative import supplies guidance only. Existing
+        // registered Skills still constrain publication by their declarations.
+        let guidance_only = pin.scope == "global" || crate::registry::guidance_only(tx, pin)?;
+        if !crate::registry::skill_available(tx, &contract.scope, pin)?
             || digest != pin.digest
             || store::digest(&skill)? != digest
-            || required_actions.iter().any(|action| {
-                !skill.tools.iter().any(|tool| tool == action)
-                    || !skill
-                        .permissions
-                        .iter()
-                        .any(|permission| permission == action)
-            })
+            || (!guidance_only
+                && required_actions.iter().any(|action| {
+                    !skill.tools.iter().any(|tool| tool == action)
+                        || !skill
+                            .permissions
+                            .iter()
+                            .any(|permission| permission == action)
+                }))
         {
             return Err(CoreError::new(
                 "permission_denied",

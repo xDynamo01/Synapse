@@ -1,12 +1,41 @@
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 
+pub fn matching_skill_packages(catalog: &Value, objective: &str) -> Vec<Value> {
+    let words = |text: &str| -> BTreeSet<String> {
+        text.split(|character: char| !character.is_alphanumeric())
+            .filter(|word| word.chars().count() >= 3)
+            .map(str::to_lowercase)
+            .collect()
+    };
+    let objective = words(objective);
+    let Some(packages) = catalog["packages"].as_array() else {
+        return Vec::new();
+    };
+    let mut matches: Vec<_> = packages
+        .iter()
+        .filter_map(|package| {
+            let name = package["name"].as_str()?;
+            package["url"].as_str()?;
+            let score = words(name).intersection(&objective).count();
+            (score > 0).then_some((score, package))
+        })
+        .collect();
+    matches.sort_by_key(|(score, _)| std::cmp::Reverse(*score));
+    matches
+        .into_iter()
+        .take(5)
+        .map(|(_, package)| package.clone())
+        .collect()
+}
+
 #[derive(Default)]
 pub struct Catalog {
     pub chats: BTreeMap<String, String>,
     pub missions: BTreeSet<String>,
     pub projects: BTreeSet<String>,
     pub skills: BTreeMap<String, Vec<Value>>,
+    active_skills: BTreeMap<(String, String), Value>,
     memory: BTreeMap<String, BTreeSet<String>>,
 }
 
@@ -22,6 +51,12 @@ impl Catalog {
         match event["kind"].as_str() {
             Some("workspace_project_registered") => {
                 self.projects.insert(scope.into());
+            }
+            Some("skill_active_changed") => {
+                if let Some(id) = payload["skill_id"].as_str() {
+                    self.active_skills
+                        .insert((scope.into(), id.into()), payload["active"].clone());
+                }
             }
             Some("skill_registered") => {
                 if let (Some(id), Some(version), Some(digest)) = (
@@ -52,6 +87,13 @@ impl Catalog {
             }
             _ => {}
         }
+    }
+
+    pub fn is_active_skill(&self, pin: &Value) -> bool {
+        let (Some(scope), Some(id)) = (pin["scope"].as_str(), pin["id"].as_str()) else {
+            return false;
+        };
+        self.active_skills.get(&(scope.into(), id.into())) == Some(pin)
     }
 
     /// Match project names after an explicit project mention, using only metadata.
@@ -107,6 +149,20 @@ fn normalized(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn catalog_skill_suggestions_rank_matching_names() {
+        let entries = json!({"packages":[
+            {"name":"Python","url":"https://example.com/python"},
+            {"name":"Python Testes","url":"https://example.com/tests"},
+            {"name":"Rust","url":"https://example.com/rust"}
+        ]});
+        let matches = matching_skill_packages(&entries, "Criar testes em PYTHON");
+        assert_eq!(matches.len(), 2);
+        assert_eq!(matches[0]["name"], "Python Testes");
+        assert_eq!(matches[1]["name"], "Python");
+        assert!(matching_skill_packages(&entries, "Escrever documentação").is_empty());
+    }
 
     #[test]
     fn project_memory_requires_an_explicit_unambiguous_mention() {

@@ -322,6 +322,43 @@ pub(crate) fn get(tx: &Transaction<'_>, mission_id: &str) -> CoreResult<Value> {
     if let Some(plan) = plan {
         result["plan"] = serde_json::from_str(&plan)?;
         result["mission"] = missions::get(tx, mission_id)?;
+        let contract = &result["mission"]["contract"];
+        if contract["skill"].is_null() {
+            if let Some(scope) = contract["scope"].as_str() {
+                let choices = registry::planning_skill_candidates(tx, scope)?;
+                if !choices.is_empty() {
+                    result["skill_candidates"] = json!(choices);
+                }
+            }
+        }
+        if result["mission"]["state"] == "proposed"
+            && let (Some(artifacts), Some(checks)) = (
+                result["plan"]["artifacts"].as_array(),
+                result["plan"]["checks"].as_array(),
+            )
+        {
+            if artifacts.len() >= 4 && checks.len() >= 2 {
+                let execution = &result["mission"]["contract"]["execution"];
+                let primary = &execution["primary_model"];
+                let review = &execution["review_model"];
+                let peak = primary["memory_bytes"]
+                    .as_u64()
+                    .filter(|bytes| *bytes > 0)
+                    .zip(review["memory_bytes"].as_u64().filter(|bytes| *bytes > 0))
+                    .map(|(primary, review)| primary.max(review));
+                result["swarm_recommendation"] = json!({
+                    "reason":"A missão tem vários artefatos e verificações que podem ser divididos.",
+                    "roles":[
+                        {"role":"implementation","model_id":primary["id"],"memory_bytes":primary["memory_bytes"]},
+                        {"role":"verification","model_id":review["id"],"memory_bytes":review["memory_bytes"]}
+                    ],
+                    "benefit":"Dividir a implementação e a verificação entre funções dedicadas.",
+                    "risk":"A coordenação e a revisão podem aumentar a duração da missão.",
+                    "requires_owner_acceptance":true,
+                    "schedule":"sequential","estimated_peak_model_bytes":peak
+                });
+            }
+        }
     }
     Ok(result)
 }

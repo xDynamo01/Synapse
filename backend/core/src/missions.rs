@@ -61,7 +61,7 @@ pub(crate) fn propose(
     validate(contract)?;
     crate::planner::validate_seal(tx, id, contract)?;
     if let Some(pin) = &contract.skill {
-        if pin.scope != contract.scope {
+        if !crate::registry::skill_available(tx, &contract.scope, pin)? {
             return Err(CoreError::new(
                 "permission_denied",
                 "Skill scope differs from mission",

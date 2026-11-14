@@ -84,6 +84,28 @@ impl Browser {
         Ok(())
     }
 
+    #[cfg(windows)]
+    pub fn quarantine_text(&mut self, address: String) -> Result<(), String> {
+        if self.quarantine.is_some() {
+            return Err("Já há um download em andamento.".into());
+        }
+        if address.len() > 4096
+            || !address
+                .get(..8)
+                .is_some_and(|prefix| prefix.eq_ignore_ascii_case("https://"))
+        {
+            return Err("Informe um endereço HTTPS válido.".into());
+        }
+        self.error = None;
+        self.quarantine_receipt = None;
+        let (send, receive) = mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = send.send(read_json(&["--quarantine-text", "--", &address], 4096));
+        });
+        self.quarantine = Some(receive);
+        Ok(())
+    }
+
     pub fn poll(&mut self) {
         if let Some(receiver) = &self.quarantine {
             match receiver.try_recv() {
@@ -149,6 +171,8 @@ impl Browser {
             "page":self.page.as_ref().map(|page| json!({"origin":page.origin,"text":page.text,"images":page.images,"stylesheets":page.stylesheets,"analysis":page.analysis,"analysis_error":page.analysis_error}))});
         #[cfg(windows)]
         {
+            state["quarantine_loading"] = json!(self.quarantine.is_some());
+            state["quarantine_receipt"] = json!(self.quarantine_receipt);
             state["stylesheet"] = json!(self.stylesheet_summary);
             state["stylesheet_loading"] = json!(self.stylesheet.is_some());
             state["image_loading"] = json!(self.image.is_some());
@@ -274,14 +298,9 @@ impl Browser {
             )
             .clicked()
         {
-            let address = self.address.trim().to_owned();
-            self.error = None;
-            self.quarantine_receipt = None;
-            let (send, receive) = mpsc::channel();
-            std::thread::spawn(move || {
-                let _ = send.send(read_json(&["--quarantine-text", "--", &address], 4096));
-            });
-            self.quarantine = Some(receive);
+            if let Err(error) = self.quarantine_text(self.address.trim().to_owned()) {
+                self.error = Some(error);
+            }
         }
         if let Some(receipt) = &self.quarantine_receipt {
             ui.label(format!(
@@ -478,6 +497,18 @@ fn read(address: &str) -> Result<Page, String> {
         let _ = markup;
     }
     Ok(page)
+}
+
+pub fn fetch_skill_document(address: &str, catalog: bool) -> Result<Value, String> {
+    if address.len() > 4096 {
+        return Err("O endereço da Skill excede o limite.".into());
+    }
+    let mode = if catalog {
+        "--skill-catalog"
+    } else {
+        "--skill-package"
+    };
+    read_json(&[mode, "--", address], 310_000)
 }
 
 fn read_json(args: &[&str], limit: u64) -> Result<Value, String> {

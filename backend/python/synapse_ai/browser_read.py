@@ -220,7 +220,7 @@ def resolve(host):
     return addresses
 
 
-def fetch(origin, destination, image=False, css=False, login=None, session=None, download=False):
+def fetch(origin, destination, image=False, css=False, login=None, session=None, download=False, skill=False):
     approved = target(origin)
     if approved.path not in ("", "/") or approved.query or approved.fragment:
         raise ValueError("Approval must identify an origin")
@@ -248,6 +248,8 @@ def fetch(origin, destination, image=False, css=False, login=None, session=None,
                 if url.query:
                     path += "?" + url.query
                 accept = "image/png, image/jpeg" if image else "text/css" if css else "text/html, text/plain"
+                if skill:
+                    accept = "application/json, text/plain"
                 request = Request(destination)
                 if cookies is not None:
                     cookies.add_cookie_header(request)
@@ -284,13 +286,19 @@ def fetch(origin, destination, image=False, css=False, login=None, session=None,
                         raise ValueError("Unsupported HTTP encoding")
                     media = response.headers.get_content_type()
                     allowed = ("image/png", "image/jpeg") if image else ("text/css",) if css else ("text/html", "text/plain")
+                    if skill:
+                        allowed = ("application/json", "text/plain")
                     if download:
                         allowed = ("text/plain",)
                     if verifying:
                         allowed = ("application/json",)
                     if media not in allowed or (not download and response.getheader("Content-Disposition")):
+                        if skill:
+                            raise ValueError("Skill packages require inline JSON or UTF-8 text")
                         raise ValueError("Only inline HTML and plain text are supported")
                     limit = 2 * 1024 * 1024 if image else 262144
+                    if skill:
+                        limit = 49152
                     body = bytearray()
                     while len(body) <= limit:
                         remaining = expires - time.monotonic()
@@ -303,6 +311,8 @@ def fetch(origin, destination, image=False, css=False, login=None, session=None,
                         body.extend(part)
                     if len(body) > limit:
                         raise ValueError("Response exceeds size limit")
+                    if skill:
+                        return {"source": destination, "document": body.decode("utf-8")}
                     if download:
                         return {"quarantine": quarantine_text(bytes(body))}
                     if verifying:
@@ -367,6 +377,28 @@ def encode_login(form, login):
     return encoded
 
 
+def skill_catalog(result):
+    entries = json.loads(result["document"])
+    if not isinstance(entries, list) or len(entries) > 50:
+        raise ValueError("Expected a catalog of at most 50 entries")
+    source = result["source"]
+    origin = target(source).hostname
+    packages = []
+    for entry in entries:
+        if not isinstance(entry, dict) or set(entry) != {"name", "url"}:
+            raise ValueError("Invalid Skill catalog entry")
+        name, address = entry["name"], entry["url"]
+        if not isinstance(name, str) or not name.strip() or len(name) > 100:
+            raise ValueError("Invalid Skill catalog name")
+        if not isinstance(address, str) or not address or len(address) > 4096:
+            raise ValueError("Invalid Skill package URL")
+        destination = target(urljoin(source, address))
+        if destination.hostname != origin:
+            raise ValueError("Skill package is outside the catalog origin")
+        packages.append({"name": name, "url": destination.geturl()})
+    return {"source": source, "packages": packages}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--origin")
@@ -376,6 +408,8 @@ def main():
     modes.add_argument("--login", action="store_true")
     modes.add_argument("--check-session", action="store_true")
     modes.add_argument("--quarantine-text", action="store_true")
+    modes.add_argument("--skill-package", action="store_true")
+    modes.add_argument("--skill-catalog", action="store_true")
     parser.add_argument("url")
     args = parser.parse_args()
     try:
@@ -395,7 +429,10 @@ def main():
             if (not isinstance(login, dict) or set(login) != {"action", "username_field", "password_field", "username", "password"}
                     or any(not isinstance(value, str) or not value or len(value) > 4096 for value in login.values())):
                 raise ValueError("Invalid login request")
-        print(json.dumps(fetch(args.origin or f"https://{url.hostname}", args.url, image=args.image, css=args.css, login=login, download=args.quarantine_text)))
+        result = fetch(args.origin or f"https://{url.hostname}", args.url, image=args.image,
+                       css=args.css, login=login, download=args.quarantine_text,
+                       skill=args.skill_package or args.skill_catalog)
+        print(json.dumps(skill_catalog(result) if args.skill_catalog else result))
     except NavigationDenied as error:
         parser.exit(1, f"{error}\n")
     except (ValueError, OSError, HTTPException) as error:

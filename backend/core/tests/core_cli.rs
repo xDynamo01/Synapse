@@ -614,6 +614,231 @@ fn tool_rejects_junction_and_cancelled_mission() {
     assert!(!root.path().join("new.txt").exists());
 }
 
+#[test]
+fn skill_revision_preserves_parent_and_authority() {
+    let root = TempDir::new().unwrap();
+    let skill = json!({"id":"guide","version":"1","scope":"project:a","provenance":"local",
+        "tools":["artifact_create"],"permissions":["workspace_write"],"instructions":"Original"});
+    let registered = run(
+        &root,
+        &[req(
+            "register",
+            json!({"type":"skill_register","skill":skill}),
+        )],
+    );
+    ok(&registered[0]);
+    let parent = json!({"id":"guide","scope":"project:a","version":"1",
+        "digest":registered[0]["result"]["digest"]});
+    let mut forged = parent.clone();
+    forged["digest"] = json!("wrong");
+    let revise = |id: &str, pin: &Value| {
+        req(
+            id,
+            json!({"type":"skill_revise",
+        "parent":pin,"version":"2","instructions":"Revised","rationale":"Clearer guidance"}),
+        )
+    };
+    let out = run(
+        &root,
+        &[revise("forged", &forged), revise("revision", &parent)],
+    );
+    error(&out[0], "contract_conflict");
+    ok(&out[1]);
+    assert_eq!(out[1]["result"]["parent"], parent);
+    let get = |version: &str| {
+        req(
+            version,
+            json!({"type":"skill_get",
+        "scope":"project:a","skill_id":"guide","version":version}),
+        )
+    };
+    let saved = run(&root, &[get("1"), get("2")]);
+    assert_eq!(saved[0]["result"]["skill"], skill);
+    let mut expected = skill.clone();
+    expected["version"] = json!("2");
+    expected["instructions"] = json!("Revised");
+    error(&saved[1], "not_found");
+    assert_eq!(out[1]["result"]["candidate"], expected);
+    let delta = &out[1]["result"]["instruction_change"];
+    let range = |field: &str| delta[field].as_u64().unwrap() as usize;
+    let before = skill["instructions"].as_str().unwrap();
+    let after = expected["instructions"].as_str().unwrap();
+    let start = range("start_byte");
+    let mut reconstructed = before.to_owned();
+    reconstructed.replace_range(
+        start..range("end_byte"),
+        &after[start..range("replacement_end_byte")],
+    );
+    assert_eq!(reconstructed, after);
+    let review = |id: &str, proposal: &Value, regressions: u32| {
+        req(
+            id,
+            json!({"type":"skill_review","proposal_cursor":proposal["proposal_cursor"],
+            "review":{"reviewer":"QA","benchmark":"local validation","baseline":2,
+            "candidate":3,"regressions":regressions,"approved":true}}),
+        )
+    };
+    let another = run(
+        &root,
+        &[req(
+            "another",
+            json!({"type":"skill_revise",
+        "parent":parent,"version":"3","instructions":"Alternative","rationale":"Compare variants"}),
+        )],
+    );
+    ok(&another[0]);
+    let reviewed = run(
+        &root,
+        &[
+            review("regressed", &another[0]["result"], 1),
+            review("promote", &out[1]["result"], 0),
+            review("duplicate-review", &out[1]["result"], 0),
+            req(
+                "promoted-lookup",
+                json!({"type":"skill_get","scope":"project:a","skill_id":"guide","version":"2"}),
+            ),
+            get("3"),
+        ],
+    );
+    for receipt in &reviewed[..3] {
+        ok(receipt);
+        assert_eq!(receipt["result"]["promoted"], false);
+    }
+    error(&reviewed[3], "not_found");
+    error(&reviewed[4], "not_found");
+}
+
+#[test]
+fn model_route_matches_capability_and_budget() {
+    let root = TempDir::new().unwrap();
+    let register = |id: &str, capability: &str, memory: u64| {
+        req(
+            id,
+            json!({"type":"model_register","model":{
+                "id":id,"provider":"lm_studio","endpoint":"http://127.0.0.1:1234",
+                "capabilities":[capability],"memory_bytes":memory
+            }}),
+        )
+    };
+    let route = |id: &str, budget: u64| {
+        req(
+            id,
+            json!({"type":"model_route","capability":"chat","memory_budget_bytes":budget}),
+        )
+    };
+    let out = run(
+        &root,
+        &[
+            register("large", "chat", 300),
+            register("embedding", "embedding", 40),
+            register("unknown", "chat", 0),
+            register("small", "chat", 100),
+            req(
+                "unusable",
+                json!({"type":"model_register","model":{
+                    "id":"unusable","provider":"lm_studio","endpoint":"https://example.com",
+                    "capabilities":["chat"],"memory_bytes":1
+                }}),
+            ),
+            route("matched", 120),
+            route("no-fit", 99),
+            route("invalid-budget", 0),
+        ],
+    );
+    for registration in &out[..5] {
+        ok(registration);
+    }
+    ok(&out[5]);
+    assert_eq!(out[5]["result"]["model_id"], "small");
+    error(&out[6], "no_matching_model");
+    error(&out[7], "invalid_request");
+}
+
+#[test]
+fn declarative_skill_install_binds_the_reviewed_package() {
+    let root = TempDir::new().unwrap();
+    let package = json!({"license":"MIT","source_url":"https://example.com/skill.json","manifest":{
+        "id":"reviewed","version":"1","scope":"project:a","provenance":"local source",
+        "tools":[],"permissions":[],"instructions":"Use the project vocabulary."
+    }});
+    use sha2::Digest;
+    let typed: synapse_core::contracts::SkillPackage =
+        serde_json::from_value(package.clone()).unwrap();
+    let forged_digest: String = sha2::Sha256::digest(serde_json::to_vec(&typed).unwrap())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    let missing_inspection = run(
+        &root,
+        &[req(
+            "without-inspection",
+            json!({
+                "type":"skill_install","package":package,"inspected_digest":forged_digest
+            }),
+        )],
+    );
+    error(&missing_inspection[0], "contract_conflict");
+    let inspection = run(
+        &root,
+        &[req(
+            "inspect",
+            json!({"type":"skill_inspect","package":package}),
+        )],
+    );
+    ok(&inspection[0]);
+    let digest = &inspection[0]["result"]["inspected_digest"];
+    let lookup =
+        json!({"type":"skill_get","scope":"project:a","skill_id":"reviewed","version":"1"});
+    let mut changed = package.clone();
+    changed["source_url"] = json!("https://example.com/other.json");
+    let mut executable = package.clone();
+    executable["scripts"] = json!(["script.py"]);
+    let mut privileged = package.clone();
+    privileged["manifest"]["permissions"] = json!(["workspace_write"]);
+    let rejected = run(
+        &root,
+        &[
+            req(
+                "changed",
+                json!({"type":"skill_install","package":changed,"inspected_digest":digest}),
+            ),
+            req(
+                "executable",
+                json!({"type":"skill_inspect","package":executable}),
+            ),
+            req(
+                "privileged",
+                json!({"type":"skill_inspect","package":privileged}),
+            ),
+            req("absent", lookup.clone()),
+        ],
+    );
+    error(&rejected[0], "contract_conflict");
+    assert_eq!(rejected[1]["ok"], false);
+    error(&rejected[2], "invalid_request");
+    error(&rejected[3], "not_found");
+    let installed = run(
+        &root,
+        &[req(
+            "install",
+            json!({"type":"skill_install","package":package,"inspected_digest":digest}),
+        )],
+    );
+    ok(&installed[0]);
+    let restored = run(&root, &[req("restored", lookup)]);
+    ok(&restored[0]);
+    assert_eq!(
+        restored[0]["result"]["inspection"],
+        json!({
+            "license":"MIT","source_url":"https://example.com/skill.json","inspected_digest":digest
+        })
+    );
+    assert_eq!(
+        restored[0]["result"]["digest"],
+        installed[0]["result"]["digest"]
+    );
+}
+
 #[cfg(windows)]
 #[test]
 fn skill_version_cannot_be_replaced_or_broaden_mission() {

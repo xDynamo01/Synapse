@@ -12,13 +12,32 @@ use std::{
 
 #[derive(Default)]
 pub(crate) struct Stop {
+    managed: bool,
     state: AtomicU8, // 0 active, 1 user cancellation, 2 deadline
     #[cfg(windows)]
     job: Mutex<Option<std::os::windows::io::OwnedHandle>>,
 }
 impl Stop {
+    pub(crate) fn for_model() -> Self {
+        Self {
+            managed: std::env::var("SYNAPSE_MANAGE_LOCAL_MODELS").as_deref() == Ok("1"),
+            ..Self::default()
+        }
+    }
+
+    pub(crate) fn releases_model_on_exit(&self) -> bool {
+        self.managed
+    }
+
     pub(crate) fn cancel(&self) {
-        self.stop(1);
+        if self.managed {
+            // Keep the worker alive long enough to release its provider lease.
+            let _ = self
+                .state
+                .compare_exchange(0, 1, Ordering::SeqCst, Ordering::SeqCst);
+        } else {
+            self.stop(1);
+        }
     }
     fn stop(&self, reason: u8) {
         let _ = self
@@ -40,7 +59,9 @@ fn digest(request: &Value) -> CoreResult<String> {
 }
 
 pub(crate) fn run(launch: Launch, stop: Arc<Stop>) -> Result<String, String> {
-    let timeout_ms = launch.generation.timeout_ms + 5000;
+    // A managed worker may need two unload attempts and a catalog reconciliation.
+    let cleanup_ms = if stop.managed { 8_000 } else { 5_000 };
+    let timeout_ms = launch.generation.timeout_ms + cleanup_ms;
     let bare = json!({"version":4,"request_id":launch.id,"model_id":launch.model_id,"endpoint":launch.endpoint,"messages":launch.messages,"generation":launch.generation,"purpose":launch.purpose});
     let digest = digest(&bare).map_err(|_| "worker_protocol".to_string())?;
     let mut request = bare.clone();
@@ -51,7 +72,7 @@ pub(crate) fn run(launch: Launch, stop: Arc<Stop>) -> Result<String, String> {
     let watcher = std::thread::spawn(move || {
         let start = Instant::now();
         while watcher_done.load(Ordering::SeqCst) == 0
-            && watcher_stop.state.load(Ordering::SeqCst) == 0
+            && (watcher_stop.managed || watcher_stop.state.load(Ordering::SeqCst) == 0)
         {
             if start.elapsed() >= Duration::from_millis(timeout_ms) {
                 watcher_stop.stop(2);
@@ -279,6 +300,12 @@ mod windows {
             ),
             format!("PATH={}", std::env::var("PATH").unwrap_or_default()),
         ];
+        if stop.managed {
+            env_values.push("SYNAPSE_MANAGE_LOCAL_MODELS=1".into());
+            if let Ok(cli) = std::env::var("SYNAPSE_LMS_EXECUTABLE") {
+                env_values.push(format!("SYNAPSE_LMS_EXECUTABLE={cli}"));
+            }
+        }
         env_values.sort_by_key(|s| s.to_ascii_lowercase());
         let mut env_block: Vec<u16> = env_values.iter().flat_map(|s| wide(s)).collect();
         env_block.push(0);
@@ -367,6 +394,7 @@ mod windows {
                 (Some(Value::Bool(false)), Some(Value::Null), Some(Value::String(code)))
                     if [
                         "model_unavailable",
+                        "model_capacity_busy",
                         "provider_unavailable",
                         "provider_timeout",
                         "provider_malformed",

@@ -107,13 +107,12 @@ impl Core {
             Command::ConversationStart { .. }
                 | Command::VoiceTurnStart { .. }
                 | Command::Inference { .. }
+                | Command::SkillBenchmarkCase { .. }
                 | Command::MissionPlanStart { .. }
                 | Command::MissionExecute { .. }
-        ) && self
-            .active
-            .as_ref()
-            .is_some_and(|a| a.purpose == conversation::Purpose::Learning)
-        {
+        ) && self.active.as_ref().is_some_and(|a| {
+            a.purpose == conversation::Purpose::Learning && !a.stop.releases_model_on_exit()
+        }) {
             let active = self.active.take().unwrap();
             active.stop.cancel();
             let _ = active.result.recv();
@@ -1016,7 +1015,7 @@ impl Core {
     fn launch(&mut self, launch: conversation::Launch) {
         let id = launch.id.clone();
         let purpose = launch.purpose;
-        let stop = Arc::new(worker::Stop::default());
+        let stop = Arc::new(worker::Stop::for_model());
         let (sender, result) = mpsc::sync_channel(1);
         let worker_stop = stop.clone();
         std::thread::spawn(move || {
@@ -1247,6 +1246,9 @@ impl Drop for Core {
         }
         if let Some(active) = &self.active {
             active.stop.cancel();
+            if active.stop.releases_model_on_exit() {
+                let _ = active.result.recv();
+            }
         }
     }
 }
@@ -1326,6 +1328,7 @@ fn dispatch_tx(
             mission_id,
             scope,
             model_id,
+            model_memory_budget_bytes,
             objective,
             skill,
             context,
@@ -1339,12 +1342,28 @@ fn dispatch_tx(
                     "One inference job is already running",
                 ));
             }
+            let routed = registry::resolve_chat_model(tx, model_id, *model_memory_budget_bytes)?;
+            let review_model_id =
+                if model_memory_budget_bytes.is_some() && review_model_id.is_empty() {
+                    routed.as_ref()
+                } else {
+                    review_model_id
+                };
+            if let Some(budget) = model_memory_budget_bytes {
+                let review = conversation::registered_model(tx, review_model_id)?;
+                if review.memory_bytes == 0 || review.memory_bytes > *budget {
+                    return Err(CoreError::new(
+                        "no_matching_model",
+                        "Review model does not fit the mission memory budget",
+                    ));
+                }
+            }
             let (mut result, mut launch) = planner::start(
                 tx,
                 request_id,
                 mission_id,
                 scope,
-                model_id,
+                routed.as_ref(),
                 objective,
                 skill.as_ref(),
                 context,
@@ -1388,7 +1407,38 @@ fn dispatch_tx(
         Command::MissionApprove {
             mission_id,
             contract_digest,
+            swarm,
         } => {
+            if let Some(consent) = swarm {
+                let plan = planner::get(tx, mission_id)?;
+                if matches!(consent, crate::contracts::SwarmConsent::Recommended)
+                    && plan["swarm_recommendation"].is_null()
+                {
+                    return Err(CoreError::invalid("Mission has no Swarm recommendation"));
+                }
+                let execution = &plan["mission"]["contract"]["execution"];
+                if execution.is_null() {
+                    return Err(CoreError::invalid("Swarm requires a sealed mission plan"));
+                }
+                if ["primary_model", "review_model"].iter().any(|role| {
+                    execution[*role]["memory_bytes"]
+                        .as_u64()
+                        .unwrap_or_default()
+                        == 0
+                }) {
+                    return Err(CoreError::new(
+                        "no_matching_model",
+                        "Swarm requires declared memory estimates for both roles",
+                    ));
+                }
+                store::event(
+                    tx,
+                    "swarm_consent_recorded",
+                    json!({
+                        "mission_id":mission_id,"contract_digest":contract_digest,"source":consent
+                    }),
+                )?;
+            }
             let result = missions::approve(tx, mission_id, contract_digest)?;
             let workspace = projects::for_mission(tx, mission_id, _workspace_root, state_dir)?;
             integration::bind_approval(tx, mission_id, workspace.path(), state_dir)?;
@@ -1435,8 +1485,95 @@ fn dispatch_tx(
         Command::ModelsList { after, limit } => {
             registry::models_list(tx, after.unwrap_or(0), limit.unwrap_or(50))
         }
+        Command::ModelRoute {
+            capability,
+            memory_budget_bytes,
+        } => registry::model_route(tx, capability, *memory_budget_bytes),
         Command::ModelGet { model_id } => registry::model_get(tx, model_id),
         Command::SkillRegister { skill } => registry::skill_register(tx, skill),
+        Command::SkillInspect { package } => registry::skill_inspect(tx, package),
+        Command::SkillInstall {
+            package,
+            inspected_digest,
+        } => registry::skill_install(tx, package, inspected_digest),
+        Command::SkillRevise {
+            parent,
+            version,
+            instructions,
+            rationale,
+        } => registry::skill_revise(tx, parent, version, instructions, rationale),
+        Command::SkillBenchmarkCase {
+            proposal_cursor,
+            model_id,
+            prompt,
+            expected,
+            candidate,
+            evaluation_scope,
+        } => {
+            if busy {
+                return Err(CoreError::new(
+                    "worker_busy",
+                    "One inference job is already running",
+                ));
+            }
+            crate::contracts::bounded(expected, "benchmark_expected_output", 4096)?;
+            let proposal = registry::skill_proposal(tx, *proposal_cursor)?;
+            if let Some(scope) = evaluation_scope {
+                projects::get(tx, scope, state_dir)?;
+            }
+            let prompt_digest = store::digest(prompt)?;
+            let expected_digest = store::digest(&expected.trim())?;
+            registry::check_benchmark_expectation(
+                tx,
+                *proposal_cursor,
+                &prompt_digest,
+                &expected_digest,
+            )?;
+            let guidance = if *candidate {
+                let pin = serde_json::from_value(proposal["revision"].clone())?;
+                let instructions: String =
+                    serde_json::from_value(proposal["instructions"].clone())?;
+                crate::skills::guidance_message(&pin, &instructions)?
+            } else {
+                let pin: crate::contracts::SkillPin =
+                    serde_json::from_value(proposal["parent"].clone())?;
+                crate::skills::guidance_for_scope(tx, &pin.scope, &pin)?
+            };
+            let (result, mut launch) =
+                conversation::start(tx, request_id, None, model_id, prompt, None, &[], None)?;
+            launch.messages.insert(0, guidance);
+            launch.messages = crate::context::finalize(launch.messages)?;
+            store::event(
+                tx,
+                "skill_benchmark_case_started",
+                json!({
+                    "job_id":request_id,"proposal_cursor":proposal_cursor,"candidate":candidate,
+                    "prompt_digest":prompt_digest,"expected_digest":expected_digest,
+                    "evaluation_scope":evaluation_scope,
+                    "model_config_digest":store::digest(&(&launch.model_id, &launch.endpoint, &launch.generation))?
+                }),
+            )?;
+            *pending = Some(launch);
+            Ok(result)
+        }
+        Command::SkillMissionEvidence { mission_id } => mission_run::skill_evidence(tx, mission_id),
+        Command::SkillGlobalPromote {
+            proposal_cursor,
+            reviewed_instructions_digest,
+        } => registry::skill_global_promote(tx, *proposal_cursor, reviewed_instructions_digest),
+        Command::SkillBenchmarkReceipt { proposal_cursor } => {
+            registry::skill_benchmark_receipt(tx, *proposal_cursor)
+        }
+        Command::SkillBenchmarkReview {
+            proposal_cursor,
+            cases,
+        } => registry::skill_benchmark_review(tx, *proposal_cursor, cases),
+        Command::SkillReview {
+            proposal_cursor,
+            review,
+        } => registry::skill_review(tx, *proposal_cursor, review),
+        Command::SkillActive { scope, skill_id } => registry::skill_active(tx, scope, skill_id),
+        Command::SkillRollback { current } => registry::skill_rollback(tx, current),
         Command::SkillsList {
             scope,
             after,
@@ -1463,6 +1600,7 @@ fn dispatch_tx(
         Command::ConversationStart {
             chat_id,
             model_id,
+            model_memory_budget_bytes,
             content,
             skill,
             context,
@@ -1473,11 +1611,12 @@ fn dispatch_tx(
                     "One inference job is already running",
                 ));
             }
+            let model_id = registry::resolve_chat_model(tx, model_id, *model_memory_budget_bytes)?;
             let (result, launch) = conversation::start(
                 tx,
                 request_id,
                 Some(chat_id),
-                model_id,
+                model_id.as_ref(),
                 content,
                 skill.as_ref(),
                 context,

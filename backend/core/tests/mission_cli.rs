@@ -176,6 +176,25 @@ fn structured_plan_proposes_without_effects_and_survives_restart() {
     command["skill"] =
         json!({"scope":"project:a","id":"domain","version":"1","digest":skill["result"]["digest"]});
     command["context"] = json!([{"scope":"project:a","key":"fact"}]);
+    command["model_id"] = json!("");
+    command["review_model_id"] = json!("");
+    command["model_memory_budget_bytes"] = json!(1);
+    let rejected = session.call(req("route-too-small", command.clone()));
+    assert_eq!(rejected["error"]["code"], "no_matching_model");
+    command["model_memory_budget_bytes"] = json!(1024);
+    let registered = session.call(req(
+        "large-review-model",
+        json!({"type":"model_register","model":{
+            "id":"large-review","provider":"lm_studio","endpoint":fixture.address,
+            "capabilities":["chat"],"memory_bytes":1025
+        }}),
+    ));
+    assert_eq!(registered["ok"], true, "{registered}");
+    let mut over_budget = command.clone();
+    over_budget["review_model_id"] = json!("large-review");
+    let rejected = session.call(req("review-over-budget", over_budget));
+    assert_eq!(rejected["error"]["code"], "no_matching_model");
+
     let started = session.call(req("plan-one", command.clone()));
     assert_eq!(started["ok"], true, "{started}");
     assert_eq!(
@@ -200,6 +219,17 @@ fn structured_plan_proposes_without_effects_and_survives_restart() {
         "get-plan",
         json!({"type":"mission_plan_get","mission_id":"mission-one"}),
     ));
+    assert!(proposed["result"].get("swarm_recommendation").is_none());
+    let digest = &proposed["result"]["mission"]["contract_digest"];
+    let refused = session.call(req(
+        "unrecommended",
+        json!({
+            "type":"mission_approve","mission_id":"mission-one","contract_digest":digest,
+            "swarm":"recommended"
+        }),
+    ));
+    assert_eq!(refused["error"]["code"], "invalid_request", "{refused}");
+
     assert_eq!(
         proposed["result"]["mission"]["state"], "proposed",
         "{proposed}"
@@ -844,6 +874,24 @@ fn bounded_mixed_artifacts_and_both_fixed_recipes_are_accepted() {
     write_plan(&fixture, &plan);
     let mut session = Session::new(&root, None);
     register(&mut session, &fixture.address);
+    for (scope, id) in [("project:a", "local-guide"), ("project:b", "foreign-guide")] {
+        let registered = session.call(req(
+            id,
+            json!({"type":"skill_register","skill":{
+                "id":id,"scope":scope,"version":"1","provenance":"test","tools":[],
+                "permissions":[],"instructions":"Project guidance"
+            }}),
+        ));
+        assert_eq!(registered["ok"], true, "{registered}");
+    }
+    let latest = session.call(req(
+        "local-guide-v2",
+        json!({"type":"skill_register","skill":{
+            "id":"local-guide","scope":"project:a","version":"2","provenance":"test",
+            "tools":[],"permissions":[],"instructions":"Updated project guidance"
+        }}),
+    ));
+    assert_eq!(latest["ok"], true, "{latest}");
     let mut command = plan_command("mixed");
     command["context"] = json!([]);
     assert_eq!(session.call(req("plan", command))["ok"], true);
@@ -853,6 +901,24 @@ fn bounded_mixed_artifacts_and_both_fixed_recipes_are_accepted() {
         json!({"type":"mission_plan_get","mission_id":"mixed"}),
     ));
     assert_eq!(proposal["result"]["plan"], plan);
+    let choices = proposal["result"]["skill_candidates"].as_array().unwrap();
+    assert_eq!(choices.len(), 1);
+    assert_eq!(choices[0]["id"], "local-guide");
+    assert_eq!(choices[0]["version"], "2");
+    assert_eq!(choices[0]["digest"], latest["result"]["digest"]);
+    assert!(proposal["result"]["mission"]["contract"]["skill"].is_null());
+
+    assert_eq!(
+        proposal["result"]["swarm_recommendation"]["requires_owner_acceptance"],
+        true
+    );
+    assert_eq!(proposal["result"]["mission"]["state"], "proposed");
+    let roles = &proposal["result"]["swarm_recommendation"]["roles"];
+    assert_eq!(roles[0]["model_id"], "selected");
+    assert_eq!(roles[1]["memory_bytes"], 1024);
+    let recommendation = &proposal["result"]["swarm_recommendation"];
+    assert_eq!(recommendation["schedule"], "sequential");
+    assert_eq!(recommendation["estimated_peak_model_bytes"], 1024);
     assert_eq!(
         proposal["result"]["mission"]["contract"]["resources"]
             .as_array()
@@ -860,6 +926,76 @@ fn bounded_mixed_artifacts_and_both_fixed_recipes_are_accepted() {
             .len(),
         16
     );
+    let digest = &proposal["result"]["mission"]["contract_digest"];
+    let wrong = session.call(req(
+        "wrong-swarm-digest",
+        json!({"type":"mission_approve",
+        "mission_id":"mixed","contract_digest":"wrong","swarm":"recommended"}),
+    ));
+    assert_eq!(wrong["error"]["code"], "contract_conflict");
+    let accepted = session.call(req(
+        "accepted-swarm",
+        json!({"type":"mission_approve",
+        "mission_id":"mixed","contract_digest":digest,"swarm":"recommended"}),
+    ));
+    assert_eq!(accepted["result"]["state"], "approved", "{accepted}");
+    let after_approval = session.call(req(
+        "get-approved-plan",
+        json!({
+            "type":"mission_plan_get","mission_id":"mixed"
+        }),
+    ));
+    assert!(
+        after_approval["result"]
+            .get("swarm_recommendation")
+            .is_none()
+    );
+    let events = session.call(req(
+        "events-swarm",
+        json!({"type":"events_read","after":0,"limit":100}),
+    ));
+    let consents: Vec<_> = events["result"]["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|event| event["kind"] == "swarm_consent_recorded")
+        .collect();
+    assert_eq!(consents.len(), 1);
+    assert_eq!(consents[0]["payload"]["contract_digest"], *digest);
+    let unknown = session.call(req(
+        "unknown-memory-model",
+        json!({"type":"model_register","model":{
+            "id":"unknown-memory","provider":"lm_studio","endpoint":fixture.address,
+            "capabilities":["chat"],"memory_bytes":0
+        }}),
+    ));
+    assert_eq!(unknown["ok"], true, "{unknown}");
+    let mut command = plan_command("unknown-memory");
+    command["review_model_id"] = json!("unknown-memory");
+    let started = session.call(req("unknown-memory-plan", command));
+    assert_eq!(started["ok"], true, "{started}");
+    assert_eq!(
+        poll(&mut session, "unknown-memory-plan")["status"],
+        "succeeded"
+    );
+    let proposed = session.call(req(
+        "unknown-memory-proposal",
+        json!({
+            "type":"mission_plan_get","mission_id":"unknown-memory"
+        }),
+    ));
+    let digest = &proposed["result"]["mission"]["contract_digest"];
+    let refused = session.call(req("unknown-memory-swarm", json!({
+        "type":"mission_approve","mission_id":"unknown-memory","contract_digest":digest,"swarm":"direct"
+    })));
+    assert_eq!(refused["error"]["code"], "no_matching_model", "{refused}");
+    let ordinary = session.call(req(
+        "unknown-memory-ordinary",
+        json!({
+            "type":"mission_approve","mission_id":"unknown-memory","contract_digest":digest
+        }),
+    ));
+    assert_eq!(ordinary["result"]["state"], "approved", "{ordinary}");
 }
 
 #[test]

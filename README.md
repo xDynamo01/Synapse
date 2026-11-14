@@ -65,10 +65,11 @@ de cada etapa estão no [roteiro até a finalização](docs/superpowers/plans/20
 - [x] **12. Workspaces por projeto, edição Git local e receitas por domínio no Windows.** [Evidência](docs/evidence/backend/2026-11-12-workspace-expansion.md)
 - [x] **13. Presence por voz e tradução bidirecional no Windows.** [Evidência](docs/evidence/backend/2026-11-12-presence-voice.md)
 
+- [x] **15. Evolução de Skills, MoM e Swarm.** Validados no Windows a promoção por avaliação, o rollback por regressão, o agendamento de modelos locais e o Swarm temporário sob aceite. [Checklist e evidências](docs/superpowers/plans/2026-11-11-synapse-0.3-roteiro-de-automacao.md#15-evolução-de-skills-e-orquestração-local)
+
 ### Etapas a seguir
 
 - [ ] **14. Navegador interno.** Usar sessões autenticadas e executar ações autorizadas pela missão.
-- [ ] **15. Evolução de Skills, MoM e Swarm.** Validar promoção de Skills, orquestração local de modelos e agentes temporários sob aceite.
 - [ ] **16. Distribuição e aceite final da 0.3.** Validar instalação, atualização e fluxos reais no Windows. Preparar builds de Linux e macOS e registrar o estado de validação de cada plataforma.
 
 Depois da 0.3, o roteiro prevê hospedar o mesmo Core em um servidor pessoal e

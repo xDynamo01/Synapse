@@ -29,24 +29,34 @@ The available command shapes are:
 | `message_append` | `chat_id`, `message_id`, `role` (`user`, `assistant`, `system`), `content` |
 | `memory_put` | `scope`, `key`, `kind`, `content`, `expected_revision`, `provenance`, `status` |
 | `memory_get` | `scope`, `context_reference`, `key`; optional `after_revision` (default 0), `limit` (1–100, default 50) |
-| `mission_plan_start` | `mission_id`, `scope`, `model_id`, `objective`, required `review_model_id` and `review_generation`; optional exact `skill` and `context` references and `git_edit_paths` |
+| `mission_plan_start` | `mission_id`, `scope`, `model_id`, `objective`, required `review_model_id` and `review_generation`; optional exact `skill` and `context` references and `git_edit_paths`; with `model_memory_budget_bytes` and an empty `model_id`, selects a registered chat model and uses it for an empty `review_model_id` |
 | `mission_plan_get` | `mission_id`; returns job status, pinned job metadata and, on success, validated `plan` and proposed `mission` |
 | `project_check_start` | `mission_id`, zero-based `check_index`, and exact planned `artifacts` of `{path, content}` |
 | `project_check_get` | `check_id`; returns current status, cleanup state and completed phase receipt |
 | `project_check_cancel` | `check_id`; stops a running check |
 | `mission_propose` | `mission_id`, `contract` |
-| `mission_approve` | `mission_id`, `contract_digest` |
+| `mission_approve` | `mission_id`, `contract_digest`; optional `swarm` consent (`direct` or `recommended`) for a sealed plan |
 | `mission_cancel`, `mission_revoke` | `mission_id`, `reason` |
 | `mission_get` | `mission_id` |
 | `model_register` | `model` |
 | `models_list` | optional `after` (opaque registry cursor, default 0), `limit` (1–100, default 50) |
 | `model_get` | `model_id` |
+| `model_route` | `capability`, `memory_budget_bytes` |
 | `skill_register` | `skill` |
+| `skill_inspect` | `package` |
+| `skill_install` | `package`, `inspected_digest` |
+| `skill_revise` | `parent` (Skill pin), `version`, `instructions`, `rationale` |
+| `skill_benchmark_case` | `proposal_cursor`, `model_id`, `prompt`, `expected`, `candidate` (boolean) |
+| `skill_benchmark_receipt` | `proposal_cursor` of a reviewed Skill revision |
+| `skill_benchmark_review` | `proposal_cursor`, `cases` (1–32 pairs with `baseline_job`, `candidate_job`, `expected`) |
+| `skill_review` | `proposal_cursor`, `review` |
+| `skill_active` | `scope`, `skill_id` |
+| `skill_rollback` | `current` (active Skill pin) |
 | `skills_list` | `scope`; optional `after` (opaque registry cursor, default 0), `limit` (1–100, default 50) |
 | `skill_get` | `scope`, `skill_id`, `version` |
 | `capabilities_list` | none |
 | `inference` | `model_id`, `prompt`; starts an asynchronous AI job and returns `job_id`, `status:running` |
-| `conversation_start` | `chat_id`, `model_id`, `content`; optional exact `skill` pin and `context` references; appends one user message and starts an asynchronous AI job |
+| `conversation_start` | `chat_id`, `model_id`, `content`; optional exact `skill` pin and `context` references; an empty `model_id` with `model_memory_budget_bytes` routes by the `chat` capability; appends one user message and starts an asynchronous AI job |
 | `job_get` | `job_id`; returns job state, content/error, deterministic message IDs, `skill` for guided jobs, and selected `context` metadata when references were supplied |
 | `learning_get` | `source_job_id`; returns durable background status, attempts, error and pending conflict metadata |
 | `job_cancel` | `job_id`; persists cancellation before terminating its worker |
@@ -330,3 +340,79 @@ excluded from chats, learning and durable state. Translated output remains in
 Core memory for up to two minutes and expires earlier on interruption, mode
 stop, process restart or buffer eviction. Use `job_cancel {job_id}` to stop
 one job and discard its output while keeping the translator active.
+
+
+A package accepted by `skill_inspect` contains a declarative `manifest` and
+a `license`. The inspection returns the supplied metadata and its digest
+without registering a version. After reviewing the source, license and
+guidance, the owner submits that same package and digest to `skill_install`.
+The Core rejects changed packages, scripts, dependencies and imported tool
+or permission declarations. License and provenance are supplied metadata.
+
+
+`model_route` selects the registered model with the lowest positive declared
+memory that matches the exact capability and fits the supplied budget.
+Chat routing considers only LM Studio registrations with a numeric loopback endpoint. Ties are resolved by model ID. The result is a selection based on registry
+metadata. The call performs no loading or memory reservation.
+
+
+`skill_revise` records a candidate and its parent digest. It copies the
+parent's scope, provenance, tools and permissions. Candidates are not
+registered as selectable Skills by this command. The receipt includes an
+`instruction_change` with the previous and candidate instruction digests
+and byte ranges. Apply `candidate.instructions[start_byte..replacement_end_byte]`
+in place of the original `instructions[start_byte..end_byte]` to reconstruct
+the candidate instructions.
+
+
+`skill_review` records an owner-submitted evaluation for the proposal cursor
+returned by `skill_revise`. The review contains `reviewer`, `benchmark`,
+`baseline`, `candidate`, `regressions`, and `approved`. The receipt reports
+`promoted: false`. Promotion requires a computed `skill_benchmark_review`.
+
+
+`skill_mission_evidence` takes `mission_id` and returns the pinned project
+Skill, mission objective, completed check count, final status and QA decision
+for an integrated, failed or rejected run. It reads the stored mission and
+does not start inference.
+
+`skill_global_promote` takes `proposal_cursor` and
+`reviewed_instructions_digest`. Submit it after reviewing the exact
+instructions for project-specific material. The Core requires an active
+project revision and a benchmark in which the candidate passes all cases in
+at least two other registered projects without regression. The resulting
+global pin provides guidance only. A rollback of the source disables the
+pin for future use.
+
+`skill_active` returns the active pin after a promotion or rollback. Before
+the first promotion it returns null. `skill_rollback` restores the parent of
+the current promotion and rejects a stale current pin. The registry retains
+all versions so jobs with an explicit historical pin can still resolve it.
+
+
+`skill_benchmark_case` runs a prompt with the parent or candidate guidance.
+The result is available through `job_get`. Each case runs without chat
+history or canonical memory and has no tool or promotion authority. An optional
+`evaluation_scope` labels the case with a registered project verified by
+the Core. Both cases in a pair must use the same scope. The scope is recorded
+in the receipt and grants no access to project files or memory.
+
+
+`skill_benchmark_review` computes exact-match scores from successful case
+jobs recorded for the same proposal. Every job in a review uses the same
+model, endpoint and generation configuration. It requires unique jobs, a
+matching prompt within each pair and distinct prompts across pairs. The caller supplies the expected output when submitting the first case. The Core records its digest before inference and checks it on subsequent runs and review.
+The Core registers the candidate only when the score improves and no case
+that passed for the baseline regresses. If the candidate is currently active, a regression
+on cases started after its activation restores the previous version.
+The review receipt includes the restored pin. Use
+`skill_benchmark_receipt` to retrieve the latest decision and its Core
+event cursor, including after restart. Each case can contribute to one
+review. Once cases exist, the proposal requires benchmark-backed review.
+
+
+Swarm consent is recorded with the approved contract digest. Recommended
+consent requires a recommendation from the Planner. Execution with consent
+uses separate sequential implementation and verification contexts and
+exposes the active roles through the mission run response. Existing checks
+and publication rules apply.

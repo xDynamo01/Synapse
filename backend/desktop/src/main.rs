@@ -86,6 +86,7 @@ struct Desktop {
     tray: Option<audio_tray::Tray>,
     rail: bool,
     model: String,
+    automatic_model_budget_mib: u32,
     models: Vec<String>,
     scope: String,
     project_path: String,
@@ -102,6 +103,13 @@ struct Desktop {
     objective: String,
     git_paths: String,
     mission_skill: Option<Value>,
+    chat_skill: Option<Value>,
+    skill_package_result: Value,
+    skill_package_input: String,
+    skill_package_url: String,
+    skill_package_source: Option<String>,
+    skill_catalog: Value,
+    skill_package_download: Option<std::sync::mpsc::Receiver<Result<Value, String>>>,
     mission: Value,
     plan: Value,
     run: Value,
@@ -139,6 +147,7 @@ impl Desktop {
             tray: None,
             rail: true,
             model: String::new(),
+            automatic_model_budget_mib: 0,
             models: Vec::new(),
             scope: String::new(),
             project_path: String::new(),
@@ -155,6 +164,13 @@ impl Desktop {
             objective: String::new(),
             git_paths: String::new(),
             mission_skill: None,
+            chat_skill: None,
+            skill_package_result: Value::Null,
+            skill_package_input: String::new(),
+            skill_package_url: String::new(),
+            skill_package_source: None,
+            skill_catalog: Value::Null,
+            skill_package_download: None,
             mission: Value::Null,
             plan: Value::Null,
             run: Value::Null,
@@ -236,12 +252,23 @@ impl Desktop {
                 if !matches!(tag, "mission_run_get" | "mission_plan_get")
                     || !error.starts_with("not_found ·")
                 {
-                    self.error = error;
+                    self.error = if tag == "plan-start" && error.starts_with("no_matching_model ·")
+                    {
+                        "Nenhum modelo compatível cabe no orçamento informado. Ajuste o orçamento ou escolha um modelo.".into()
+                    } else {
+                        error
+                    };
                 }
                 return;
             }
         };
         match tag {
+            "skill-package" => self.skill_package_result = value,
+            "model-route" => {
+                if let Some(id) = value["model_id"].as_str() {
+                    self.model = id.to_owned();
+                }
+            }
             "health" => {
                 self.connected = true;
                 self.send("models", json!({"type":"models_list","limit":100}));
@@ -313,7 +340,11 @@ impl Desktop {
             "mission_get" => self.mission = value,
             "approval" => {
                 self.mission["state"] = value["state"].clone();
+                if let Some(plan) = self.plan.as_object_mut() {
+                    plan.remove("swarm_recommendation");
+                }
             }
+            "mission-cancel" => self.refresh(),
             "mission_run_get" | "mission_execute" | "resolve" => self.run = value,
             "mission_recovery_inspect" => self.recovery = value,
             "events" => {
@@ -413,6 +444,11 @@ impl Desktop {
         ui.horizontal_wrapped(|ui| {
             ui.label("Modelo local");
             ui.add(egui::TextEdit::singleline(&mut self.model).hint_text("ID registrado"));
+            if self.workspace && !self.browser_visible {
+                ui.add(egui::DragValue::new(&mut self.automatic_model_budget_mib)
+                    .range(0..=262144).suffix(" MiB"))
+                    .on_hover_text("Orçamento para seleção automática no planejamento. Zero usa o modelo escolhido.");
+            }
             egui::ComboBox::from_id_salt("models")
                 .selected_text("Modelos")
                 .show_ui(ui, |ui| {
@@ -464,6 +500,43 @@ impl Desktop {
             );
             ui.add(egui::TextEdit::singleline(&mut self.context_key).hint_text("Chave"));
         });
+        if let Some(skills) = self
+            .catalog
+            .chats
+            .get(&self.active_chat)
+            .and_then(|scope| self.catalog.skills.get(scope))
+        {
+            if self
+                .chat_skill
+                .as_ref()
+                .is_some_and(|pin| !skills.contains(pin))
+            {
+                self.chat_skill = None;
+            }
+            egui::ComboBox::from_id_salt("chat-skill")
+                .selected_text(
+                    self.chat_skill
+                        .as_ref()
+                        .map(skill_label)
+                        .unwrap_or_else(|| "Sem Skill".into()),
+                )
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut self.chat_skill, None, "Sem Skill");
+                    for skill in skills {
+                        ui.selectable_value(
+                            &mut self.chat_skill,
+                            Some(skill.clone()),
+                            if self.catalog.is_active_skill(skill) {
+                                format!("{} · ativa", skill_label(skill))
+                            } else {
+                                skill_label(skill)
+                            },
+                        );
+                    }
+                });
+        } else {
+            self.chat_skill = None;
+        }
         egui::ScrollArea::vertical()
             .id_salt("history")
             .stick_to_bottom(true)
@@ -511,16 +584,198 @@ impl Desktop {
             && complete_reference
             && self.catalog_ready;
         if ui.add_enabled(ready, egui::Button::new("Enviar")).clicked() {
-            self.send_message();
+            self.send_message(self.chat_skill.clone(), None);
         }
         if self.job_id.is_some() {
             ui.spinner();
         }
     }
 
+    fn fetch_skill(&mut self, address: String, catalog: bool) {
+        self.error.clear();
+        self.skill_package_result = Value::Null;
+        self.skill_package_source = None;
+        self.skill_package_input.clear();
+        let (send, receive) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = send.send(browser::fetch_skill_document(&address, catalog));
+        });
+        self.skill_package_download = Some(receive);
+    }
+
+    fn inspect_skill_input(&mut self, scope: &str) -> Result<(), String> {
+        if self.skill_package_download.is_some() {
+            return Err("Aguarde o fim da busca da Skill.".into());
+        }
+        let mut package = serde_json::from_str::<synapse_core::contracts::SkillPackage>(
+            &self.skill_package_input,
+        )
+        .map_err(|error| format!("Pacote inválido: {error}"))?;
+        if package.manifest.scope != scope {
+            return Err("O pacote deve pertencer ao projeto selecionado.".into());
+        }
+        package.source_url.clone_from(&self.skill_package_source);
+        self.skill_package_result = Value::Null;
+        self.send(
+            "skill-package",
+            json!({"type":"skill_inspect","package":package}),
+        );
+        Ok(())
+    }
+
+    fn show_skill_import(&mut self, ui: &mut egui::Ui) {
+        ui.collapsing("Importar Skill", |ui| {
+            ui.horizontal(|ui| {
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.skill_package_url)
+                        .hint_text("URL HTTPS do pacote ou catálogo"),
+                );
+                let ready = self.pending == 0
+                    && self.skill_package_download.is_none()
+                    && !self.skill_package_url.trim().is_empty();
+                if ui
+                    .add_enabled(ready, egui::Button::new("Buscar pacote"))
+                    .clicked()
+                {
+                    self.fetch_skill(self.skill_package_url.trim().to_owned(), false);
+                }
+                if ui
+                    .add_enabled(ready, egui::Button::new("Buscar catálogo"))
+                    .clicked()
+                {
+                    self.skill_catalog = Value::Null;
+                    self.fetch_skill(self.skill_package_url.trim().to_owned(), true);
+                }
+            });
+            if self.skill_package_download.is_some() {
+                ui.spinner();
+                ui.ctx().request_repaint_after(Duration::from_millis(100));
+            }
+            let mut selected = None;
+            if let Some(entries) = self.skill_catalog["packages"].as_array() {
+                ui.label(self.skill_catalog["source"].as_str().unwrap_or_default());
+                egui::ScrollArea::vertical()
+                    .id_salt("skill-catalog")
+                    .max_height(130.0)
+                    .show(ui, |ui| {
+                        for entry in entries {
+                            if ui
+                                .add_enabled(
+                                    self.pending == 0 && self.skill_package_download.is_none(),
+                                    egui::Button::new(entry["name"].as_str().unwrap_or_default()),
+                                )
+                                .on_hover_text(entry["url"].as_str().unwrap_or_default())
+                                .clicked()
+                            {
+                                selected = entry["url"].as_str().map(str::to_owned);
+                            }
+                        }
+                    });
+                if entries.is_empty() {
+                    ui.label("O catálogo está vazio.");
+                }
+            }
+            if let Some(address) = selected {
+                self.fetch_skill(address, false);
+            }
+            let candidates = self.mission_skill_suggestions();
+            if !candidates.is_empty() {
+                ui.collapsing("Skills do catálogo para este objetivo", |ui| {
+                    for candidate in candidates {
+                        let address = candidate["url"].as_str().unwrap_or_default();
+                        if ui
+                            .add_enabled(
+                                self.pending == 0 && self.skill_package_download.is_none(),
+                                egui::Button::new(candidate["name"].as_str().unwrap_or_default()),
+                            )
+                            .on_hover_text(address)
+                            .clicked()
+                        {
+                            self.fetch_skill(address.to_owned(), false);
+                        }
+                    }
+                });
+            }
+            if let Some(source) = &self.skill_package_source {
+                ui.label(source);
+            }
+            let input = ui.add_enabled(
+                self.pending == 0 && self.skill_package_download.is_none(),
+                egui::TextEdit::multiline(&mut self.skill_package_input)
+                    .hint_text("Pacote JSON da Skill")
+                    .desired_rows(3)
+                    .desired_width(f32::INFINITY)
+                    .char_limit(48_000),
+            );
+            if input.changed() {
+                self.skill_package_source = None;
+                self.skill_package_result = Value::Null;
+            }
+            let ready =
+                self.connected && self.pending == 0 && self.skill_package_download.is_none();
+            if ui
+                .add_enabled(ready, egui::Button::new("Inspecionar"))
+                .clicked()
+            {
+                self.skill_package_result = Value::Null;
+                if let Err(error) = self.inspect_skill_input(&self.scope.clone()) {
+                    self.error = error;
+                }
+            }
+            if let Some(digest) = self.skill_package_result["inspected_digest"].as_str() {
+                let package = &self.skill_package_result["package"];
+                let manifest = &package["manifest"];
+                ui.label(format!(
+                    "{} · {} · {}",
+                    skill_label(manifest),
+                    manifest["scope"].as_str().unwrap_or_default(),
+                    package["license"].as_str().unwrap_or_default()
+                ));
+                ui.label(manifest["provenance"].as_str().unwrap_or_default());
+                if let Some(source) = package["source_url"].as_str() {
+                    ui.label(source);
+                }
+                egui::ScrollArea::vertical()
+                    .id_salt("skill-review")
+                    .max_height(150.0)
+                    .show(ui, |ui| {
+                        ui.label(manifest["instructions"].as_str().unwrap_or_default());
+                    });
+                if ui
+                    .add_enabled(
+                        ready && manifest["scope"].as_str() == Some(self.scope.as_str()),
+                        egui::Button::new("Instalar versão inspecionada"),
+                    )
+                    .clicked()
+                {
+                    let command =
+                        json!({"type":"skill_install","package":package,"inspected_digest":digest});
+                    self.skill_package_result = Value::Null;
+                    self.send("skill-package", command);
+                }
+            } else if let Some(installed) = self.skill_package_result.get("skill") {
+                ui.label(format!("Skill instalada · {}", skill_label(installed)));
+                if ui.add_enabled(
+                    ready && installed["scope"].as_str() == Some(self.scope.as_str()),
+                    egui::Button::new("Usar no próximo planejamento"),
+                ).clicked() {
+                    self.mission_skill = Some(json!({
+                        "id": installed["id"], "scope": installed["scope"],
+                        "version": installed["version"], "digest": self.skill_package_result["digest"],
+                    }));
+                }
+            }
+        });
+    }
+
     fn workspace(&mut self, ui: &mut egui::Ui) {
+        self.show_skill_import(ui);
         ui.horizontal(|ui| {
             ui.heading("Workspace");
+            if self.mission_skill.is_none() && !self.mission_skill_suggestions().is_empty() {
+                ui.label("Skills sugeridas em Importar Skill");
+            }
+
             let toggle = if self.rail {
                 "Recolher Context Rail"
             } else {
@@ -621,7 +876,11 @@ impl Desktop {
                         ui.selectable_value(
                             &mut self.mission_skill,
                             Some(skill.clone()),
-                            skill_label(skill),
+                            if self.catalog.is_active_skill(skill) {
+                                format!("{} · ativa", skill_label(skill))
+                            } else {
+                                skill_label(skill)
+                            },
                         );
                     }
                 });
@@ -638,7 +897,7 @@ impl Desktop {
             .add_enabled(
                 ready
                     && !self.scope.is_empty()
-                    && !self.model.is_empty()
+                    && (!self.model.is_empty() || self.automatic_model_budget_mib != 0)
                     && !self.objective.trim().is_empty(),
                 egui::Button::new("Planejar"),
             )
@@ -651,14 +910,73 @@ impl Desktop {
                 .filter(|path| !path.is_empty())
                 .map(str::to_owned)
                 .collect();
-            self.plan_mission(paths, self.mission_skill.clone());
+            let budget = (self.automatic_model_budget_mib != 0)
+                .then_some(u64::from(self.automatic_model_budget_mib) * 1024 * 1024);
+            self.plan_mission(paths, self.mission_skill.clone(), budget);
+        }
+        if let Some(candidates) = self.plan["skill_candidates"].as_array() {
+            ui.collapsing("Skills encontradas no projeto", |ui| {
+                ui.label("Selecione uma versão para o próximo planejamento.");
+                for candidate in candidates {
+                    if ui
+                        .add_enabled(
+                            candidate["scope"].as_str() == Some(self.scope.as_str())
+                                || candidate["scope"] == "global",
+                            egui::Button::new(skill_label(candidate)),
+                        )
+                        .clicked()
+                    {
+                        self.mission_skill = Some(json!({
+                            "id":candidate["id"],"version":candidate["version"],
+                            "scope":candidate["scope"],"digest":candidate["digest"]
+                        }));
+                    }
+                }
+            });
+        }
+        if let Some(reason) = self.plan["swarm_recommendation"]["reason"].as_str() {
+            ui.collapsing("Sugestão do Planner · Swarm", |ui| {
+                ui.label(reason);
+                if let Some(bytes) =
+                    self.plan["swarm_recommendation"]["estimated_peak_model_bytes"].as_u64()
+                {
+                    ui.label(format!(
+                        "Sequencial · pico estimado de {:.2} GiB para o modelo",
+                        bytes as f64 / 1073741824.0
+                    ));
+                } else {
+                    ui.label("Sequencial · estimativa de memória incompleta");
+                }
+                if let Some(roles) = self.plan["swarm_recommendation"]["roles"].as_array() {
+                    for role in roles {
+                        let label = if role["role"] == "implementation" {
+                            "Implementação"
+                        } else {
+                            "Verificação"
+                        };
+                        ui.label(format!(
+                            "{label} · {} · {:.2} GiB estimados",
+                            role["model_id"].as_str().unwrap_or_default(),
+                            role["memory_bytes"].as_u64().unwrap_or(0) as f64 / 1073741824.0
+                        ));
+                    }
+                }
+                for key in ["benefit", "risk"] {
+                    if let Some(text) = self.plan["swarm_recommendation"][key].as_str() {
+                        ui.label(text);
+                    }
+                }
+            });
         }
         ui.horizontal_wrapped(|ui| {
             let state = self.mission["state"]
                 .as_str()
                 .unwrap_or_default()
                 .to_owned();
-            let digest = self.mission["contract_digest"].as_str().unwrap_or_default();
+            let digest = self.mission["contract_digest"]
+                .as_str()
+                .unwrap_or_default()
+                .to_owned();
             if ui
                 .add_enabled(
                     ready && state == "proposed" && !digest.is_empty(),
@@ -667,7 +985,27 @@ impl Desktop {
                 .clicked()
             {
                 let digest = digest.to_owned();
-                self.approve_mission(&digest);
+                self.approve_mission(&digest, None);
+            }
+            if ui
+                .add_enabled(
+                    ready
+                        && state == "proposed"
+                        && !digest.is_empty()
+                        && !self.mission["contract"]["execution"].is_null(),
+                    egui::Button::new("Aprovar com Swarm"),
+                )
+                .clicked()
+            {
+                let consent = if self.plan["mission"]["contract_digest"].as_str()
+                    != Some(digest.as_str())
+                    || self.plan["swarm_recommendation"].is_null()
+                {
+                    synapse_core::contracts::SwarmConsent::Direct
+                } else {
+                    synapse_core::contracts::SwarmConsent::Recommended
+                };
+                self.approve_mission(&digest, Some(consent));
             }
             if ui
                 .add_enabled(
@@ -677,6 +1015,19 @@ impl Desktop {
                 .clicked()
             {
                 self.mission_query("mission_execute");
+            }
+            if ui
+                .add_enabled(
+                    ready
+                        && matches!(
+                            self.run["status"].as_str(),
+                            Some("generating" | "checking" | "reviewing")
+                        ),
+                    egui::Button::new("Cancelar execução"),
+                )
+                .clicked()
+            {
+                self.cancel_mission();
             }
             if ui
                 .add_enabled(
@@ -714,15 +1065,105 @@ impl Desktop {
                 if ui.button("Cancelar").clicked() { self.recovery_mode = None; }
             });
         }
+        match self.run["error"].as_str() {
+            Some("model_capacity_busy") => {
+                ui.colored_label(Color32::YELLOW,
+                    "O LM Studio já tem outro modelo carregado. Libere espaço e planeje uma nova missão.");
+            }
+            Some("model_unavailable") => {
+                ui.colored_label(Color32::YELLOW,
+                    "O modelo da missão está indisponível. Selecione um modelo disponível em um novo plano.");
+            }
+            _ => {}
+        }
         ui.separator();
         if self.rail {
             egui::Panel::right("context-rail")
                 .default_size(320.0)
                 .resizable(true)
                 .show_inside(ui, |ui| self.context_rail(ui));
-            self.terminal(ui);
+        }
+        if self.run["swarm"]["roles"].is_array() {
+            self.swarm_grid(ui);
         } else {
             self.terminal(ui);
+        }
+    }
+
+    fn swarm_grid(&self, ui: &mut egui::Ui) {
+        if let Some(roles) = self.run["swarm"]["roles"].as_array() {
+            ui.horizontal(|ui| {
+                ui.heading("Swarm");
+                if let Some(label) = match self.run["swarm"]["source"].as_str() {
+                    Some("direct") => Some("Pedido direto"),
+                    Some("recommended") => Some("Recomendação aceita"),
+                    _ => None,
+                } {
+                    ui.label(label);
+                }
+            });
+            ui.columns(roles.len().max(1), |columns| {
+                for (column, role) in columns.iter_mut().zip(roles) {
+                    let name = if role["role"] == "implementation" {
+                        "Implementação"
+                    } else {
+                        "Verificação"
+                    };
+                    let status = match role["status"].as_str() {
+                        Some("running") => "Em execução",
+                        Some("checking") => "Testes da candidata",
+                        Some("completed") => "Concluída",
+                        _ => "Aguardando",
+                    };
+                    column.group(|ui| {
+                        ui.strong(name);
+                        ui.monospace(status);
+                        if let Some(model) = role["model_id"].as_str() {
+                            ui.monospace(model);
+                        }
+                        if let Some(log) = role["log"].as_array() {
+                            egui::ScrollArea::vertical()
+                                .id_salt(name)
+                                .max_height(140.0)
+                                .show(ui, |ui| {
+                                    for event in log {
+                                        let line = match event["kind"].as_str() {
+                                            Some("generation_started") => {
+                                                "Geração iniciada".to_owned()
+                                            }
+                                            Some("candidate_sealed") => format!(
+                                                "Candidata selada · SHA-256 {}",
+                                                event["digest"].as_str().unwrap_or_default()
+                                            ),
+                                            Some("check_passed") => {
+                                                format!("Verificação {} concluída", event["number"])
+                                            }
+                                            Some("check_running") => format!(
+                                                "Verificação {} em execução",
+                                                event["number"]
+                                            ),
+                                            Some("review_started") => {
+                                                "Revisão independente iniciada".to_owned()
+                                            }
+                                            Some("review_approved") => {
+                                                "QA aprovou a candidata".to_owned()
+                                            }
+                                            Some("publication_started") => {
+                                                "Publicando artefatos aprovados".to_owned()
+                                            }
+                                            Some("postchecking") => format!(
+                                                "Verificações após publicação concluídas: {}",
+                                                event["completed"]
+                                            ),
+                                            _ => continue,
+                                        };
+                                        ui.monospace(line);
+                                    }
+                                });
+                        }
+                    });
+                }
+            });
         }
     }
 
@@ -811,8 +1252,15 @@ fn skill_label(skill: &Value) -> String {
 }
 
 impl Desktop {
-    fn send_message(&mut self) {
+    fn send_message(&mut self, skill: Option<Value>, budget: Option<u64>) {
         let mut command = json!({"type":"conversation_start","chat_id":self.active_chat,"model_id":self.model,"content":self.message});
+        if let Some(budget) = budget {
+            command["model_id"] = json!("");
+            command["model_memory_budget_bytes"] = json!(budget);
+        }
+        if let Some(skill) = skill {
+            command["skill"] = skill;
+        }
         let references = if self.context_key.is_empty() {
             self.catalog.references(&self.message)
         } else {
@@ -831,8 +1279,25 @@ impl Desktop {
         }
     }
 
-    fn plan_mission(&mut self, git_edit_paths: Vec<String>, skill: Option<Value>) {
+    fn mission_skill_suggestions(&self) -> Vec<Value> {
+        if self.mission_skill.is_some() {
+            return Vec::new();
+        }
+        catalog::matching_skill_packages(&self.skill_catalog, &self.objective)
+    }
+
+    fn plan_mission(
+        &mut self,
+        git_edit_paths: Vec<String>,
+        skill: Option<Value>,
+        budget: Option<u64>,
+    ) {
         let mut command = json!({"type":"mission_plan_start","mission_id":self.mission_id,"scope":self.scope,"model_id":self.model,"review_model_id":self.model,"objective":self.objective,"review_generation":{"max_output_tokens":512,"timeout_ms":120000,"reasoning_effort":"none"}});
+        if let Some(budget) = budget {
+            command["model_id"] = json!("");
+            command["review_model_id"] = json!("");
+            command["model_memory_budget_bytes"] = json!(budget);
+        }
         if !git_edit_paths.is_empty() {
             command["git_edit_paths"] = json!(git_edit_paths);
         }
@@ -842,15 +1307,31 @@ impl Desktop {
         self.send("plan-start", command);
     }
 
-    fn approve_mission(&mut self, digest: &str) {
+    fn cancel_mission(&mut self) {
+        self.send(
+            "mission-cancel",
+            json!({
+                "type":"mission_cancel","mission_id":self.mission_id,
+                "reason":"Cancelamento solicitado no Workspace"
+            }),
+        );
+    }
+
+    fn approve_mission(
+        &mut self,
+        digest: &str,
+        swarm: Option<synapse_core::contracts::SwarmConsent>,
+    ) {
         if self.mission["state"] != "proposed" || self.mission["contract_digest"] != digest {
             self.error = "A aprovação exige o digest da proposta selecionada.".into();
             return;
         }
-        self.send(
-            "approval",
-            json!({"type":"mission_approve","mission_id":self.mission_id,"contract_digest":digest}),
-        );
+        let mut command =
+            json!({"type":"mission_approve","mission_id":self.mission_id,"contract_digest":digest});
+        if let Some(swarm) = swarm {
+            command["swarm"] = json!(swarm);
+        }
+        self.send("approval", command);
     }
 
     fn voice_controls(&mut self, ui: &mut egui::Ui) {
@@ -1211,6 +1692,28 @@ impl Desktop {
 
     fn tick(&mut self) {
         self.browser.poll();
+        if let Some(download) = &self.skill_package_download {
+            use std::sync::mpsc::TryRecvError;
+            let result = match download.try_recv() {
+                Ok(result) => Some(result),
+                Err(TryRecvError::Empty) => None,
+                Err(TryRecvError::Disconnected) => {
+                    Some(Err("A busca da Skill foi interrompida.".into()))
+                }
+            };
+            if let Some(result) = result {
+                self.skill_package_download = None;
+                match result {
+                    Ok(value) if value.get("packages").is_some() => self.skill_catalog = value,
+                    Ok(value) => {
+                        self.skill_package_source = value["source"].as_str().map(str::to_owned);
+                        self.skill_package_input =
+                            value["document"].as_str().unwrap_or_default().to_owned();
+                    }
+                    Err(error) => self.error = error,
+                }
+            }
+        }
         while let Ok((tag, reply)) = self.connection.replies.try_recv() {
             self.receive(tag, reply);
         }
@@ -1326,5 +1829,107 @@ impl eframe::App for Desktop {
                 self.presence(ui);
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod workspace_view_tests {
+    use super::*;
+
+    fn visible_text(desktop: &mut Desktop) -> Vec<String> {
+        fn collect(shape: &egui::Shape, text: &mut Vec<String>) {
+            match shape {
+                egui::Shape::Text(label) => text.push(label.galley.job.text.clone()),
+                egui::Shape::Vec(shapes) => {
+                    for child in shapes {
+                        collect(child, text);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let context = egui::Context::default();
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1280.0, 900.0),
+            )),
+            ..Default::default()
+        };
+        let frame = context.run_ui(input, |ui| desktop.workspace(ui));
+        let mut text = Vec::new();
+        for item in frame.shapes {
+            collect(&item.shape, &mut text);
+        }
+        text
+    }
+
+    #[test]
+    fn workspace_suggests_catalog_skills_until_a_version_is_pinned() {
+        let mut desktop = Desktop::new("workspace-catalog-test".into(), String::new());
+        desktop.objective = "Implementar um leitor CSV".into();
+        desktop.skill_catalog = json!({"packages":[
+            {"name":"Leitor CSV","url":"https://example.com/reader.json"},
+            {"name":"Calcular juros","url":"https://example.com/interest.json"}
+        ]});
+        let suggestions = desktop.mission_skill_suggestions();
+        assert_eq!(suggestions.len(), 1);
+        assert_eq!(suggestions[0]["name"], "Leitor CSV");
+        let shown = visible_text(&mut desktop);
+        assert!(
+            shown
+                .iter()
+                .any(|line| line == "Skills sugeridas em Importar Skill")
+        );
+        desktop.mission_skill =
+            Some(json!({"id":"reader","version":"1","scope":"project:fixture"}));
+        assert!(desktop.mission_skill_suggestions().is_empty());
+        let hidden = visible_text(&mut desktop);
+        assert!(
+            !hidden
+                .iter()
+                .any(|line| line == "Skills sugeridas em Importar Skill")
+        );
+    }
+
+    #[test]
+    fn active_swarm_grid_is_visible_with_context_rail_closed() {
+        let mut desktop = Desktop::new("workspace-view-test".into(), String::new());
+        desktop.rail = false;
+        desktop.scope = "project:fixture".into();
+        let ordinary = visible_text(&mut desktop);
+        assert!(
+            ordinary
+                .iter()
+                .any(|line| line == "artemis@workspace:project:fixture$")
+        );
+        assert!(!ordinary.iter().any(|line| line == "Implementação"));
+
+        desktop.run = json!({"status":"generating","swarm":{"source":"direct","roles":[
+            {"role":"implementation","status":"running","model_id":"fixture",
+             "log":[{"kind":"generation_started"}]},
+            {"role":"verification","status":"waiting","model_id":"fixture","log":[]}
+        ]}});
+        let active = visible_text(&mut desktop);
+        for label in ["Implementação", "Verificação", "Geração iniciada"] {
+            assert!(
+                active.iter().any(|line| line == label),
+                "{label}: {active:?}"
+            );
+        }
+        assert!(
+            !active
+                .iter()
+                .any(|line| line.starts_with("artemis@workspace"))
+        );
+
+        desktop.run = json!({"status":"integrated"});
+        let integrated = visible_text(&mut desktop);
+        assert!(
+            integrated
+                .iter()
+                .any(|line| line.starts_with("artemis@workspace"))
+        );
+        assert!(!integrated.iter().any(|line| line == "Implementação"));
     }
 }

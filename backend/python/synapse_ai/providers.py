@@ -1,10 +1,15 @@
 from copy import deepcopy
+from contextlib import contextmanager
 import json
+import os
 import re
 import socket
+import subprocess
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 
 from .protocol import MAX_CANDIDATE_CONTENT, MAX_CANDIDATE_FRAME, MAX_CONTENT
 
@@ -160,9 +165,127 @@ def _json(url, payload=None, timeout=10, response_limit=MAX_PROVIDER_BYTES):
         raise ProviderError("provider_malformed") from None
 
 
+def _release_model(api, instance):
+    payload = {"instance_id": instance}
+    try:
+        _json(api + "/unload", payload, timeout=2)
+    except ProviderError as error:
+        if str(error) not in {"provider_timeout", "provider_unavailable", "model_unavailable"}:
+            raise
+        # Verify absence before treating an ambiguous unload as complete.
+        catalog = _json(api, timeout=1)
+        try:
+            resident = any(
+                loaded["id"] == instance
+                for model in catalog["models"]
+                for loaded in model["loaded_instances"]
+            )
+        except (KeyError, TypeError):
+            raise ProviderError("provider_malformed") from None
+        if resident:
+            _json(api + "/unload", payload, timeout=2)
+
+
+@contextmanager
+def _cli_model_instance(cli, api, model_id, context_length, timeout):
+    if (not os.path.isabs(cli) or not os.path.isfile(cli) or model_id.startswith("-")):
+        raise ProviderError("invalid_endpoint")
+    instance = "synapse-" + uuid.uuid4().hex
+    try:
+        try:
+            subprocess.run(
+                [cli, "load", "--identifier", instance, "--context-length", str(context_length),
+                 "--ttl", "180", "--yes", "--", model_id],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                timeout=timeout, check=True,
+            )
+        except subprocess.TimeoutExpired:
+            raise ProviderError("provider_timeout") from None
+        except (OSError, subprocess.CalledProcessError):
+            raise ProviderError("model_unavailable") from None
+        catalog = _json(api, timeout=2)
+        try:
+            loaded = any(item["id"] == instance for model in catalog["models"]
+                         if model["key"] == model_id for item in model["loaded_instances"])
+        except (KeyError, TypeError):
+            raise ProviderError("provider_malformed") from None
+        if not loaded:
+            raise ProviderError("model_unavailable")
+        yield instance
+    except BaseException:
+        try:
+            _release_model(api, instance)
+        except ProviderError:
+            # The server-side TTL remains in effect if cleanup cannot connect.
+            pass
+        raise
+    else:
+        _release_model(api, instance)
+
+
+@contextmanager
+def model_instance(base, model_id, timeout):
+    if os.environ.get("SYNAPSE_MANAGE_LOCAL_MODELS") != "1":
+        yield model_id
+        return
+    api = base.removesuffix("/v1") + "/api/v1/models"
+    start = time.monotonic()
+    catalog = _json(api, timeout=min(timeout, 5))
+    try:
+        entries = catalog["models"]
+        by_key = {entry["key"]: entry for entry in entries}
+        instances = [instance["id"] for entry in entries for instance in entry["loaded_instances"]]
+        target = by_key.get(model_id)
+        if target is not None:
+            context_length = min(32768, target["max_context_length"])
+            target_instances = target["loaded_instances"]
+    except (KeyError, TypeError, ValueError):
+        raise ProviderError("provider_malformed") from None
+    if model_id in instances:
+        yield model_id
+        return
+    if target is None:
+        raise ProviderError("model_unavailable")
+    if target_instances:
+        yield target_instances[0]["id"]
+        return
+    if instances:
+        raise ProviderError("model_capacity_busy")
+    remaining = timeout - (time.monotonic() - start)
+    if remaining <= 0:
+        raise ProviderError("provider_timeout")
+    cli = os.environ.get("SYNAPSE_LMS_EXECUTABLE")
+    if cli:
+        # The CLI targets the local service, whose REST port is fixed for this integration.
+        if base != "http://127.0.0.1:1234/v1":
+            raise ProviderError("invalid_endpoint")
+        with _cli_model_instance(cli, api, model_id, context_length, remaining) as instance:
+            yield instance
+        return
+    loaded = _json(api + "/load", {"model": model_id, "context_length": context_length,
+                                  "offload_kv_cache_to_gpu": False}, timeout=remaining)
+    if not isinstance(loaded, dict) or not isinstance(loaded.get("instance_id"), str):
+        raise ProviderError("provider_malformed")
+    instance = loaded["instance_id"]
+    try:
+        yield instance
+    finally:
+        _release_model(api, instance)
+
+
 def infer(endpoint, model_id, messages, generation, purpose="conversation"):
     base = validate_endpoint(endpoint)
     timeout = generation['timeout_ms'] / 1000
+    started = time.monotonic()
+    with model_instance(base, model_id, timeout) as instance:
+        remaining = timeout - (time.monotonic() - started)
+        if remaining <= 0:
+            raise ProviderError("provider_timeout")
+        return _infer(base, instance, messages, generation, purpose, remaining)
+
+
+def _infer(base, model_id, messages, generation, purpose, timeout):
+    start = time.monotonic()
     models = _json(base + "/models", timeout=timeout)
     if not isinstance(models, dict) or not isinstance(models.get("data"), list):
         raise ProviderError("provider_malformed")
@@ -178,7 +301,10 @@ def infer(endpoint, model_id, messages, generation, purpose="conversation"):
     generation_response = purpose == "mission_generate"
     response_limit = MAX_CANDIDATE_FRAME if generation_response else MAX_PROVIDER_BYTES
     content_limit = MAX_CANDIDATE_CONTENT if generation_response else MAX_CONTENT
-    result = _json(base + "/chat/completions", payload, timeout=timeout, response_limit=response_limit)
+    remaining = timeout - (time.monotonic() - start)
+    if remaining <= 0:
+        raise ProviderError("provider_timeout")
+    result = _json(base + "/chat/completions", payload, timeout=remaining, response_limit=response_limit)
     try:
         choices = result["choices"]
         if not isinstance(choices, list) or len(choices) != 1:

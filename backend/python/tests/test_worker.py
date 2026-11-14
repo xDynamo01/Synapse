@@ -7,11 +7,108 @@ import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from synapse_ai.providers import ProviderError, validate_endpoint, infer
+from synapse_ai.providers import ProviderError, validate_endpoint, infer, model_instance, _release_model, _cli_model_instance
 from synapse_ai.protocol import digest, validate
+
+
+class ModelLifecycleTests(unittest.TestCase):
+    def test_capacity_busy_preserves_existing_model(self):
+        models = {"models": [
+            {"key": "resident", "loaded_instances": [{"id": "operator"}]},
+            {"key": "selected", "loaded_instances": [], "max_context_length": 32768},
+        ]}
+        with patch.dict(os.environ, {"SYNAPSE_MANAGE_LOCAL_MODELS": "1"}):
+            with patch("synapse_ai.providers._json", return_value=models) as api:
+                with self.assertRaisesRegex(ProviderError, "model_capacity_busy"):
+                    with model_instance("http://127.0.0.1:1234/v1", "selected", 10):
+                        self.fail("capacity refusal must occur before inference")
+                self.assertEqual(api.call_count, 1)
+
+    def test_reuses_operator_instance_without_unloading_it(self):
+        models = {"models": [
+            {"key": "selected", "loaded_instances": [{"id": "operator"}], "max_context_length": 32768},
+        ]}
+        with patch.dict(os.environ, {"SYNAPSE_MANAGE_LOCAL_MODELS": "1"}):
+            with patch("synapse_ai.providers._json", return_value=models) as api:
+                with model_instance("http://127.0.0.1:1234/v1", "selected", 10) as instance:
+                    self.assertEqual(instance, "operator")
+                self.assertEqual(api.call_count, 1)
+
+    def test_reconciles_ambiguous_unload(self):
+        for instances in ([], [{"id": "owned"}, {"id": "operator"}]):
+            with self.subTest(instances=instances):
+                catalog = {"models": [{"loaded_instances": instances}]}
+                with patch("synapse_ai.providers._json", side_effect=[
+                    ProviderError("provider_timeout"), catalog, {},
+                ]) as api:
+                    _release_model("http://127.0.0.1:1234/api/v1/models", "owned")
+                    self.assertEqual(api.call_count, 3 if instances else 2)
+                    if instances:
+                        self.assertEqual(api.call_args.args[1], {"instance_id": "owned"})
+
+    def test_unload_not_found_is_success_only_if_catalog_confirms_absence(self):
+        base = "http://127.0.0.1:1234/api/v1/models"
+        for resident in (False, True):
+            with self.subTest(resident=resident):
+                entries = [{"id": "owned"}] if resident else []
+                responses = [
+                    ProviderError("model_unavailable"),
+                    {"models": [{"loaded_instances": entries}]},
+                    ProviderError("model_unavailable"),
+                ]
+                with patch("synapse_ai.providers._json", side_effect=responses):
+                    if resident:
+                        with self.assertRaisesRegex(ProviderError, "model_unavailable"):
+                            _release_model(base, "owned")
+                    else:
+                        _release_model(base, "owned")
+
+    def test_cli_mode_does_not_load_against_an_unmatched_endpoint(self):
+        catalog = {"models": [
+            {"key": "selected", "loaded_instances": [], "max_context_length": 32768},
+        ]}
+        with patch.dict(os.environ, {
+            "SYNAPSE_MANAGE_LOCAL_MODELS": "1",
+            "SYNAPSE_LMS_EXECUTABLE": sys.executable,
+        }), patch("synapse_ai.providers._json", return_value=catalog) as api:
+            with self.assertRaisesRegex(ProviderError, "invalid_endpoint"):
+                with model_instance("http://127.0.0.1:4321/v1", "selected", 10):
+                    self.fail("an unmatched endpoint must not acquire a model")
+            self.assertEqual(api.call_count, 1)
+
+    def test_cli_load_reserves_unique_id_and_sets_expiration(self):
+        base = "http://127.0.0.1:1234/api/v1/models"
+        with patch("synapse_ai.providers.subprocess.run") as run:
+            with patch("synapse_ai.providers._json") as api:
+                def catalog(*args, **kwargs):
+                    argv = run.call_args.args[0]
+                    instance = argv[argv.index("--identifier") + 1]
+                    return {"models": [{"key": "selected", "loaded_instances": [{"id": instance}]}]}
+
+                api.side_effect = catalog
+                with _cli_model_instance(sys.executable, base, "selected", 32768, 10) as instance:
+                    argv = run.call_args.args[0]
+                    self.assertTrue(instance.startswith("synapse-"))
+                    self.assertEqual(argv[argv.index("--ttl") + 1], "180")
+                self.assertEqual(api.call_args.args[:2],
+                                 (base + "/unload", {"instance_id": instance}))
+
+    def test_releases_owned_instance_after_failure(self):
+        models = {"models": [
+            {"key": "selected", "loaded_instances": [], "max_context_length": 65536},
+        ]}
+        with patch.dict(os.environ, {"SYNAPSE_MANAGE_LOCAL_MODELS": "1"}):
+            with patch("synapse_ai.providers._json", side_effect=[models, {"instance_id": "owned"}, {}]) as api:
+                with self.assertRaisesRegex(RuntimeError, "inference failed"):
+                    with model_instance("http://127.0.0.1:1234/v1", "selected", 10) as instance:
+                        self.assertEqual(instance, "owned")
+                        raise RuntimeError("inference failed")
+                self.assertEqual(api.call_args_list[1].args[1]["context_length"], 32768)
+                self.assertEqual(api.call_args.args[1], {"instance_id": "owned"})
 
 
 class Handler(BaseHTTPRequestHandler):

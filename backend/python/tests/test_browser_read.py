@@ -1,4 +1,5 @@
 import importlib.util
+import json
 from pathlib import Path
 import unittest
 from unittest.mock import patch
@@ -9,6 +10,23 @@ spec.loader.exec_module(reader)
 
 
 class BrowserReadTests(unittest.TestCase):
+    def test_skill_catalog_keeps_packages_on_origin(self):
+        source = 'https://example.com/skills/index.json'
+        with patch.object(reader, 'resolve') as resolve:
+            catalog = reader.skill_catalog({
+                'source': source,
+                'document': json.dumps([{'name': 'Example', 'url': 'example.json'}]),
+            })
+            self.assertEqual(catalog['packages'], [
+                {'name': 'Example', 'url': 'https://example.com/skills/example.json'},
+            ])
+            with self.assertRaisesRegex(ValueError, 'outside the catalog origin'):
+                reader.skill_catalog({
+                    'source': source,
+                    'document': json.dumps([{'name': 'Other', 'url': '//other.example.com/package'}]),
+                })
+            resolve.assert_not_called()
+
     def test_rejects_foreign_origin_before_dns(self):
         with patch.object(reader, 'resolve') as resolve:
             with self.assertRaisesRegex(ValueError, 'approved origin'):

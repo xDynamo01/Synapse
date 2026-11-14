@@ -433,6 +433,13 @@ fn mission_run_integrates_only_verified_owned_candidate() {
                 .unwrap()
                 .push(json!({"kind":"python_unittest","entrypoint":"test_second.py"}));
             files.push(json!({"path":"test_second.py","content":source}));
+            for path in ["notes.md", "summary.txt"] {
+                plan["artifacts"]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(json!({"path":path,"purpose":"Documentation"}));
+                files.push(json!({"path":path,"content":"Arithmetic validation"}));
+            }
         }
         std::fs::write(provider.join("mission-response"), plan.to_string()).unwrap();
         std::fs::write(
@@ -462,10 +469,27 @@ fn mission_run_integrates_only_verified_owned_candidate() {
             std::fs::write(root.path().join("workspace/test_project.py"), "owner file").unwrap();
         }
         register(&mut session, &fixture.address);
-        assert_eq!(
-            session.call(req("plan", plan_command("mission")))["ok"],
-            true
-        );
+        let mut planning = plan_command("mission");
+        if scenario == "approved" {
+            let package = json!({"license":"MIT","manifest":{
+                "id":"arithmetic","scope":"project:a","version":"1","provenance":"test",
+                "tools":[],"permissions":[],"instructions":"ARITHMETIC_DOMAIN_GUIDANCE"
+            }});
+            let inspected = session.call(req(
+                "inspect-skill",
+                json!({"type":"skill_inspect","package":package}),
+            ));
+            assert_eq!(inspected["ok"], true, "{inspected}");
+            let registered = session.call(req(
+                "install-skill",
+                json!({"type":"skill_install","package":package,
+                "inspected_digest":inspected["result"]["inspected_digest"]}),
+            ));
+            assert_eq!(registered["ok"], true, "{registered}");
+            planning["skill"] = json!({"id":"arithmetic","scope":"project:a","version":"1",
+                "digest":registered["result"]["digest"]});
+        }
+        assert_eq!(session.call(req("plan", planning))["ok"], true);
         assert_eq!(poll(&mut session, "plan")["status"], "succeeded");
         let execute = json!({"type":"mission_execute","mission_id":"mission"});
         let refused = session.call(req("too-early", execute.clone()));
@@ -474,7 +498,14 @@ fn mission_run_integrates_only_verified_owned_candidate() {
             "proposal",
             json!({"type":"mission_get","mission_id":"mission"}),
         ));
-        let approved = session.call(req("approve",json!({"type":"mission_approve","mission_id":"mission","contract_digest":proposal["result"]["contract_digest"]})));
+        let mut approval = json!({"type":"mission_approve","mission_id":"mission",
+            "contract_digest":proposal["result"]["contract_digest"]});
+        if scenario == "approved" {
+            approval["swarm"] = json!("recommended");
+        } else if scenario == "generation-cancel" {
+            approval["swarm"] = json!("direct");
+        }
+        let approved = session.call(req("approve", approval));
         assert_eq!(approved["ok"], true, "{approved}");
         if scenario == "workspace-exchanged" {
             std::fs::rename(
@@ -492,6 +523,26 @@ fn mission_run_integrates_only_verified_owned_candidate() {
         let start = req("execute", execute);
         let started = session.call(start.clone());
         assert_eq!(started["result"]["status"], "generating", "{started}");
+        if scenario == "approved" || scenario == "generation-cancel" {
+            assert_eq!(started["result"]["swarm"]["roles"][0]["status"], "running");
+            let expected_source = if scenario == "approved" {
+                "recommended"
+            } else {
+                "direct"
+            };
+            assert_eq!(started["result"]["swarm"]["source"], expected_source);
+            for role in started["result"]["swarm"]["roles"].as_array().unwrap() {
+                assert_eq!(role["model_id"], "selected");
+            }
+            assert_eq!(
+                started["result"]["swarm"]["roles"][0]["log"][0]["kind"],
+                "generation_started"
+            );
+            assert_eq!(started["result"]["swarm"]["roles"][1]["log"], json!([]));
+        } else {
+            assert!(started["result"].get("swarm").is_none());
+        }
+
         assert_eq!(session.call(start), started);
         if scenario.starts_with("generation-") {
             let began = Instant::now();
@@ -539,6 +590,7 @@ fn mission_run_integrates_only_verified_owned_candidate() {
         }
 
         let began = Instant::now();
+        let mut saw_swarm_publication = false;
         let result = (0..)
             .find_map(|index| {
                 let status = session.call(req(
@@ -547,6 +599,17 @@ fn mission_run_integrates_only_verified_owned_candidate() {
                 ));
                 assert_eq!(status["ok"], true, "{status}");
                 let run = &status["result"];
+                if scenario == "approved"
+                    && matches!(
+                        run["status"].as_str(),
+                        Some("review_ready" | "publishing" | "postchecking")
+                    )
+                {
+                    let log = run["swarm"]["roles"][1]["log"].as_array().unwrap();
+                    assert!(log.iter().any(|event| event["kind"] == "review_approved"));
+                    saw_swarm_publication = true;
+                }
+
                 if !matches!(
                     run["status"].as_str(),
                     Some(
@@ -567,6 +630,9 @@ fn mission_run_integrates_only_verified_owned_candidate() {
             })
             .unwrap();
         assert_eq!(result["status"], expected, "{scenario}: {result}");
+        if scenario == "approved" {
+            assert!(saw_swarm_publication);
+        }
         if scenario == "check-failure" {
             assert_eq!(result["error"], "check_failed", "{result}");
             assert!(result["failed_check_id"].as_str().is_some());
@@ -662,6 +728,27 @@ fn mission_run_integrates_only_verified_owned_candidate() {
                 }
             }
         }
+        assert!(result.get("swarm").is_none());
+        if scenario == "approved" {
+            let evidence = session.call(req(
+                "skill-use-evidence",
+                json!({
+                    "type":"skill_mission_evidence","mission_id":"mission"
+                }),
+            ));
+            assert_eq!(evidence["ok"], true, "{evidence}");
+            assert_eq!(evidence["result"]["status"], "integrated");
+            assert_eq!(evidence["result"]["qa_approved"], true);
+            assert_eq!(evidence["result"]["completed_checks"], 2);
+            assert_eq!(evidence["result"]["parent"]["scope"], "project:a");
+            let generation =
+                std::fs::read_to_string(provider.join("mission_generate-post")).unwrap();
+            let review = std::fs::read_to_string(provider.join("mission_review-post")).unwrap();
+            assert!(generation.contains("temporary implementation role"));
+            assert!(review.contains("temporary verification role"));
+            assert!(generation.contains("ARITHMETIC_DOMAIN_GUIDANCE"));
+            assert!(review.contains("ARITHMETIC_DOMAIN_GUIDANCE"));
+        }
         let review_path = provider.join("mission_review-post");
         if matches!(
             scenario,
@@ -720,7 +807,13 @@ fn mission_run_integrates_only_verified_owned_candidate() {
                     std::fs::read_to_string(workspace.join("test_second.py")).unwrap(),
                     source
                 );
-                assert_eq!(workspace.read_dir().unwrap().count(), 2);
+                for path in ["notes.md", "summary.txt"] {
+                    assert_eq!(
+                        std::fs::read_to_string(workspace.join(path)).unwrap(),
+                        "Arithmetic validation"
+                    );
+                }
+                assert_eq!(workspace.read_dir().unwrap().count(), 4);
             }
             "publish-crash-after" | "revoke-after-write" => {
                 assert_eq!(

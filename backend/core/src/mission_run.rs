@@ -69,6 +69,20 @@ pub(crate) fn stage_id(mission: &str, stage: &str) -> CoreResult<String> {
     ))
 }
 
+pub(crate) fn swarm_consent(
+    tx: &Transaction<'_>,
+    mission: &str,
+    digest: &str,
+) -> CoreResult<Option<String>> {
+    Ok(tx.query_row(
+        "SELECT json_extract(payload,'$.source') FROM events WHERE kind='swarm_consent_recorded'
+         AND json_extract(payload,'$.mission_id')=?1 AND json_extract(payload,'$.contract_digest')=?2
+         ORDER BY cursor DESC LIMIT 1",
+        params![mission, digest],
+        |row| row.get(0),
+    ).optional()?)
+}
+
 pub(crate) fn start(
     tx: &Transaction<'_>,
     mission: &str,
@@ -102,6 +116,11 @@ pub(crate) fn start(
     }
     let id = stage_id(mission, "generation")?;
     let mut launch = candidate::generation(&id, &contract)?;
+    if swarm_consent(tx, mission, &digest)?.is_some() {
+        launch.messages.insert(1, json!({"role":"system","content":
+            "You are the temporary implementation role. Produce only the approved candidate artifacts. A separate verification role evaluates the candidate."}));
+        launch.messages = context::finalize_candidate(launch.messages)?;
+    }
     let originals = crate::git_workspace::originals(tx, mission)?;
     if !originals.is_empty() {
         let text: Vec<_> = originals
@@ -216,7 +235,84 @@ pub(crate) fn get(tx: &Transaction<'_>, id: &str) -> CoreResult<Value> {
             }
         }
     }
+    let digest = result["contract_digest"].as_str().unwrap_or_default();
+    if let Some(source) = swarm_consent(tx, id, digest)? {
+        let status = result["status"].as_str().unwrap_or_default();
+        let roles = match status {
+            "generating" => Some(("running", "waiting")),
+            "checking" => Some(("completed", "checking")),
+            "reviewing" => Some(("completed", "running")),
+            "review_ready" | "publishing" | "postchecking" => Some(("completed", "completed")),
+            _ => None,
+        };
+        if let Some((implementation, verification)) = roles {
+            let (primary_model, review_model): (String, String) = tx.query_row(
+                "SELECT json_extract(contract,'$.execution.primary_model.id'),
+                        json_extract(contract,'$.execution.review_model.id')
+                 FROM missions WHERE id=?1 AND contract_digest=?2",
+                params![id, digest],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?;
+
+            let mut implementation_log = vec![json!({"kind":"generation_started"})];
+            if let Some(digest) = result["candidate_digest"].as_str() {
+                implementation_log.push(json!({"kind":"candidate_sealed","digest":digest}));
+            }
+            let mut verification_log = Vec::new();
+            let completed = result["completed_checks"].as_u64().unwrap_or_default();
+            for index in 0..completed {
+                verification_log.push(json!({"kind":"check_passed","number":index + 1}));
+            }
+            if status == "checking" && result["active_check_id"].is_string() {
+                verification_log.push(json!({"kind":"check_running","number":completed + 1}));
+            }
+            if status == "reviewing" {
+                verification_log.push(json!({"kind":"review_started"}));
+            }
+            if result["review"]["approved"] == true {
+                verification_log.push(json!({"kind":"review_approved"}));
+            }
+            if status == "publishing" {
+                verification_log.push(json!({"kind":"publication_started"}));
+            }
+            if status == "postchecking" {
+                verification_log.push(
+                    json!({"kind":"postchecking","completed":result["completed_postchecks"]}),
+                );
+            }
+            result["swarm"] = json!({"source":source,"roles":[
+                {"role":"implementation","model_id":primary_model,"status":implementation,"candidate_digest":result["candidate_digest"],"log":implementation_log},
+                {"role":"verification","model_id":review_model,"status":verification,"completed_checks":completed,"log":verification_log}
+            ]});
+        }
+    }
     Ok(result)
+}
+
+pub(crate) fn skill_evidence(tx: &Transaction<'_>, id: &str) -> CoreResult<Value> {
+    let mission = crate::missions::get(tx, id)?;
+    let pin = &mission["contract"]["skill"];
+    let run = get(tx, id)?;
+    if !pin["scope"]
+        .as_str()
+        .is_some_and(|scope| scope.starts_with("project:"))
+        || !matches!(
+            run["status"].as_str(),
+            Some("integrated" | "failed" | "rejected")
+        )
+    {
+        return Err(CoreError::new(
+            "contract_conflict",
+            "A completed run with a pinned project Skill is required",
+        ));
+    }
+    Ok(json!({
+        "parent":pin,"status":run["status"],
+        "completed_checks":run["completed_checks"],"error":run["error"],
+        "qa_approved":run["review"]["approved"],
+        "qa_reason":run["review"]["reason"],
+        "objective":mission["contract"]["objective"]
+    }))
 }
 
 pub(crate) fn fail(tx: &Transaction<'_>, mission: &str, error: &str) -> CoreResult<()> {
@@ -396,13 +492,30 @@ pub(crate) fn advance(
         evidence.push(check);
     }
     let id = stage_id(&mission, "review")?;
-    let launch = match candidate::review(&id, &contract, &artifacts, &evidence) {
+    let mut launch = match candidate::review(&id, &contract, &artifacts, &evidence) {
         Ok(launch) => launch,
         Err(_) => {
             fail(tx, &mission, "review_input_invalid")?;
             return Ok(None);
         }
     };
+    let review_context = (|| -> CoreResult<_> {
+        if let Some(skill) = &contract.skill {
+            launch
+                .messages
+                .insert(1, skills::guidance_for_scope(tx, &contract.scope, skill)?);
+        }
+        if swarm_consent(tx, &mission, &digest)?.is_some() {
+            launch.messages.insert(1, json!({"role":"system","content":
+                "You are the temporary verification role. Evaluate the candidate independently using the approved objective and the check evidence."}));
+        }
+        context::finalize_candidate(launch.messages)
+    })();
+    let Ok(messages) = review_context else {
+        fail(tx, &mission, "review_input_invalid")?;
+        return Ok(None);
+    };
+    launch.messages = messages;
     tx.execute(
         "UPDATE mission_runs SET status='reviewing',ai_id=?2 WHERE mission_id=?1",
         params![mission, id],

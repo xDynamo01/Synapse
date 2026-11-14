@@ -23,8 +23,7 @@ Na ponte, `browser_load_image` recebe `url` listada pela página aberta.
 O estado retorna as dimensões depois da validação. A exibição é local.
 
 Este fluxo é de leitura pública acionada pelo proprietário. Perfis com
-login, ações de missão e quarentena de downloads pertencem aos critérios
-restantes da [etapa 14](../specs/2026-11-13-browser-threat-model.md).
+login e ações de missão pertencem aos critérios restantes da [etapa 14](../specs/2026-11-13-browser-threat-model.md).
 
 ## Estrutura da página
 
@@ -68,3 +67,7 @@ como texto em quarentena**. O leitor aceita `text/plain` UTF-8 de até 256 KiB,
 valida o conteúdo e grava uma cópia cifrada com DPAPI sob a pasta de dados do
 Synapse. O aplicativo mostra tipo, tamanho e SHA-256. A ação é manual e a
 quarentena mantém o conteúdo sem abrir o arquivo ou executar comandos.
+
+Na ponte local, use `browser_quarantine_text` com a `url` e consulte `state`
+até `browser.quarantine_loading` terminar. O recibo aparece em
+`browser.quarantine_receipt`.

@@ -68,6 +68,8 @@ pub enum Command {
         mission_id: String,
         scope: String,
         model_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        model_memory_budget_bytes: Option<u64>,
         objective: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         skill: Option<SkillPin>,
@@ -88,6 +90,8 @@ pub enum Command {
     MissionApprove {
         mission_id: String,
         contract_digest: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        swarm: Option<SwarmConsent>,
     },
     MissionCancel {
         mission_id: String,
@@ -120,11 +124,62 @@ pub enum Command {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         limit: Option<u32>,
     },
+    ModelRoute {
+        capability: String,
+        memory_budget_bytes: u64,
+    },
     ModelGet {
         model_id: String,
     },
     SkillRegister {
         skill: SkillManifest,
+    },
+    SkillInspect {
+        package: SkillPackage,
+    },
+    SkillInstall {
+        package: SkillPackage,
+        inspected_digest: String,
+    },
+    SkillRevise {
+        parent: SkillPin,
+        version: String,
+        instructions: String,
+        rationale: String,
+    },
+    SkillBenchmarkCase {
+        proposal_cursor: u64,
+        model_id: String,
+        prompt: String,
+        expected: String,
+        candidate: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        evaluation_scope: Option<String>,
+    },
+    SkillMissionEvidence {
+        mission_id: String,
+    },
+    SkillGlobalPromote {
+        proposal_cursor: u64,
+        reviewed_instructions_digest: String,
+    },
+    SkillBenchmarkReceipt {
+        proposal_cursor: u64,
+    },
+    SkillBenchmarkReview {
+        proposal_cursor: u64,
+        cases: Vec<SkillBenchmarkPair>,
+    },
+    SkillReview {
+        proposal_cursor: u64,
+        review: SkillReviewEvidence,
+    },
+    SkillActive {
+        scope: String,
+        skill_id: String,
+    },
+    SkillRollback {
+        current: SkillPin,
     },
     SkillsList {
         scope: String,
@@ -146,6 +201,8 @@ pub enum Command {
     ConversationStart {
         chat_id: String,
         model_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        model_memory_budget_bytes: Option<u64>,
         content: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         skill: Option<SkillPin>,
@@ -287,6 +344,13 @@ pub struct Provenance {
     pub source_id: String,
     pub evidence: String,
 }
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SwarmConsent {
+    Direct,
+    Recommended,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MissionContract {
@@ -370,6 +434,35 @@ pub struct SkillManifest {
     pub tools: Vec<String>,
     pub permissions: Vec<String>,
     pub instructions: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SkillBenchmarkPair {
+    pub baseline_job: String,
+    pub candidate_job: String,
+    pub expected: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SkillReviewEvidence {
+    pub reviewer: String,
+    pub benchmark: String,
+    pub baseline: u32,
+    pub candidate: u32,
+    pub regressions: u32,
+    pub approved: bool,
+}
+
+/// A declarative package submitted for review before registration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SkillPackage {
+    pub manifest: SkillManifest,
+    pub license: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -935,9 +935,15 @@ fn guided_conversation_pins_skill_and_persists() {
         ))["ok"],
         true
     );
+    let no_fit = session.call(req(
+        "no-fit",
+        json!({"type":"conversation_start",
+        "chat_id":"one","model_id":"","model_memory_budget_bytes":1023,"content":"not appended"}),
+    ));
+    assert_eq!(no_fit["error"]["code"], "no_matching_model");
     let start = req(
         "guided",
-        json!({"type":"conversation_start","chat_id":"one","model_id":"selected","content":"hello","skill":pin}),
+        json!({"type":"conversation_start","chat_id":"one","model_id":"","model_memory_budget_bytes":1024,"content":"hello","skill":pin}),
     );
     let receipt = session.call(start.clone());
     assert_eq!(receipt["ok"], true, "{receipt}");
@@ -1995,4 +2001,266 @@ fn ordinary_voice_turn_reuses_chat_and_sets_response_language() {
     let messages = history["result"]["messages"].as_array().unwrap();
     assert_eq!(messages.len(), 2, "{history}");
     assert_eq!(messages[0]["content"], "Please speak with me.");
+}
+
+#[test]
+fn skill_benchmark_promotes_and_rolls_back_on_fresh_regression() {
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let root = TempDir::new().unwrap();
+    let fixture = Fixture::new(false);
+    let mut session = Session::new(&root, None);
+    register(&mut session, &fixture.address);
+    let registered = session.call(req(
+        "register-guide",
+        json!({"type":"skill_register","skill":{
+            "id":"guide","scope":"project:a","version":"1","provenance":"local fixture",
+            "tools":[],"permissions":[],"instructions":"Original guidance"
+        }}),
+    ));
+    assert_eq!(registered["ok"], true, "{registered}");
+    let parent = json!({"id":"guide","scope":"project:a","version":"1",
+        "digest":registered["result"]["digest"]});
+    let proposal = session.call(req("revise-guide", json!({"type":"skill_revise",
+        "parent":parent,"version":"2","instructions":"Revised guidance","rationale":"Improve task"
+    })));
+    assert_eq!(proposal["ok"], true, "{proposal}");
+    let cursor = &proposal["result"]["proposal_cursor"];
+    let external = root.path().join("comparison-project");
+    std::fs::create_dir(&external).unwrap();
+    let registered = session.call(req(
+        "external-project",
+        json!({
+            "type":"project_register","scope":"project:external","root":external
+        }),
+    ));
+    assert_eq!(registered["ok"], true, "{registered}");
+    let unknown = session.call(req(
+        "unknown-evaluation-project",
+        json!({
+            "type":"skill_benchmark_case","proposal_cursor":cursor,"model_id":"selected",
+            "prompt":"Unknown context","expected":"OK","candidate":false,
+            "evaluation_scope":"project:unknown"
+        }),
+    ));
+    assert_eq!(unknown["error"]["code"], "not_found", "{unknown}");
+    let response_path = fixture
+        .marker
+        .parent()
+        .unwrap()
+        .join("conversation-response");
+    let run = |session: &mut Session, id: &str, prompt: &str, candidate: bool, answer: &str| {
+        std::fs::write(&response_path, answer).unwrap();
+        let started = session.call(req(
+            id,
+            json!({"type":"skill_benchmark_case",
+                "proposal_cursor":cursor,"model_id":"selected","prompt":prompt,
+                "expected":"OK","candidate":candidate,"evaluation_scope":"project:external"
+            }),
+        ));
+        assert_eq!(started["ok"], true, "{started}");
+        assert_eq!(poll(session, id)["status"], "succeeded");
+    };
+    run(&mut session, "baseline", "Original scenario", false, "FAIL");
+    run(&mut session, "candidate", "Original scenario", true, "OK");
+    run(
+        &mut session,
+        "old-regression-base",
+        "Old regression scenario",
+        false,
+        "OK",
+    );
+    run(
+        &mut session,
+        "old-regression-candidate",
+        "Old regression scenario",
+        true,
+        "FAIL",
+    );
+    let review = |id: &str, baseline: &str, candidate: &str| {
+        req(
+            id,
+            json!({
+                "type":"skill_benchmark_review","proposal_cursor":cursor,
+                "cases":[{"baseline_job":baseline,"candidate_job":candidate,"expected":"OK"}]
+            }),
+        )
+    };
+    let manual = session.call(req(
+        "manual-bypass",
+        json!({
+            "type":"skill_review","proposal_cursor":cursor,
+            "review":{"reviewer":"Operator","benchmark":"claimed","baseline":0,"candidate":1,
+                      "regressions":0,"approved":true}
+        }),
+    ));
+    assert_eq!(manual["error"]["code"], "contract_conflict", "{manual}");
+    std::fs::write(&response_path, "OK").unwrap();
+    let unscoped = session.call(req(
+        "unscoped-candidate",
+        json!({
+            "type":"skill_benchmark_case","proposal_cursor":cursor,"model_id":"selected",
+            "prompt":"Original scenario","expected":"OK","candidate":true
+        }),
+    ));
+    assert_eq!(unscoped["ok"], true, "{unscoped}");
+    assert_eq!(
+        poll(&mut session, "unscoped-candidate")["status"],
+        "succeeded"
+    );
+    let mismatched = session.call(review("mismatched-scope", "baseline", "unscoped-candidate"));
+    assert_eq!(
+        mismatched["error"]["code"], "contract_conflict",
+        "{mismatched}"
+    );
+
+    let promoted = session.call(review("promote", "baseline", "candidate"));
+    assert_eq!(promoted["result"]["promoted"], true, "{promoted}");
+    let model_config = promoted["result"]["model_config_digest"]
+        .as_str()
+        .expect("benchmark receipt identifies the evaluated model configuration");
+    assert_eq!(model_config.len(), 64);
+    assert_eq!(
+        promoted["result"]["evaluation_scopes"],
+        json!(["project:external"])
+    );
+    assert_eq!(
+        promoted["result"]["passing_evaluation_scopes"],
+        json!(["project:external"])
+    );
+    let global = session.call(req(
+        "global-with-one-project",
+        json!({
+            "type":"skill_global_promote","proposal_cursor":cursor,
+            "reviewed_instructions_digest":proposal["result"]["instruction_change"]["after_digest"]
+        }),
+    ));
+    assert_eq!(global["error"]["code"], "contract_conflict", "{global}");
+    let duplicate = session.call(review("duplicate-evidence", "baseline", "candidate"));
+    assert_eq!(duplicate["error"]["code"], "already_exists", "{duplicate}");
+    run(
+        &mut session,
+        "healthy-baseline",
+        "Preserved behavior",
+        false,
+        "OK",
+    );
+    run(
+        &mut session,
+        "healthy-candidate",
+        "Preserved behavior",
+        true,
+        "OK",
+    );
+    let second = root.path().join("second-comparison-project");
+    std::fs::create_dir(&second).unwrap();
+    let registered = session.call(req(
+        "second-external-project",
+        json!({
+            "type":"project_register","scope":"project:second","root":second
+        }),
+    ));
+    assert_eq!(registered["ok"], true, "{registered}");
+    for (id, candidate) in [("second-base", false), ("second-candidate", true)] {
+        let started = session.call(req(
+            id,
+            json!({
+                "type":"skill_benchmark_case","proposal_cursor":cursor,"model_id":"selected",
+                "prompt":"Second held-out scenario","expected":"OK","candidate":candidate,
+                "evaluation_scope":"project:second"
+            }),
+        ));
+        assert_eq!(started["ok"], true, "{started}");
+        assert_eq!(poll(&mut session, id)["status"], "succeeded");
+    }
+    let healthy = session.call(req("retain",json!({
+        "type":"skill_benchmark_review","proposal_cursor":cursor,
+        "cases":[
+            {"baseline_job":"healthy-baseline","candidate_job":"healthy-candidate","expected":"OK"},
+            {"baseline_job":"second-base","candidate_job":"second-candidate","expected":"OK"}
+        ]
+    })));
+    assert_eq!(healthy["ok"], true, "{healthy}");
+    assert_eq!(healthy["result"]["review"]["regressions"], 0);
+    assert!(healthy["result"]["restored"].is_null());
+    let active = session.call(req(
+        "active-after-retain",
+        json!({
+            "type":"skill_active","scope":"project:a","skill_id":"guide"
+        }),
+    ));
+    assert_eq!(active["result"], proposal["result"]["revision"]);
+    let promote_global = |id: &str, digest: &Value| {
+        req(
+            id,
+            json!({
+                "type":"skill_global_promote","proposal_cursor":cursor,
+                "reviewed_instructions_digest":digest
+            }),
+        )
+    };
+    let wrong = session.call(promote_global("wrong-generalization", &json!("wrong")));
+    assert_eq!(wrong["error"]["code"], "contract_conflict", "{wrong}");
+    let global = session.call(promote_global(
+        "global",
+        &proposal["result"]["instruction_change"]["after_digest"],
+    ));
+    assert_eq!(global["ok"], true, "{global}");
+    assert_eq!(global["result"]["skill"]["scope"], "global");
+    assert_eq!(global["result"]["skill"]["permissions"], json!([]));
+    let global_pin = json!({"scope":"global","id":"guide","version":"2",
+                            "digest":global["result"]["digest"]});
+    let chat = session.call(req(
+        "global-chat",
+        json!({
+            "type":"chat_create","chat_id":"global-chat","title":"Global","scope":"project:second"
+        }),
+    ));
+    assert_eq!(chat["ok"], true, "{chat}");
+    let use_global = |id: &str| {
+        req(
+            id,
+            json!({
+                "type":"conversation_start","chat_id":"global-chat","model_id":"selected",
+                "content":"Apply generalized guidance","skill":global_pin
+            }),
+        )
+    };
+    let used = session.call(use_global("global-use"));
+    assert_eq!(used["ok"], true, "{used}");
+    assert_eq!(poll(&mut session, "global-use")["status"], "succeeded");
+    let old = session.call(review(
+        "stale",
+        "old-regression-base",
+        "old-regression-candidate",
+    ));
+    assert_eq!(old["error"]["code"], "contract_conflict", "{old}");
+    run(
+        &mut session,
+        "fresh-baseline",
+        "New regression scenario",
+        false,
+        "OK",
+    );
+    run(
+        &mut session,
+        "fresh-candidate",
+        "New regression scenario",
+        true,
+        "FAIL",
+    );
+    let restored = session.call(review("restore", "fresh-baseline", "fresh-candidate"));
+    assert_eq!(restored["result"]["restored"], parent, "{restored}");
+    assert_eq!(restored["result"]["passing_evaluation_scopes"], json!([]));
+    let rejected = session.call(use_global("global-after-rollback"));
+    assert_eq!(rejected["error"]["code"], "contract_conflict", "{rejected}");
+    drop(session);
+    let mut session = Session::new(&root, None);
+    let evidence = session.call(req(
+        "qa-after-restart",
+        json!({
+            "type":"skill_benchmark_receipt","proposal_cursor":cursor
+        }),
+    ));
+    assert_eq!(evidence["ok"], true, "{evidence}");
+    assert_eq!(evidence["result"]["receipt"], restored["result"]);
 }
