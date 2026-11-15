@@ -3,6 +3,7 @@ import ctypes
 import json
 from pathlib import Path
 import re
+import stat
 import tempfile
 import os
 import uuid
@@ -17,12 +18,18 @@ _HANDLE = re.compile(r"[0-9a-f]{32}")
 class SessionVault:
     def __init__(self, directory):
         directory = Path(directory)
-        if not directory.is_absolute():
+        if not directory.is_absolute() or ".." in directory.parts:
             raise ValueError("Session vault requires an absolute path")
-        directory.mkdir(parents=True, exist_ok=True)
-        if directory.resolve() != directory:
-            raise ValueError("Session vault directory is redirected")
-        self.directory = directory
+        # Windows may represent the same directory using an 8.3 alias.
+        # Inspect actual directory entries instead of comparing path spellings.
+        for component in (*reversed(directory.parents), directory):
+            if not component.exists():
+                component.mkdir(exist_ok=True)
+            details = component.lstat()
+            if (not stat.S_ISDIR(details.st_mode)
+                    or getattr(details, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT):
+                raise ValueError("Session vault directory is redirected")
+        self.directory = directory.resolve(strict=True)
 
     def save(self, origin, storage_state):
         origin = self._origin(origin)
