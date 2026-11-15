@@ -3,7 +3,8 @@ param(
     [string]$InstallRoot = (Join-Path $env:LOCALAPPDATA 'Synapse\distribution'),
     [string]$StateRoot = (Join-Path $env:LOCALAPPDATA 'Synapse\state-0.3'),
     [string]$Workspace = (Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'Synapse Workspace'),
-    [string]$Python = $env:SYNAPSE_PYTHON_EXECUTABLE
+    [string]$Python = $env:SYNAPSE_PYTHON_EXECUTABLE,
+    [switch]$Verify
 )
 $ErrorActionPreference = 'Stop'
 $active = Get-Content -LiteralPath (Join-Path $InstallRoot 'active.json') -Raw | ConvertFrom-Json
@@ -25,8 +26,16 @@ try {
     $pipe = [IO.Pipes.NamedPipeClientStream]::new('.', ('Synapse-0.3-' + $endpoint), [IO.Pipes.PipeDirection]::InOut)
     try { $pipe.Connect(10000) }
     finally { $pipe.Dispose() }
-    & (Join-Path $programs 'synapse-desktop.exe') $endpoint
-    if ($LASTEXITCODE -ne 0) { throw "O Synapse saiu com erro $LASTEXITCODE." }
+    $desktop = Join-Path $programs 'synapse-desktop.exe'
+    if ($Verify) {
+        $reply = '{"action":"state"}' | & $desktop --bridge $endpoint
+        if ($LASTEXITCODE -ne 0) { throw "A ponte saiu com erro $LASTEXITCODE." }
+        $stateReply = $reply | ConvertFrom-Json
+        if (!$stateReply.ok -or !$stateReply.state.connected) { throw 'O desktop não conectou ao Core.' }
+    } else {
+        & $desktop $endpoint
+        if ($LASTEXITCODE -ne 0) { throw "O Synapse saiu com erro $LASTEXITCODE." }
+    }
 } finally {
     if (!$core.HasExited) { $core.Kill() }
     $core.WaitForExit()

@@ -58,6 +58,11 @@ try {
             }
             $stage = Join-Path $versions ([Guid]::NewGuid().ToString('n') + '.staging')
             [IO.Directory]::CreateDirectory($stage) | Out-Null
+            $verifiedStage = (Resolve-Path -LiteralPath $stage).Path
+            if ([IO.Path]::GetDirectoryName($verifiedStage) -ine (Resolve-Path -LiteralPath $versions).Path -or
+                ((Get-Item -LiteralPath $verifiedStage).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+                throw 'Diretório intermediário inválido.'
+            }
             $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
             foreach ($entry in $archive.Entries) {
                 $name = $entry.FullName
@@ -87,7 +92,7 @@ try {
                         throw 'A cópia instalada diverge do pacote.'
                     }
                 }
-                [IO.Directory]::Delete($stage, $true)
+                [IO.Directory]::Delete($verifiedStage, $true)
             } else {
                 [IO.Directory]::Move($stage, $destination)
             }

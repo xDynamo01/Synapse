@@ -174,7 +174,9 @@ impl Copy<'_> {
             hash.update(&buf[..count]);
             output.write_all(&buf[..count]).map_err(|_| "asset_write")?;
         }
-        output.sync_all().map_err(|_| "asset_write")?;
+        // The runtime is disposable and the child only starts after verification.
+        // Closing the file makes it visible without forcing one disk flush per asset.
+        drop(output);
         let name = target
             .strip_prefix(self.root)
             .ok()
