@@ -28,3 +28,17 @@ mod voice;
 mod worker;
 pub use contracts::{Command, CoreError, CoreResult, Request, Response};
 pub use core::Core;
+
+/// Resolve the Python package from the installed distribution first.
+pub fn python_package_root(development: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
+    let bundled = std::env::current_exe()?.with_file_name("python");
+    if bundled.exists() {
+        if !bundled.join("synapse_ai/__init__.py").is_file() {
+            return Err(std::io::Error::other(
+                "The bundled Python package is incomplete",
+            ));
+        }
+        return bundled.canonicalize();
+    }
+    development.canonicalize()
+}

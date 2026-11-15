@@ -834,7 +834,9 @@ fn auth_worker_with_authorizer(
     command.args([
         "-I", "-B", "-c",
         "import sys; sys.path.insert(0, sys.argv[1]); from synapse_ai.browser_auth_worker import main; main()",
-    ]).arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../python"));
+    ]).arg(synapse_core::python_package_root(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../python"),
+    ).map_err(|_| "Pacote Python do Synapse indisponível.")?);
     command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

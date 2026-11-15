@@ -478,7 +478,9 @@ impl Worker {
         if !Path::new(&python).is_absolute() {
             return Err("Use um caminho absoluto para SYNAPSE_VOICE_PYTHON.".into());
         }
-        let package = Path::new(env!("CARGO_MANIFEST_DIR")).join("../python");
+        let package = synapse_core::python_package_root(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../python"),
+        ).map_err(|_| "Pacote Python do Synapse indisponível.")?;
         let mut command = Command::new(python);
         command.args(["-I","-u","-c","import runpy,sys;sys.path.insert(0,sys.argv[1]);runpy.run_module('synapse_ai.voice_worker',run_name='__main__')"])
             .arg(package).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());

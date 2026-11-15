@@ -9,8 +9,8 @@ eframe = { version = "=0.34.3", default-features = false, features = ["accesskit
 serde.workspace = true
 serde_json.workspace = true
 base64 = "=0.22.1"
+synapse-core = { path = "../core" }
 
 [target.'cfg(windows)'.dependencies]
-synapse-core = { path = "../core" }
 cpal = "=0.17.3"
 windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_RemoteDesktop", "Win32_System_LibraryLoader", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi"] }

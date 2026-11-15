@@ -288,10 +288,10 @@ mod windows {
         }
         let app = wide(&python);
         let mut cmd = wide(&format!("\"{python}\" -m synapse_ai"));
-        let package = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../python")
-            .canonicalize()
-            .map_err(|_| "worker_unavailable".to_string())?;
+        let package = crate::python_package_root(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../python"),
+        )
+        .map_err(|_| "worker_unavailable".to_string())?;
         let cwd = wide(&package.to_string_lossy());
         let mut env_values = vec![
             format!(
