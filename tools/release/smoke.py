@@ -5,10 +5,12 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import zipfile
+
+from package import verify
 
 
-def main():
-    target = Path(sys.argv[1]).resolve(strict=True)
+def smoke(target):
     executable = target / ("synapse-backend.exe" if os.name == "nt" else "synapse-backend")
     commands = [
         {"type": "capabilities_list"},
@@ -40,4 +42,15 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    if sys.argv[1] == "--archive":
+        (archive,) = Path(sys.argv[2]).glob("*.zip")
+        verify(archive)
+        with tempfile.TemporaryDirectory(prefix="synapse-extracted-") as directory:
+            target = Path(directory)
+            with zipfile.ZipFile(archive) as package:
+                package.extractall(target)
+                if os.name != "nt":
+                    (target / "synapse-backend").chmod(0o755)
+            smoke(target)
+    else:
+        smoke(Path(sys.argv[1]).resolve(strict=True))
