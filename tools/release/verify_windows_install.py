@@ -8,7 +8,9 @@ import subprocess
 import sys
 import tempfile
 import uuid
+import zipfile
 
+from package import verify
 from smoke import smoke
 
 
@@ -45,6 +47,26 @@ def main():
         state = root / "state"
         workspace = root / "workspace"
         workspace.mkdir()
+        tampered = root / "tampered.zip"
+        with zipfile.ZipFile(candidate) as incoming, zipfile.ZipFile(tampered, "w") as outgoing:
+            for name in incoming.namelist():
+                data = incoming.read(name)
+                if name == "start-windows.ps1":
+                    data += b"changed"
+                outgoing.writestr(name, data)
+        try:
+            verify(tampered)
+        except ValueError as error:
+            assert "checksum mismatch" in str(error)
+        else:
+            raise AssertionError("Tampered package passed verification")
+        rejected = subprocess.run(
+            ["pwsh", "-NoProfile", "-File", installer, "-InstallRoot", program,
+             "-Package", tampered, "-Sha256", hashlib.sha256(candidate.read_bytes()).hexdigest()],
+            capture_output=True, timeout=30,
+        )
+        assert rejected.returncode != 0 and not (program / "active.json").exists()
+
         first = install(installer, program, previous)
         old = program / "versions" / first
         smoke(old)
@@ -77,7 +99,7 @@ def main():
         assert install(installer, program) == first
         call(old / "synapse-backend.exe", state, workspace, {"type": "capabilities_list"})
         print(json.dumps({"clean_install": first, "update": second, "migrated_schema": 15,
-                          "data_preserved": True, "program_rollback": True}))
+                          "data_preserved": True, "program_rollback": True, "tamper_rejected": True}))
 
 
 if __name__ == "__main__":

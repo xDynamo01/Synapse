@@ -67,9 +67,7 @@ de cada etapa estão no [roteiro até a finalização](docs/superpowers/plans/20
 - [x] **14. Navegador interno no Windows.** Chromium dedicado, autorização por missão, cofre e reutilização de sessões HTTPS. [Checklist e evidências](docs/superpowers/plans/2026-11-11-synapse-0.3-roteiro-de-automacao.md#14-navegador-interno-e-sessões-autenticadas)
 - [x] **15. Evolução de Skills, MoM e Swarm.** Validados no Windows a promoção por avaliação, o rollback por regressão, o agendamento de modelos locais e o Swarm temporário sob aceite. [Checklist e evidências](docs/superpowers/plans/2026-11-11-synapse-0.3-roteiro-de-automacao.md#15-evolução-de-skills-e-orquestração-local)
 
-### Etapas a seguir
-
-- [ ] **16. Distribuição e aceite final da 0.3.** Validar instalação, atualização e fluxos reais no Windows. Preparar builds de Linux e macOS e registrar o estado de validação de cada plataforma.
+- [x] **16. Distribuição e aceite final da 0.3.** Windows x64 validado no pacote publicado. Builds e testes de Linux x64 e macOS ARM64 concluídos, com pré-releases disponíveis e validação em hardware pendente. [Downloads e matriz de capacidades](docs/RELEASE-0.3.md) · [Aceite do Windows](docs/evidence/backend/2026-11-15-release-acceptance.md)
 
 Depois da 0.3, o roteiro prevê hospedar o mesmo Core em um servidor pessoal e
 acessá-lo por clientes desktop e móvel.
