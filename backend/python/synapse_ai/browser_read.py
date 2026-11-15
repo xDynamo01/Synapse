@@ -1,4 +1,4 @@
-"""Owner-invoked HTTPS reader and transient form submission."""
+"""Owner-invoked HTTPS reader."""
 import argparse
 import base64
 from html.parser import HTMLParser
@@ -11,11 +11,9 @@ from pathlib import Path
 import tempfile
 import socket
 import ssl
-import sys
+import subprocess
 import time
-from urllib.parse import urlencode, urljoin, urlsplit
-from http.cookiejar import CookieJar
-from urllib.request import Request
+from urllib.parse import urljoin, urlsplit
 
 
 USER_AGENT = "Synapse/0.3 (https://github.com/xDynamo01/Synapse)"
@@ -32,9 +30,6 @@ def redirect_destination(current, location, approved):
     return candidate.geturl()
 
 
-WIKI_HOST = "test.wikipedia.org"
-AUTH_HOST = "auth.wikimedia.org"
-AUTH_PATH = "/testwiki/wiki/Special:UserLogin"
 def protect_session(data, decrypt=False):
     import ctypes as c
     from ctypes import wintypes as w
@@ -59,26 +54,8 @@ def protect_session(data, decrypt=False):
         kernel.LocalFree(output.data)
 
 
-def session_file():
-    return Path(os.environ["LOCALAPPDATA"]) / "Synapse" / "browser" / "testwiki-session.dpapi"
-
-
-def save_session(username, cookies):
-    destination = session_file()
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    records = [vars(cookie) for cookie in cookies if not cookie.is_expired()]
-    payload = json.dumps({"username": username, "cookies": records}).encode()
-    if len(payload) > 65536:
-        raise ValueError("Session exceeds limit")
-    encrypted = protect_session(payload)
-    with tempfile.NamedTemporaryFile(dir=destination.parent, delete=False) as file:
-        temporary = Path(file.name)
-        try:
-            file.write(encrypted)
-            file.close()
-            os.replace(temporary, destination)
-        finally:
-            temporary.unlink(missing_ok=True)
+def quarantine_directory():
+    return Path(os.environ["LOCALAPPDATA"]) / "Synapse" / "browser" / "quarantine"
 
 
 def quarantine_text(body):
@@ -88,7 +65,7 @@ def quarantine_text(body):
     if not text or any(not char.isprintable() and char not in "\r\n\t" for char in text):
         raise ValueError("Download não passou na validação de texto UTF-8")
     digest = hashlib.sha256(body).hexdigest()
-    directory = session_file().parent / "quarantine"
+    directory = quarantine_directory()
     directory.mkdir(parents=True, exist_ok=True)
     encrypted = protect_session(body)
     with tempfile.NamedTemporaryFile(dir=directory, delete=False) as file:
@@ -102,45 +79,6 @@ def quarantine_text(body):
     return {"sha256": digest, "bytes": len(body), "media_type": "text/plain"}
 
 
-def load_session():
-    from http.cookiejar import Cookie
-    with session_file().open("rb") as file:
-        encrypted = file.read(131073)
-    if len(encrypted) > 131072:
-        raise ValueError("Session exceeds limit")
-    data = json.loads(protect_session(encrypted, decrypt=True))
-    jar = CookieJar()
-    for record in data["cookies"]:
-        record["rest"] = record.pop("_rest")
-        cookie = Cookie(**record)
-        if not cookie.is_expired():
-            jar.set_cookie(cookie)
-    return data["username"], jar
-
-
-WIKI_PROBE = "https://test.wikipedia.org/w/api.php?action=query&meta=userinfo&format=json"
-
-
-def login_redirect(current, location, approved, central, submitted):
-    if central and submitted:
-        candidate = target(urljoin(current, location))
-        if candidate.hostname == WIKI_HOST:
-            return candidate.geturl()
-        if candidate.hostname == AUTH_HOST and target(current).hostname == AUTH_HOST:
-            return candidate.geturl()
-        raise NavigationDenied("Redirecionamento fora do login da Wikipedia de testes bloqueado.")
-    return redirect_destination(current, location, approved)
-
-
-def verified_identity(body, username):
-    try:
-        user = json.loads(body)["query"]["userinfo"]
-        return (type(user.get("id")) is int and user["id"] > 0 and "anon" not in user
-                and user.get("name", "").replace("_", " ").casefold() == username.replace("_", " ").casefold())
-    except (ValueError, KeyError, TypeError, AttributeError):
-        return False
-
-
 class PageText(HTMLParser):
     def __init__(self):
         super().__init__()
@@ -148,20 +86,8 @@ class PageText(HTMLParser):
         self.hidden = None
         self.images = []
         self.stylesheets = []
-        self.forms = []
-        self.form = None
 
     def handle_starttag(self, tag, attrs):
-        if self.hidden is None:
-            fields = dict(attrs)
-            if tag == "form" and self.form is None and len(self.forms) < 8:
-                if (fields.get("method") or "").lower() == "post" and fields.get("enctype", "application/x-www-form-urlencoded") == "application/x-www-form-urlencoded":
-                    self.form = {"action": fields.get("action") or "", "fields": []}
-            elif tag == "input" and self.form is not None and len(self.form["fields"]) < 32:
-                name = fields.get("name")
-                kind = (fields.get("type") or "text").lower()
-                if name and len(name) <= 128 and "disabled" not in fields and "form" not in fields and kind in ("text", "email", "password", "hidden"):
-                    self.form["fields"].append((name, kind, fields.get("value") or ""))
         if tag == "link" and self.hidden is None and len(self.stylesheets) < 32:
             attrs_by_name = dict(attrs)
             href = attrs_by_name.get("href")
@@ -175,10 +101,6 @@ class PageText(HTMLParser):
             self.hidden = tag
 
     def handle_endtag(self, tag):
-        if tag == "form" and self.hidden is None and self.form is not None:
-            if any(kind == "password" for _, kind, _ in self.form["fields"]):
-                self.forms.append(self.form)
-            self.form = None
         if tag == self.hidden:
             self.hidden = None
 
@@ -220,22 +142,139 @@ def resolve(host):
     return addresses
 
 
-def fetch(origin, destination, image=False, css=False, login=None, session=None, download=False, skill=False):
+def launch_offline_browser(runtime):
+    # Contents are fetched by the HTTPS broker. The renderer has no reason to
+    # resolve Internet hosts, even when separate from a Playwright page.
+    args = ["--host-resolver-rules=MAP * ~NOTFOUND"]
+    if os.name == "nt":
+        args.append("--enable-features=RendererAppContainer")
+    return runtime.chromium.launch(headless=True, chromium_sandbox=True, args=args)
+
+
+def verify_windows_renderers(browser):
+    if os.name != "nt":
+        return
+
+    import ctypes
+    from ctypes import wintypes as win
+
+    devtools = browser.new_browser_cdp_session()
+    try:
+        processes = devtools.send("SystemInfo.getProcessInfo")["processInfo"]
+    finally:
+        devtools.detach()
+    renderers = [process["id"] for process in processes if process["type"] == "renderer"]
+    if not renderers:
+        raise ValueError("Chromium did not provide a renderer for isolation verification")
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    security = ctypes.WinDLL("advapi32", use_last_error=True)
+    kernel.OpenProcess.argtypes = [win.DWORD, win.BOOL, win.DWORD]
+    kernel.OpenProcess.restype = win.HANDLE
+    kernel.CloseHandle.argtypes = [win.HANDLE]
+    security.OpenProcessToken.argtypes = [win.HANDLE, win.DWORD, ctypes.POINTER(win.HANDLE)]
+    security.GetTokenInformation.argtypes = [
+        win.HANDLE, win.INT, win.LPVOID, win.DWORD, ctypes.POINTER(win.DWORD),
+    ]
+
+    def first_token_field(token, category):
+        needed = win.DWORD()
+        security.GetTokenInformation(token, category, None, 0, ctypes.byref(needed))
+        if not 4 <= needed.value <= 65536:
+            raise ValueError("Invalid Chromium token information")
+        data = ctypes.create_string_buffer(needed.value)
+        if not security.GetTokenInformation(token, category, data, needed, ctypes.byref(needed)):
+            raise ValueError("Chromium renderer isolation could not be verified")
+        return int.from_bytes(data.raw[:4], "little")
+
+    token_is_app_container, token_capabilities = 29, 30
+    process_query_limited_information, token_query = 0x1000, 0x0008
+    for pid in renderers:
+        process = kernel.OpenProcess(process_query_limited_information, False, pid)
+        token = win.HANDLE()
+        try:
+            if not process or not security.OpenProcessToken(process, token_query, ctypes.byref(token)):
+                raise ValueError("Chromium renderer token could not be opened")
+            if (first_token_field(token, token_is_app_container) != 1
+                    or first_token_field(token, token_capabilities) != 0):
+                raise ValueError("Chromium renderer must use an AppContainer without network capabilities")
+        finally:
+            if token:
+                kernel.CloseHandle(token)
+            if process:
+                kernel.CloseHandle(process)
+
+
+def open_offline_page(browser):
+    context = browser.new_context(
+        offline=True, java_script_enabled=False, service_workers="block",
+        accept_downloads=False,
+    )
+    context.route("**/*", lambda route: route.abort())
+    context.route_web_socket("**/*", lambda route: route.close())
+    page = context.new_page()
+    verify_windows_renderers(browser)
+    return context, page
+
+
+def set_inert_document(page, markup):
+    executable = os.environ.get("SYNAPSE_BROWSER_PROJECTOR_EXECUTABLE", "")
+    if not Path(executable).is_absolute():
+        raise ValueError("Isolated HTML projector is unavailable")
+    try:
+        projected = subprocess.run(
+            [executable, "--project-broker"], input=markup.encode("utf-8"),
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=35,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), check=True,
+        ).stdout
+        markup = json.loads(projected)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        raise ValueError("Isolated HTML projection failed") from None
+    if not isinstance(markup, str):
+        raise ValueError("Invalid HTML projection")
+    page.set_content(
+        '<meta http-equiv="Content-Security-Policy" '
+        """content="default-src 'none'; base-uri 'none'; form-action 'none'">""",
+        wait_until="domcontentloaded", timeout=5000,
+    )
+    page.evaluate("""markup => {
+        const documentSource = new DOMParser().parseFromString(markup, "text/html");
+        documentSource.querySelectorAll("meta, base, script, iframe, frame, object, embed, portal")
+            .forEach(element => element.remove());
+        const fragment = document.createDocumentFragment();
+        while (documentSource.body.firstChild) fragment.append(documentSource.body.firstChild);
+        document.body.replaceChildren(fragment);
+    }""", markup)
+
+
+def render_mission_document(markup):
+    try:
+        from playwright.sync_api import Error, sync_playwright
+    except ImportError:
+        raise ValueError("Playwright is unavailable in the browser worker") from None
+    try:
+        with sync_playwright() as runtime:
+            with launch_offline_browser(runtime) as browser:
+                _, page = open_offline_page(browser)
+                set_inert_document(page, markup)
+                text = page.locator("body").inner_text(timeout=3000)
+                links = page.locator("a[href]").evaluate_all(
+                    "(links) => links.slice(0, 64).map(link => link.getAttribute('href'))"
+                )
+                return text[:64000], links
+    except Error:
+        raise ValueError("Isolated Chromium rendering failed") from None
+
+
+def fetch(origin, destination, image=False, css=False, download=False, skill=False, mission=False):
     approved = target(origin)
     if approved.path not in ("", "/") or approved.query or approved.fragment:
         raise ValueError("Approval must identify an origin")
-    cookies = session[1] if session is not None else CookieJar() if login is not None else None
-    central = (login is not None and approved.hostname == AUTH_HOST
-               and target(destination).path == AUTH_PATH and target(login["action"]).path == AUTH_PATH
-               and target(login["action"]).hostname == AUTH_HOST)
-    verifying = session is not None
-    submitted = verifying
-    payload = None
     context = ssl.create_default_context()
     expires = time.monotonic() + 15
-    for _ in range(10 if central else 6):
+    for _ in range(6):
         url = target(destination)
-        if url.hostname != approved.hostname and not (central and submitted and url.hostname == WIKI_HOST):
+        if url.hostname != approved.hostname:
             raise ValueError("Destination is outside the approved origin")
         family, kind, proto, _, address = resolve(url.hostname)[0]
         with socket.socket(family, kind, proto) as connection:
@@ -250,22 +289,10 @@ def fetch(origin, destination, image=False, css=False, login=None, session=None,
                 accept = "image/png, image/jpeg" if image else "text/css" if css else "text/html, text/plain"
                 if skill:
                     accept = "application/json, text/plain"
-                request = Request(destination)
-                if cookies is not None:
-                    cookies.add_cookie_header(request)
-                cookie = request.get_header("Cookie")
-                headers = f"{'POST' if payload is not None else 'GET'} {path} HTTP/1.1\r\nHost: {url.hostname}\r\nAccept: {accept}\r\nUser-Agent: {USER_AGENT}\r\nConnection: close\r\n"
-                if cookie:
-                    if any(ord(c) < 32 or ord(c) == 127 for c in cookie):
-                        raise ValueError("Invalid session cookie")
-                    headers += f"Cookie: {cookie}\r\n"
-                if payload is not None:
-                    headers += f"Content-Type: application/x-www-form-urlencoded\r\nContent-Length: {len(payload)}\r\n"
-                tls.sendall((headers + "\r\n").encode("ascii") + (payload or b""))
+                headers = f"GET {path} HTTP/1.1\r\nHost: {url.hostname}\r\nAccept: {accept}\r\nUser-Agent: {USER_AGENT}\r\nConnection: close\r\n\r\n"
+                tls.sendall(headers.encode("ascii"))
                 with HTTPResponse(tls) as response:
                     response.begin()
-                    if cookies is not None:
-                        cookies.extract_cookies(response, request)
                     if response.status in (301, 302, 303, 307, 308):
                         location = response.getheader("Location")
                         if not location or "\\" in location or any(ord(c) <= 32 or ord(c) == 127 for c in location):
@@ -273,12 +300,10 @@ def fetch(origin, destination, image=False, css=False, login=None, session=None,
                         if len(location) > 4096 or (":" in location.split("/", 1)[0].split("?", 1)[0].split("#", 1)[0]
                                                     and not location.lower().startswith("https://")):
                             raise ValueError("Invalid redirect")
-                        if payload is not None and response.status in (307, 308):
-                            raise ValueError("Login POST cannot be replayed by a redirect")
-                        payload = None
-                        if verifying:
-                            raise NavigationDenied("A consulta da sessão foi redirecionada.")
-                        destination = login_redirect(destination, location, approved, central, submitted)
+                        if mission:
+                            candidate = target(urljoin(destination, location))
+                            return {"redirect": candidate.geturl()}
+                        destination = redirect_destination(destination, location, approved)
                         continue
                     if response.status != 200:
                         raise NavigationDenied(f"O servidor respondeu HTTP {response.status}.")
@@ -290,8 +315,6 @@ def fetch(origin, destination, image=False, css=False, login=None, session=None,
                         allowed = ("application/json", "text/plain")
                     if download:
                         allowed = ("text/plain",)
-                    if verifying:
-                        allowed = ("application/json",)
                     if media not in allowed or (not download and response.getheader("Content-Disposition")):
                         if skill:
                             raise ValueError("Skill packages require inline JSON or UTF-8 text")
@@ -315,17 +338,6 @@ def fetch(origin, destination, image=False, css=False, login=None, session=None,
                         return {"source": destination, "document": body.decode("utf-8")}
                     if download:
                         return {"quarantine": quarantine_text(bytes(body))}
-                    if verifying:
-                        username = session[0] if session is not None else login["username"]
-                        authenticated = verified_identity(body, username)
-                        if authenticated and central:
-                            save_session(username, cookies)
-                        return {"submitted": True, "authenticated": authenticated}
-                    if central and submitted and url.hostname == WIKI_HOST:
-                        destination = WIKI_PROBE
-                        payload = None
-                        verifying = True
-                        continue
                     if image:
                         return {"image": base64.b64encode(body).decode("ascii")}
                     if css:
@@ -333,23 +345,20 @@ def fetch(origin, destination, image=False, css=False, login=None, session=None,
                     images = []
                     stylesheets = []
                     text = body.decode("utf-8", errors="replace")
+                    if mission and os.environ.get("SYNAPSE_BROWSER_ENGINE") == "playwright" and media == "text/html":
+                        rendered, links = render_mission_document(text)
+                        destinations = []
+                        for link in links:
+                            try:
+                                destinations.append(target(urljoin(destination, link)).geturl())
+                            except ValueError:
+                                continue
+                        return {"origin": origin, "source": destination, "text": rendered,
+                                "links": list(dict.fromkeys(destinations)), "renderer": "playwright"}
                     if media == "text/html":
                         parser = PageText()
                         parser.feed(text)
                         parser.close()
-                        if login is not None and not submitted:
-                            if len(parser.forms) != 1:
-                                raise ValueError("Expected a single supported login form")
-                            form = parser.forms[0]
-                            action = target(urljoin(destination, form["action"]))
-                            if action.hostname != approved.hostname or action.geturl() != login["action"]:
-                                raise ValueError("Login destination differs from the confirmed endpoint")
-                            payload = encode_login(form, login)
-                            submitted = True
-                            destination = action.geturl()
-                            continue
-                        if login is not None:
-                            return {"submitted": submitted, "login_form_present": bool(parser.forms)}
                         text = "\n".join(parser.parts)
                         for src, items in [(src, images) for src in parser.images] + [(src, stylesheets) for src in parser.stylesheets]:
                             try:
@@ -360,21 +369,6 @@ def fetch(origin, destination, image=False, css=False, login=None, session=None,
                                 items.append(candidate.geturl())
                     return {"origin": origin, "text": text[:64000], "images": list(dict.fromkeys(images)), "stylesheets": list(dict.fromkeys(stylesheets)), "markup": body.decode("utf-8", errors="replace") if media == "text/html" else None}
     raise ValueError("Redirect limit exceeded")
-
-
-def encode_login(form, login):
-    names = [name for name, _, _ in form["fields"]]
-    passwords = [name for name, kind, _ in form["fields"] if kind == "password"]
-    users = [name for name, kind, _ in form["fields"] if kind in ("text", "email")]
-    if len(set(names)) != len(names) or passwords != [login["password_field"]] or login["username_field"] not in users:
-        raise ValueError("Unsupported login fields")
-    values = {login["username_field"]: login["username"], login["password_field"]: login["password"]}
-    pairs = [(name, value if kind == "hidden" else values[name])
-             for name, kind, value in form["fields"] if kind == "hidden" or name in values]
-    encoded = urlencode(pairs).encode("ascii")
-    if len(encoded) > 32768:
-        raise ValueError("Login form exceeds limit")
-    return encoded
 
 
 def skill_catalog(result):
@@ -403,40 +397,26 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--origin")
     modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--mission-read", action="store_true")
     modes.add_argument("--image", action="store_true")
     modes.add_argument("--css", action="store_true")
-    modes.add_argument("--login", action="store_true")
-    modes.add_argument("--check-session", action="store_true")
     modes.add_argument("--quarantine-text", action="store_true")
+    modes.add_argument("--mission-download", action="store_true")
     modes.add_argument("--skill-package", action="store_true")
     modes.add_argument("--skill-catalog", action="store_true")
     parser.add_argument("url")
     args = parser.parse_args()
     try:
-        if args.check_session:
-            if not session_file().is_file():
-                print(json.dumps({"authenticated": False}))
-            else:
-                print(json.dumps(fetch("https://test.wikipedia.org", WIKI_PROBE, session=load_session())))
-            return
         url = target(args.url)
-        login = None
-        if args.login:
-            raw = sys.stdin.buffer.read(8193)
-            if len(raw) > 8192:
-                raise ValueError("Login request exceeds limit")
-            login = json.loads(raw)
-            if (not isinstance(login, dict) or set(login) != {"action", "username_field", "password_field", "username", "password"}
-                    or any(not isinstance(value, str) or not value or len(value) > 4096 for value in login.values())):
-                raise ValueError("Invalid login request")
         result = fetch(args.origin or f"https://{url.hostname}", args.url, image=args.image,
-                       css=args.css, login=login, download=args.quarantine_text,
-                       skill=args.skill_package or args.skill_catalog)
+                       css=args.css, download=args.quarantine_text or args.mission_download,
+                       skill=args.skill_package or args.skill_catalog,
+                       mission=args.mission_read or args.mission_download)
         print(json.dumps(skill_catalog(result) if args.skill_catalog else result))
     except NavigationDenied as error:
         parser.exit(1, f"{error}\n")
     except (ValueError, OSError, HTTPException) as error:
-        parser.exit(1, "Login failed.\n" if args.login or args.check_session else f"Reading failed: {error}\n")
+        parser.exit(1, f"Reading failed: {error}\n")
 
 
 if __name__ == "__main__":

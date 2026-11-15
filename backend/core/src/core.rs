@@ -1458,6 +1458,61 @@ fn dispatch_tx(
             integration::stop(tx, mission_id, "revoked")?;
             Ok(result)
         }
+        Command::BrowserOriginRequest {
+            mission_id,
+            destination,
+        } => crate::browser_policy::request_origin(tx, mission_id, destination),
+        Command::BrowserReadBegin {
+            mission_id,
+            destination,
+        } => crate::browser_policy::begin_read(tx, mission_id, destination),
+        Command::BrowserDownloadBegin {
+            mission_id,
+            destination,
+        } => crate::browser_policy::begin_download(tx, mission_id, destination),
+        Command::BrowserSessionReadBegin {
+            mission_id,
+            destination,
+            session_handle,
+        } => crate::browser_policy::begin_session_read(tx, mission_id, destination, session_handle),
+        Command::BrowserDispatchAuthorize {
+            mission_id,
+            attempt,
+            destination,
+            method,
+        } => crate::browser_policy::authorize_dispatch(
+            tx,
+            mission_id,
+            *attempt,
+            destination,
+            *method,
+        ),
+        Command::BrowserLoginBegin {
+            mission_id,
+            page,
+            action,
+            probe,
+            expected_text,
+            credential_handle,
+        } => crate::browser_policy::begin_login(
+            tx,
+            mission_id,
+            page,
+            action,
+            probe,
+            expected_text,
+            credential_handle,
+        ),
+        Command::BrowserReadFinish {
+            mission_id,
+            attempt,
+            outcome,
+        } => crate::browser_policy::finish_read(tx, mission_id, *attempt, *outcome),
+        Command::BrowserOriginDecide {
+            mission_id,
+            challenge,
+            allow,
+        } => crate::browser_policy::decide_origin(tx, mission_id, *challenge, *allow),
         Command::MissionGet { mission_id } => {
             project_metadata(tx, mission_id, missions::get(tx, mission_id)?)
         }

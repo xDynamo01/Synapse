@@ -101,6 +101,47 @@ pub enum Command {
         mission_id: String,
         reason: String,
     },
+    BrowserOriginRequest {
+        mission_id: String,
+        destination: String,
+    },
+    BrowserReadBegin {
+        mission_id: String,
+        destination: String,
+    },
+    BrowserDownloadBegin {
+        mission_id: String,
+        destination: String,
+    },
+    BrowserSessionReadBegin {
+        mission_id: String,
+        destination: String,
+        session_handle: String,
+    },
+    BrowserDispatchAuthorize {
+        mission_id: String,
+        attempt: u64,
+        destination: String,
+        method: BrowserNetworkMethod,
+    },
+    BrowserLoginBegin {
+        mission_id: String,
+        page: String,
+        action: String,
+        probe: String,
+        expected_text: String,
+        credential_handle: String,
+    },
+    BrowserReadFinish {
+        mission_id: String,
+        attempt: u64,
+        outcome: BrowserReadOutcome,
+    },
+    BrowserOriginDecide {
+        mission_id: String,
+        challenge: u64,
+        allow: bool,
+    },
     MissionGet {
         mission_id: String,
     },
@@ -349,6 +390,21 @@ pub struct Provenance {
 pub enum SwarmConsent {
     Direct,
     Recommended,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BrowserNetworkMethod {
+    Get,
+    Post,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BrowserReadOutcome {
+    Collected,
+    Redirected,
+    Uncertain,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

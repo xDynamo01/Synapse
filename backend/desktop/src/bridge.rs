@@ -12,6 +12,43 @@ use std::{
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 enum Action {
     State,
+    BrowserStoreCredentials {
+        origin: String,
+        username: String,
+        password: String,
+    },
+    BrowserRevokeLocal {
+        origin: String,
+        handle: String,
+    },
+    BrowserMissionLogin {
+        mission_id: String,
+        page: String,
+        form_action: String,
+        probe: String,
+        expected_text: String,
+        credential_handle: String,
+    },
+    BrowserMissionSessionRead {
+        mission_id: String,
+        destination: String,
+        session_handle: String,
+    },
+    BrowserMissionResearch {
+        mission_id: String,
+        #[serde(default)]
+        url: String,
+        question: String,
+        model_id: String,
+    },
+    BrowserMissionDownload {
+        mission_id: String,
+        url: String,
+    },
+    BrowserMissionRead {
+        mission_id: String,
+        url: String,
+    },
     RouteModel {
         capability: String,
         memory_budget_bytes: u64,
@@ -432,6 +469,74 @@ fn handle(desktop: &mut Desktop, action: Action) -> Result<Value, String> {
     }
     match action {
         Action::State => (),
+        Action::BrowserStoreCredentials {
+            origin,
+            username,
+            password,
+        } => {
+            return crate::browser::auth_worker(json!({
+                "mode":"store_credentials","origin":origin,"username":username,"password":password
+            }));
+        }
+        Action::BrowserRevokeLocal { origin, handle } => {
+            return crate::browser::auth_worker(
+                json!({"mode":"revoke","origin":origin,"handle":handle}),
+            );
+        }
+        Action::BrowserMissionLogin {
+            mission_id,
+            page,
+            form_action,
+            probe,
+            expected_text,
+            credential_handle,
+        } => {
+            return crate::browser::authenticated_operation(
+                &desktop.endpoint,
+                &mission_id,
+                json!({
+                    "mode":"login","page":page,"action":form_action,"probe":probe,
+                    "expected_text":expected_text,"credential_handle":credential_handle
+                }),
+            );
+        }
+        Action::BrowserMissionSessionRead {
+            mission_id,
+            destination,
+            session_handle,
+        } => {
+            return crate::browser::authenticated_operation(
+                &desktop.endpoint,
+                &mission_id,
+                json!({
+                    "mode":"read","destination":destination,"session_handle":session_handle
+                }),
+            );
+        }
+        Action::BrowserMissionResearch {
+            mission_id,
+            url,
+            question,
+            model_id,
+        } => {
+            return crate::browser::research_mission(
+                &desktop.endpoint,
+                &mission_id,
+                url,
+                &question,
+                &model_id,
+            );
+        }
+        Action::BrowserMissionDownload { mission_id, url } => {
+            let result =
+                crate::browser::quarantine_for_mission(&desktop.endpoint, &mission_id, &url)?;
+            return Ok(json!({"browser_mission_download":result}));
+        }
+        Action::BrowserMissionRead { mission_id, url } => {
+            let page =
+                crate::browser::read_for_mission(desktop.endpoint.clone(), &mission_id, url)?;
+            return Ok(json!({"browser_mission_page":page}));
+        }
         Action::SkillFetch { url, catalog } => {
             if desktop.skill_package_download.is_some() {
                 return Err("Uma busca de Skill já está em andamento.".into());

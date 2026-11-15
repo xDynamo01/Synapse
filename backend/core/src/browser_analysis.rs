@@ -65,3 +65,26 @@ fn parse(output: &str) -> Result<Summary, String> {
     }
     Ok(summary)
 }
+
+/// Produces a bounded inert document using the same verified AppContainer
+/// as the native page analyzer. Chromium consumes only the projection.
+pub fn project(html: &str) -> Result<String, String> {
+    if html.len() > MAX_INPUT {
+        return Err("Documento excede o limite de análise.".into());
+    }
+    #[cfg(windows)]
+    {
+        const PROJECT_LIMIT: usize = 512 * 1024;
+        let output = crate::runner::browser_content::run(
+            "synapse-page-analyzer.exe",
+            html.as_bytes(),
+            PROJECT_LIMIT,
+            &["--project".into()],
+        )?;
+        let markup: String = serde_json::from_str(&output)
+            .map_err(|_| "O analisador devolveu uma projeção inválida.")?;
+        Ok(markup)
+    }
+    #[cfg(not(windows))]
+    Err("Análise isolada indisponível nesta plataforma.".into())
+}

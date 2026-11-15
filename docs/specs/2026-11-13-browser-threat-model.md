@@ -100,3 +100,32 @@ executou a análise CSS no LPAC e confirmou as contagens de importação e URL.
 O analisador recebe o texto e devolve contagens, sem interpretar estilos no
 desktop nem buscar dependências. Sessões autenticadas, autorização de ações
 por missão e quarentena continuam abertas no roteiro.
+
+### Fronteira implementada para o conteúdo web
+
+O broker HTTPS é o único componente que abre as conexões de navegação.
+O HTML bruto vai para o analisador Rust Windows em AppContainer de
+privilégio reduzido, com capacidades de rede zero e um Job Object. O
+lançador verifica o token antes de executar o analisador. O analisador
+devolve uma projeção limitada de texto, links e formulários. O Chromium
+dedicado usa um perfil temporário e recebe apenas essa projeção em um
+contexto offline, com política de conteúdo restritiva. O JavaScript do
+site, o carregamento de recursos, os WebSockets e os service workers
+ficam desativados nesse contexto.
+
+O worker autenticado cifra credenciais e cookies com DPAPI e mantém o
+estado por origem. Ele envia o identificador opaco ao Core e pede
+autorização a cada requisição. A senha e os cookies são enviados somente
+pelo broker HTTPS ao destino aprovado. O Chromium permanece sem cookies
+e o modelo não recebe páginas autenticadas nesse fluxo. O Job Object do
+worker do Windows encerra os descendentes quando a operação termina.
+
+O teste de páginas controladas no Chromium verificou ausência de
+requisições, scripts, redirecionamentos automáticos e cookies. Antes de
+entregar uma página, o launcher verifica que o renderer Chromium tem
+token AppContainer com zero capacidades. O motor é instalado em uma
+pasta exclusiva, com acesso de leitura e execução para AppContainers.
+O processo principal e o serviço de rede permanecem no lado confiável
+da arquitetura, sem receber o conteúdo bruto ou cookies. O
+AppContainer de privilégio reduzido do analisador recebe o HTML bruto.
+O protocolo local de controle do Chromium usa pipes do Playwright.

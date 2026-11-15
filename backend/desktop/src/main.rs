@@ -3,9 +3,8 @@ mod audio;
 mod audio_tray;
 mod bridge;
 mod browser;
+mod browser_auth_panel;
 mod catalog;
-#[cfg(windows)]
-mod chromium_profile;
 mod transport;
 mod voice;
 
@@ -73,6 +72,11 @@ struct Desktop {
     workspace: bool,
     browser_visible: bool,
     browser: browser::Browser,
+    browser_auth: browser_auth_panel::BrowserAuthPanel,
+    research_url: String,
+    research_task: Option<std::sync::mpsc::Receiver<Result<(String, Value), String>>>,
+    research_result: Option<(String, Value)>,
+
     voice: Voice,
     voice_job: Option<VoiceJob>,
     voice_language: String,
@@ -134,6 +138,11 @@ impl Desktop {
             workspace: !mission_id.is_empty(),
             browser_visible: false,
             browser: browser::Browser::default(),
+            browser_auth: browser_auth_panel::BrowserAuthPanel::default(),
+            research_url: String::new(),
+            research_task: None,
+            research_result: None,
+
             voice: Voice::new(),
             voice_job: None,
             voice_language: "pt-BR".into(),
@@ -768,8 +777,130 @@ impl Desktop {
         });
     }
 
+    fn show_research(&mut self, ui: &mut egui::Ui) {
+        let allowed = self.mission["state"] == "approved"
+            && self.mission["contract"]["actions"]
+                .as_array()
+                .is_some_and(|actions| actions.iter().any(|action| action == "browser_read"));
+        if !allowed {
+            return;
+        }
+        ui.collapsing("Pesquisa na web", |ui| {
+            ui.add(
+                egui::TextEdit::singleline(&mut self.research_url)
+                    .hint_text("URL inicial (opcional)"),
+            );
+            let question = self.mission["contract"]["objective"]
+                .as_str()
+                .unwrap_or_default();
+            let ready = self.connected
+                && self.research_task.is_none()
+                && !self.model.is_empty()
+                && !question.is_empty();
+            if ui
+                .add_enabled(ready, egui::Button::new("Pesquisar"))
+                .clicked()
+            {
+                let (send, receive) = std::sync::mpsc::channel();
+                let endpoint = self.endpoint.clone();
+                let mission = self.mission_id.clone();
+                let url = self.research_url.trim().to_owned();
+                let question = question.to_owned();
+                let model = self.model.clone();
+                let context = ui.ctx().clone();
+                self.research_result = None;
+                self.research_task = Some(receive);
+                std::thread::spawn(move || {
+                    let result =
+                        browser::research_mission(&endpoint, &mission, url, &question, &model)
+                            .map(|result| (mission, result));
+                    let _ = send.send(result);
+                    context.request_repaint();
+                });
+            }
+            if self.research_task.is_some() {
+                ui.spinner();
+            }
+            if let Some((_, result)) = self
+                .research_result
+                .as_ref()
+                .filter(|(mission, _)| mission == &self.mission_id)
+            {
+                let research = &result["browser_research"];
+                ui.label(research["answer"].as_str().unwrap_or_default());
+                for source in research["sources"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str)
+                {
+                    ui.label(source);
+                }
+            }
+        });
+    }
+
+    fn show_browser_approvals(&mut self, ui: &mut egui::Ui) {
+        let pending: Vec<_> = self
+            .events
+            .iter()
+            .filter_map(|event| {
+                let payload = &event["payload"];
+                if event["kind"] != "browser_origin_requested"
+                    || payload["mission_id"] != self.mission_id
+                    || payload["contract_digest"] != self.mission["contract_digest"]
+                {
+                    return None;
+                }
+                let challenge = event["cursor"].as_u64()?;
+                let origin = payload["origin"].as_str()?;
+                let decided = self.events.iter().any(|record| {
+                    record["kind"] == "browser_origin_decided"
+                        && record["payload"]["challenge"] == challenge
+                });
+                (!decided).then(|| (challenge, origin.to_owned()))
+            })
+            .collect();
+        for (challenge, origin) in pending {
+            ui.push_id(challenge, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(format!("Permitir acesso a {origin} para as ações desta missão?"));
+                    for (label, allow) in [("Permitir", true), ("Recusar", false)] {
+                        if ui
+                            .add_enabled(self.pending == 0, egui::Button::new(label))
+                            .clicked()
+                        {
+                            self.send(
+                                "browser-origin-decision",
+                                json!({
+                                    "type":"browser_origin_decide", "mission_id":self.mission_id,
+                                    "challenge":challenge, "allow":allow
+                                }),
+                            );
+                        }
+                    }
+                });
+            });
+        }
+    }
+
     fn workspace(&mut self, ui: &mut egui::Ui) {
         self.show_skill_import(ui);
+        if let Some(proposal) = self.browser_auth.show(
+            ui,
+            &self.endpoint,
+            &self.mission_id,
+            &self.scope,
+            &self.mission,
+            self.connected && self.pending == 0,
+        ) {
+            self.send("mission_get", proposal);
+        }
+
+        if self.mission["state"] == "approved" {
+            self.show_browser_approvals(ui);
+            self.show_research(ui);
+        }
         ui.horizontal(|ui| {
             ui.heading("Workspace");
             if self.mission_skill.is_none() && !self.mission_skill_suggestions().is_empty() {
@@ -913,6 +1044,28 @@ impl Desktop {
             let budget = (self.automatic_model_budget_mib != 0)
                 .then_some(u64::from(self.automatic_model_budget_mib) * 1024 * 1024);
             self.plan_mission(paths, self.mission_skill.clone(), budget);
+        }
+        if ui
+            .add_enabled(
+                ready
+                    && self.mission.is_null()
+                    && !self.scope.is_empty()
+                    && !self.objective.trim().is_empty(),
+                egui::Button::new("Propor pesquisa na web"),
+            )
+            .clicked()
+        {
+            self.send(
+                "mission_get",
+                json!({
+                    "type":"mission_propose","mission_id":self.mission_id,
+                    "contract":{
+                        "version":1,"scope":self.scope,"objective":self.objective.trim(),
+                        "actions":["browser_read"],"resources":["public_web"],
+                        "rollback":"Descartar os resultados da pesquisa"
+                    }
+                }),
+            );
         }
         if let Some(candidates) = self.plan["skill_candidates"].as_array() {
             ui.collapsing("Skills encontradas no projeto", |ui| {
@@ -1692,6 +1845,25 @@ impl Desktop {
 
     fn tick(&mut self) {
         self.browser.poll();
+        self.browser_auth.poll();
+        if let Some(receiver) = &self.research_task {
+            match receiver.try_recv() {
+                Ok(Ok(result)) => {
+                    self.research_result = Some(result);
+                    self.research_task = None;
+                }
+                Ok(Err(error)) => {
+                    self.error = error;
+                    self.research_task = None;
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.error = "A pesquisa foi interrompida.".into();
+                    self.research_task = None;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            }
+        }
+
         if let Some(download) = &self.skill_package_download {
             use std::sync::mpsc::TryRecvError;
             let result = match download.try_recv() {
@@ -1890,6 +2062,38 @@ mod workspace_view_tests {
                 .iter()
                 .any(|line| line == "Skills sugeridas em Importar Skill")
         );
+    }
+
+    #[test]
+    fn research_controls_require_an_approved_read_mission() {
+        let mut desktop = Desktop::new("workspace-research-test".into(), "research".into());
+        desktop.mission = json!({"state":"proposed","contract":{"actions":["browser_read"]}});
+        assert!(
+            !visible_text(&mut desktop)
+                .iter()
+                .any(|text| text == "Pesquisa na web")
+        );
+        desktop.mission["state"] = json!("approved");
+        assert!(
+            visible_text(&mut desktop)
+                .iter()
+                .any(|text| text == "Pesquisa na web")
+        );
+        desktop.mission["contract"]["actions"] = json!(["artifact_create"]);
+        assert!(
+            !visible_text(&mut desktop)
+                .iter()
+                .any(|text| text == "Pesquisa na web")
+        );
+    }
+
+    #[test]
+    fn workspace_exposes_authenticated_sites_and_mission_downloads() {
+        let mut desktop = Desktop::new("workspace-browser-test".into(), String::new());
+        let labels = visible_text(&mut desktop);
+        for label in ["Sites autenticados", "Downloads da missão"] {
+            assert!(labels.iter().any(|text| text == label), "{label}: {labels:?}");
+        }
     }
 
     #[test]

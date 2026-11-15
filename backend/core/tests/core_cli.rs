@@ -52,6 +52,193 @@ fn error(v: &Value, code: &str) {
 }
 
 #[test]
+fn browser_origin_approval_is_scoped_and_expires_with_mission_revocation() {
+    let root = TempDir::new().unwrap();
+    let contract = json!({"version":1,"scope":"project:a","objective":"Read sources",
+        "actions":["browser_read"],"resources":["research"],"rollback":"discard research"});
+    let request = |id, destination| {
+        req(
+            id,
+            json!({
+                "type":"browser_origin_request","mission_id":"research","destination":destination
+            }),
+        )
+    };
+    let propose = run(
+        &root,
+        &[req(
+            "propose",
+            json!({
+                "type":"mission_propose","mission_id":"research","contract":contract
+            }),
+        )],
+    );
+    ok(&propose[0]);
+    let first = run(
+        &root,
+        &[
+            request("too-early", "https://example.com/news"),
+            req(
+                "approve",
+                json!({"type":"mission_approve","mission_id":"research",
+            "contract_digest":propose[0]["result"]["contract_digest"]}),
+            ),
+            request("private", "https://127.0.0.1/"),
+            request("new", "https://example.com/news"),
+        ],
+    );
+    error(&first[0], "permission_denied");
+    ok(&first[1]);
+    error(&first[2], "invalid_request");
+    assert_eq!(first[3]["result"]["status"], "pending");
+    let challenge = &first[3]["result"]["challenge"];
+    let next = run(
+        &root,
+        &[
+            req(
+                "grant",
+                json!({"type":"browser_origin_decide","mission_id":"research",
+            "challenge":challenge,"allow":true}),
+            ),
+            request("same", "https://example.com/another"),
+            request("other", "https://other.example.com/"),
+            req(
+                "unconfirmed-read",
+                json!({"type":"browser_read_begin",
+                "mission_id":"research","destination":"https://other.example.com/"}),
+            ),
+            req(
+                "begin",
+                json!({"type":"browser_read_begin",
+                "mission_id":"research","destination":"https://example.com/?token=fixture"}),
+            ),
+            req(
+                "revoke",
+                json!({"type":"mission_revoke","mission_id":"research","reason":"stop"}),
+            ),
+            request("after", "https://example.com/"),
+        ],
+    );
+    ok(&next[0]);
+    assert_eq!(next[1]["result"]["status"], "approved");
+    assert_eq!(next[1]["result"]["challenge"], *challenge);
+    assert_eq!(next[2]["result"]["status"], "pending");
+    error(&next[3], "permission_denied");
+    ok(&next[4]);
+    assert!(!next[4]["result"].to_string().contains("token=fixture"));
+    ok(&next[5]);
+    error(&next[6], "permission_denied");
+    let finish = |id| {
+        req(
+            id,
+            json!({"type":"browser_read_finish","mission_id":"research",
+        "attempt":next[4]["result"]["attempt"],"outcome":"uncertain"}),
+        )
+    };
+    let receipts = run(&root, &[finish("finish"), finish("duplicate-finish")]);
+    ok(&receipts[0]);
+    assert_eq!(receipts[0]["result"]["permission_active_at_finish"], false);
+    assert_eq!(receipts[0]["result"]["outcome"], "uncertain");
+    error(&receipts[1], "contract_conflict");
+}
+
+#[test]
+fn browser_login_requires_exact_approved_form_and_cannot_repeat() {
+    let root = TempDir::new().unwrap();
+    let origin = "https://example.com";
+    let page = format!("{origin}/login");
+    let action = format!("{origin}/submit");
+    let probe = format!("{origin}/account");
+    let handle = "1234567890abcdef1234567890abcdef";
+    let contract = json!({"version":1,"scope":"project:a","objective":"Authorized login",
+        "actions":["browser_read","browser_login"],
+        "resources":[page,action,probe,format!("credential:{handle}"),"marker:Logout"],"rollback":"discard session"});
+    let proposal = run(
+        &root,
+        &[req(
+            "p",
+            json!({
+                "type":"mission_propose","mission_id":"m","contract":contract
+            }),
+        )],
+    );
+    ok(&proposal[0]);
+    let approval = run(
+        &root,
+        &[
+            req(
+                "a",
+                json!({"type":"mission_approve","mission_id":"m",
+            "contract_digest":proposal[0]["result"]["contract_digest"]}),
+            ),
+            req(
+                "request",
+                json!({"type":"browser_origin_request","mission_id":"m","destination":page}),
+            ),
+        ],
+    );
+    ok(&approval[0]);
+    ok(&approval[1]);
+    let login = |id, destination: &str| {
+        req(
+            id,
+            json!({"type":"browser_login_begin",
+        "mission_id":"m","page":page,"action":destination,"probe":probe,"expected_text":"Logout","credential_handle":handle}),
+        )
+    };
+    let attempt = run(
+        &root,
+        &[
+            login("pending", &action),
+            req(
+                "decide",
+                json!({"type":"browser_origin_decide","mission_id":"m","allow":true,
+            "challenge":approval[1]["result"]["challenge"]}),
+            ),
+            login("changed", "https://example.com/changed"),
+            login("login", &action),
+            login("replay", &action),
+        ],
+    );
+    error(&attempt[0], "permission_denied");
+    ok(&attempt[1]);
+    error(&attempt[2], "permission_denied");
+    ok(&attempt[3]);
+    assert_eq!(attempt[3]["result"]["receipt"]["operation"], "login");
+    assert!(!attempt[3]["result"].to_string().contains(handle));
+    error(&attempt[4], "contract_conflict");
+    let dispatch = |id, destination: &str, method: &str| {
+        req(
+            id,
+            json!({
+                "type":"browser_dispatch_authorize","mission_id":"m","attempt":attempt[3]["result"]["attempt"],
+                "destination":destination,"method":method
+            }),
+        )
+    };
+    let sequence = run(
+        &root,
+        &[
+            dispatch("unapproved-get", "https://example.com/extra", "get"),
+            dispatch("approved-get", &page, "get"),
+            dispatch("approved-post", &action, "post"),
+            dispatch("replayed-post", &action, "post"),
+            req(
+                "revoke-login",
+                json!({"type":"mission_revoke","mission_id":"m","reason":"stop"}),
+            ),
+            dispatch("revoked-get", &probe, "get"),
+        ],
+    );
+    error(&sequence[0], "permission_denied");
+    ok(&sequence[1]);
+    ok(&sequence[2]);
+    error(&sequence[3], "contract_conflict");
+    ok(&sequence[4]);
+    error(&sequence[5], "permission_denied");
+}
+
+#[test]
 fn mission_previous_digests_are_optional_and_validate_resources_and_sha256() {
     let root = TempDir::new().unwrap();
     let base = json!({"version":1,"scope":"project:a","objective":"Replace a file","actions":["artifact_replace"],"resources":["file.txt"],"rollback":"verified backup"});

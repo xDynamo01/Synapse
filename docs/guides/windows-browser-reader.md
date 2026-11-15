@@ -37,28 +37,80 @@ Na ponte, `browser_analyze_css` recebe a `url` listada e o estado publica o
 resumo em `stylesheet`. O painel mostra uma falha se o analisador isolado
 estiver indisponível.
 
-## Login experimental na Wikipedia de testes
+## Leitura pública por missão
 
-Abra `https://auth.wikimedia.org/testwiki/wiki/Special:UserLogin` e confirme
-esse mesmo endereço como destino do formulário, com os campos `wpName` e
-`wpPassword`. A exceção de retorno se aplica a esse fluxo de login e permite
-seguir para `test.wikipedia.org` depois do envio. Redirecionamentos que
-repetiriam o POST são recusados. O Synapse só indica sessão confirmada se a
-API da wiki devolver a identidade da conta esperada. Se a conta for confirmada, os cookies ficam cifrados com DPAPI no Windows.
-Use **Verificar sessão da Wikipedia** após reabrir o aplicativo para consultar
-a sessão armazenada. A senha não é armazenada.
+A ponte local aceita `browser_mission_read` com `mission_id` e `url` para
+uma missão aprovada com a ação `browser_read`. A operação aguarda uma
+decisão no Workspace quando encontra uma origem inédita. Uma origem diferente
+em um redirecionamento passa pela mesma autorização antes da conexão.
+O resultado contém a origem e o texto. O leitor valida DNS e TLS e
+continua limitado a documentos públicos.
 
-## Perfis Chromium dedicados para teste manual
+No Workspace, preencha projeto, identificador e objetivo e selecione
+**Propor pesquisa na web**. Depois de aprovar o contrato, abra **Pesquisa na
+web** e selecione **Pesquisar**. Se a URL inicial estiver vazia, o modelo
+local sugere uma fonte. Pedidos de novas origens aparecem no Workspace.
 
-No Windows, **Wikipedia de testes · perfis Chromium** abre uma janela separada
-no Chrome ou Edge instalado. O perfil de teste e o de comparação usam
-pastas diferentes sob `%LOCALAPPDATA%\Synapse\browser\chromium`. O login
-é feito na janela do navegador. Os perfis desta seção são independentes
-do formulário experimental e do cofre DPAPI do leitor interno.
+A ação `browser_mission_research` recebe `mission_id`, `url` inicial opcional,
+`question` e `model_id` local. Com o Chromium habilitado, o modelo pode
+escolher um dos links extraídos e resumir as páginas coletadas. O cliente
+recebe as URLs efetivamente consultadas em `browser_research.sources`.
 
-O teste local com Edge confirmou que `localStorage` sobrevive à reabertura
-do processo e permanece separado entre os perfis. Essa verificação é local
-e não comprova autenticação ou persistência de cookies na Wikimedia.
+### Renderização com Chromium dedicado
+
+Use um diretório exclusivo para o Chromium do Synapse. Na raiz do
+projeto, com o Python configurado, prepare o motor no PowerShell.
+
+```powershell
+$env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $env:LOCALAPPDATA 'Synapse\browser\runtime'
+& $env:SYNAPSE_PYTHON_EXECUTABLE -m pip install './backend/python[browser]'
+& $env:SYNAPSE_PYTHON_EXECUTABLE -m playwright install --only-shell chromium
+Get-ChildItem -LiteralPath $env:PLAYWRIGHT_BROWSERS_PATH -Recurse -Filter chrome-headless-shell.exe |
+    ForEach-Object {
+        icacls $_.DirectoryName /grant '*S-1-15-2-1:(OI)(CI)(RX)' '*S-1-15-2-2:(OI)(CI)(RX)'
+    }
+$env:SYNAPSE_BROWSER_ENGINE = 'playwright'
+```
+
+Abra o Synapse ou a ponte no mesmo terminal. As permissões concedem
+leitura e execução ao AppContainer apenas nos arquivos do motor.
+O Synapse confirma pelo Windows que o renderer usa AppContainer e
+possui zero capacidades antes de fornecer conteúdo à página.
+
+Na leitura de missão, o leitor HTTPS busca o documento depois da autorização
+da origem. Um analisador Rust recebe o HTML bruto em um AppContainer de
+privilégio reduzido, sem capacidades de rede e com limite de processo. Ele
+devolve uma projeção com texto, links e campos de formulários. O Chromium
+dedicado opera sobre essa projeção, com scripts de página, rede, WebSockets,
+service workers e downloads desativados. Cada origem nova passa pelo Core
+antes de o leitor HTTPS abrir a conexão.
+
+Mantenha `synapse-page-analyzer.exe` junto do executável do desktop. Se o
+analisador ou seu isolamento não estiverem disponíveis, a renderização
+falha antes de entregar conteúdo ao Chromium.
+
+## Sessões autenticadas
+
+No Workspace, abra **Sites autenticados**, informe a origem HTTPS e use
+**Guardar credencial local**. O cofre do Windows cifra a credencial e devolve
+uma referência. Para preparar o login, informe a URL do formulário, a URL
+exata de envio, a página de confirmação e um trecho que só aparece nessa
+página após o login. Selecione **Propor Login**, revise o contrato e, depois
+de aprová-lo, selecione **Executar Login**. O Workspace pede a autorização
+da origem quando necessário.
+
+Para reutilizar a sessão, selecione sua referência no cofre, informe a URL
+a coletar e proponha **Leitura autenticada** em uma nova missão. O cofre
+mantém os cookies por origem e os atualiza quando o site os renova. A ação
+**Revogar sessão** remove a referência local. Se o site mantém a sessão no
+servidor, o encerramento remoto depende do próprio serviço.
+
+A credencial e os cookies ficam no processo local que envia HTTPS. O
+Chromium dedicado recebe os formulários e os textos, o Core recebe
+referências e recibos, e o modelo recebe apenas trechos da pesquisa pública.
+A operação suporta formulários HTTPS de usuário e senha enviados diretamente
+pelo site e verificados pela página indicada. Fluxos que dependem de
+JavaScript, autenticação federada, CAPTCHA ou MFA precisam de suporte próprio.
 
 ## Quarentena de texto
 
@@ -71,3 +123,10 @@ quarentena mantém o conteúdo sem abrir o arquivo ou executar comandos.
 Na ponte local, use `browser_quarantine_text` com a `url` e consulte `state`
 até `browser.quarantine_loading` terminar. O recibo aparece em
 `browser.quarantine_receipt`.
+
+No Workspace, **Downloads da missão** permite propor, aprovar e guardar um
+arquivo de texto pelo endereço HTTPS final. A ponte usa
+`browser_mission_download` com `mission_id` e `url`. A operação exige
+`browser_read`, `browser_download` e a URL exata nos recursos aprovados.
+Redirecionamentos exigem um contrato com o endereço final. A resposta inclui
+os metadados da quarentena e o recibo do Core.
