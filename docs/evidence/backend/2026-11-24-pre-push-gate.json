@@ -1,0 +1,403 @@
+{
+  "version": 1,
+  "platform": "win32",
+  "source_files": {
+    "backend/core/Cargo.toml": "758f5731116205cfee2c282e2ebcaf6787fe6a8493b9e59559842f20a8a931e9",
+    "backend/core/src/bin/image_decoder.rs": "40441874e5d3cba548f99bea731f1a3b67d03e0e5f25a5213b785046d914bc9e",
+    "backend/core/src/bin/maintenance.rs": "07a786baedc0b719be9e5391595c7bd82ff9abca82e32efe8247d9827d622ea7",
+    "backend/core/src/bin/page_analyzer.rs": "2ad7efd2b2362c791812385951c1000e4bbc03f67c3b36570fdff36511b695a1",
+    "backend/core/src/browser_analysis.rs": "06463ff1b7711f0e071cdfa57a17ce0bf0f2339371a02764825291c69ec50101",
+    "backend/core/src/browser_image.rs": "d6a7d8739c3b18a2eaeb4502bae0a618da3268baba54ebbb122211f53937538a",
+    "backend/core/src/browser_policy.rs": "6ca651abf77e66a0790544431c891b14bdd50d966322210444003d2ac92a671d",
+    "backend/core/src/candidate.rs": "986d080ef4b730f9bb8783481f60bba93a74060631ee373bcc3f182c5bcc3c66",
+    "backend/core/src/chats.rs": "5091cdbd874bc343d83ee8954c149fc36171fec850332abb2506fdd45cb23b94",
+    "backend/core/src/checks.rs": "ba389791fa4052afa3f18002fd546d183e3e1f7da0403f99a775822264d2cdd2",
+    "backend/core/src/context.rs": "24723614731bc1ce6f9e962da1f2051248885c164c59ce31acd4575fedec63f9",
+    "backend/core/src/contracts.rs": "1c9d0548f011f299e429d52d569154994312fd6b8fc97fbd2117008f08d2b38e",
+    "backend/core/src/conversation.rs": "76bebe015e7ec0ef90c548123fbaf29eb630d990d479294c11fc840ee3b43024",
+    "backend/core/src/core.rs": "7d24ced8014547bbfa9da2388631ca9643eb96393653fdda246b1747a83225c3",
+    "backend/core/src/git_workspace.rs": "c371f553bbfc81bca854e05d759d59f6ff62699e38b807966b7f1d162325140c",
+    "backend/core/src/intake.rs": "3ff2dc3b22c4ecb5735f4faf297e141840b485feda1ee3ab8672cc0fb6f968f8",
+    "backend/core/src/integration.rs": "9144de0511a5c1310d86fb0876f8392559ea8623dec7a646fb991b3c0f6863b3",
+    "backend/core/src/learning.rs": "09a4197cdd4fac4bccf842d3d7dc6ac02d89422b8ae7f1cfee1e1d990cf3e6eb",
+    "backend/core/src/lib.rs": "112c03fc5bf1b406e708089391218bf03f9255961f9ca3ce7fbc9d6b3c5074d6",
+    "backend/core/src/local_pipe.rs": "bfd25e343e5348fd30996692bae195384290cd543ce122c1b88afa60d03c2c20",
+    "backend/core/src/main.rs": "bea6eba1bda9c631d28ec9c5f5f84513888b30bb4b4a30c676042767d2607083",
+    "backend/core/src/maintenance.rs": "fd3961207c97a95447f37bed1823978062cec663e47275b94365daa297a7c3c5",
+    "backend/core/src/memory.rs": "963b79d5cef28fe4d9d648687aa34d8046db9fe0bd72ed146cb09732d9c25fcb",
+    "backend/core/src/mission_recovery.rs": "228ef24e5c99ecb7fc53fd9b42a5246dea622c2261796bbc4b1be94c5fb997de",
+    "backend/core/src/mission_run.rs": "6ac4a3aa096eb28d92226a13b12f2ffe96cfbdb0f99ae7795ee1d04f889fc29d",
+    "backend/core/src/missions.rs": "d17e1f0b6c173f1b97090373b3bc8d1260ca6a06c78467b0121b19c9248527c9",
+    "backend/core/src/operational.rs": "385d32c2ab86549d0087c584653a52e71dfd81931be8e82102c6b4fc1e67e9dc",
+    "backend/core/src/operational_store.rs": "8c5e7caf4d7cbe264391216089140ae1bfa42f20f4c6065f3e155751124911c7",
+    "backend/core/src/orchestration.rs": "32d67bea1b089bcd4bd85e2e594ce15a0520022840fb08ccb3355b57832b079a",
+    "backend/core/src/planner.rs": "a0f03db82e4f79d0e3e3457130ead9689adb6bf7f558e5148fe26171e1dea980",
+    "backend/core/src/privacy.rs": "2ebfa7fa81fe3d8ae7e9e5fde18510349d31614ae7c03e78e86692c3941a995b",
+    "backend/core/src/projects.rs": "e8ae8e10dd7092ad4d3fc766a17d05004cb0be08c4e4b7b834abbfe6797e50e8",
+    "backend/core/src/registry.rs": "8015d0c2d28e5c7a70cdc6d67b389f2d2a7e6f660abd83173bcb37f49491ad84",
+    "backend/core/src/runner/assets.rs": "e685cb1a8c2b322358505be5341712303f30ddf4122f449b6566bde91751f564",
+    "backend/core/src/runner/browser_content.rs": "fb72efd3a933e445421e6e25a33769f13c0084f99d09187c381692932ec4531b",
+    "backend/core/src/runner/document_checks.py": "5068405ad6cc5dba07e48810434a82c037ddf7251440784ad322ccc44abc7c37",
+    "backend/core/src/runner/mod.rs": "052c1f70e90cfd59cb918bdce23059e4681790f64f152fdf33740a2794c5836c",
+    "backend/core/src/runner/native.rs": "66176082b7f954a2f3c75d75de3c731a2ac3624de4122732d181ab88ae5f1476",
+    "backend/core/src/runner/python.rs": "293e24f1e9b83b0069789e03af59c5485557328f1009f238a48f1c823e89031e",
+    "backend/core/src/runner/rust.rs": "ee69eed9d54af30d0872e2fcb0df72743c0d1e11491cb76c3fa644caf0be7964",
+    "backend/core/src/runner/windows.rs": "57b6991fbe93c592b05e606a3f34d8dcdf6c03634a7f06b6583c754333644e12",
+    "backend/core/src/self_change.rs": "c862160be9736199d715b570fc9ecbbc9447e36188a5d97298daabcb129836f4",
+    "backend/core/src/skills.rs": "0e87b305ce538646b38123493478f2def326f26dcf36eae0baf63801fae64e4a",
+    "backend/core/src/store.rs": "069630dd48702ab246ecf9c2150062875d64c7d88f6a7bf1cc5acb57de2dd57d",
+    "backend/core/src/task_graph.rs": "f5f34cbebb613db5b79a597f262f58d82de326cc09bec52e8e0502e984404547",
+    "backend/core/src/tools.rs": "e45b732bac228c6fffcfff5742bd5165e69a02518df3a0642f54c7b52d48b4d4",
+    "backend/core/src/voice.rs": "f437b29fa07debd30abe48f1e5efcfcc7ff8d1513eb498608688901d207cad67",
+    "backend/core/src/worker.rs": "57d0cbee38bcb9b8beea0b65f2ec7a3f4fbf741b71418098319a6711499af3f0",
+    "backend/core/tests/ai_cli.rs": "fb3a7d1570c4e6289c704278c207d1dc6066cec213e21e547dfea86f4c9df9bb",
+    "backend/core/tests/browser_analysis.rs": "0297411ef7268441a09b6d4ce04fb737ec8900820262f6c8579ac2fc518ee155",
+    "backend/core/tests/browser_image.rs": "f364f2e805e6282a4088025c0a1f6308a82caf99cb9b7cd0fd96e2c629c40633",
+    "backend/core/tests/core_cli.rs": "e89b9c1bb86d23cb5bb69fb73d1216af2ae30553a1480cc9aeb16c2a5ee786d6",
+    "backend/core/tests/intake_cli.rs": "8362dd1f912006e1bd001ba523a8c6fffb89b1f92c0327d92c005515b95f9bdb",
+    "backend/core/tests/local_pipe_cli.rs": "ab83901399c52bf33d77c79e277cd0095be0ca8e12d17d8ce5ad2a9c8eaa86f0",
+    "backend/core/tests/maintenance_cli.rs": "b8dfe30bcb35f82feb711abee35095a238c9f4299f86c035a7bbaf26bb0aaa4c",
+    "backend/core/tests/mission_cli.rs": "a891403d1e75cb706b8743e38c561e9293d384710ac9523bbb5141f2bdf5455a",
+    "backend/core/tests/operational_cli.rs": "09ccdd20565cd82b14b9087bedfe109262e0f196b8df699f8267754a365e7579",
+    "backend/core/tests/project_check_cli.rs": "2f14c50b8c0bae4111d5e6b59b076c2554c2503a662f351b9f1f23c4480ca55a",
+    "backend/core/tests/readiness_compatibility.rs": "e8a14672441281c04187c1ebacf717ac8481047cd5347b48360c907090107994",
+    "backend/core/tests/self_change_cli.rs": "c908d762e19a7b0310c3f2e0c61acd288c85bfb08f4524a280affe0133cd56b5",
+    "backend/core/tests/task_graph_cli.rs": "cd95608458059d7591a38fa891c6de79ace64989047fb3d472461b9aed4085df",
+    "backend/desktop/Cargo.toml": "3d063f661cfcb1d9633416e03411ac39138b5df67ca87443343733aebd1ca2d9",
+    "backend/desktop/src/audio/windows.rs": "967d1421a0cdf47a3e61783de979e95b65b0092096ada2c7c2281066a5837693",
+    "backend/desktop/src/audio.rs": "a38c3c03df0408922c7f70c09e66b1859233a34faadf1612d8365fc8e2fe4283",
+    "backend/desktop/src/audio_tray.rs": "ad41cc34a42b4c39db66ca45642d7bf881a8ccac33ac55c3cee96efaeb280b47",
+    "backend/desktop/src/bridge.rs": "353e413e44d59198d4e829bdc630727cdc240ff93ccbb08b113867ac96a3261f",
+    "backend/desktop/src/browser.rs": "e8e164864121f14d969baa1cae38ace0241effb86f1a9b4c987ea36b1f6fa0b0",
+    "backend/desktop/src/browser_auth_panel.rs": "e2b54686757f6f78f385faf902be13dce5f1b02031c2c2ff0566757a15eece11",
+    "backend/desktop/src/catalog.rs": "1112be7336b60af018c2a4f35c6ac8a6c29990bc64e506f0ff29e5cb1afa7623",
+    "backend/desktop/src/main.rs": "346d01178f5421a2a441a27676f71f3c8d2b09211064f765b1336a91017bc744",
+    "backend/desktop/src/transport.rs": "1ae3a5b38dd467bffb2e11d9061cbc50bb895a16464720856e67e04e02e0bb5e",
+    "backend/desktop/src/voice.rs": "d0fc037ffef4fc63849e09b2e5b015f0000a070a770a32dab945a6780af00070",
+    "backend/desktop-slint/build.rs": "78d22328389b453c6ca95146d8497f54e4310171c7aeec5a128d4ab6fef918be",
+    "backend/desktop-slint/Cargo.toml": "a5e93f139358333124b9ed9dc8fe24e19944abf3908406f9c5f4f7b092b61df1",
+    "backend/desktop-slint/src/local_runtime.rs": "0a4c77afb813656369efc416334b11f9f3ef32667758aa5aad7328da190ef9bf",
+    "backend/desktop-slint/src/main.rs": "b60b7f856b1bfa07ea62ff5209b139f5c3f44dee5eb493b3da74fd8889b1aac1",
+    "backend/desktop-slint/src/presence.rs": "f187eea7631e4dc28af19061b3a4022c38f82ca0718b848c91521b2a7a4fbfa4",
+    "backend/desktop-slint/src/session.rs": "66f62b24d2f88fc7c2198d49edd481acee22cd16269e5b80ec5dcbc45bd574e6",
+    "backend/desktop-slint/ui/app.slint": "c3cac3950569720f2b28908239d1ca3980607b291fcd4c68f4ee6c3da869fe8a",
+    "backend/desktop-slint/ui/blender-presence.slint": "2a271530d04e546239b2678028f03b6b8e07cb778ff54590d847ffe77a260400",
+    "backend/desktop-slint/ui/presence.slint": "805b93e0cc90cf8ab6044447a59c0305ce61a3125426d32dde6c540b340bc4d2",
+    "backend/python/synapse_ai/__init__.py": "e3c9ae0f7edb1e5139337d4c4d4bdcd93cf442f348141c6622d4cc1c6336092e",
+    "backend/python/synapse_ai/__main__.py": "16811ed569428259c5e211945fea320cc763f9826968c773930bfb22ee2f5a0a",
+    "backend/python/synapse_ai/browser_auth_worker.py": "9d93814a2b10f374e4ed70f74b7a833490435748fc64a7e64a19a088f547d319",
+    "backend/python/synapse_ai/browser_read.py": "1426baac001f0a83a304a561ab394576d7efde2e9fb23c8d0eed4d488a0680db",
+    "backend/python/synapse_ai/browser_session.py": "d9f73fdb4c620de85860441c75ffe8058d570dd6b920c333ebae564828418e7c",
+    "backend/python/synapse_ai/browser_transport.py": "15a78a75a3ec6d82af158d235c287c0b0d48d832c514c9a5f8953609a561c4f2",
+    "backend/python/synapse_ai/browser_vault.py": "42e3f868b7e351dc3ca17b3bce0dd701f40c40f6a9caf127c93ccb2752db785e",
+    "backend/python/synapse_ai/metrics.py": "43d9744643698a5971fdd03d87d6eadf0be10e3ef58a510e2135659f45ccef1b",
+    "backend/python/synapse_ai/model_ownership.py": "9f7d184d80845aad1b915ff078224de85a454107b76ddbf8c9e30e9bcfade818",
+    "backend/python/synapse_ai/protocol.py": "d9bdd7d16cf8863cafc0027b33acae7ebbee89003492caa2df39a3460fadbf07",
+    "backend/python/synapse_ai/providers.py": "722ddd68269898f2ad93e62a80a3a50855428750b8fe13c231d4bc96cae6be39",
+    "backend/python/synapse_ai/voice_worker.py": "a98e821646e247871f972209a7c9129faa52b213a3b6393d1716f4fd2b9166a5",
+    "backend/python/synapse_ai/worker.py": "ac54d8c1ed6cbd6516dbbc4ad4aeca5c9ae68f88fa58daf494efe686de21d512",
+    "Cargo.lock": "d65fc88050fc374ffcc699818b52b91a29f906606fd7e08151063d2571854fc3",
+    "Cargo.toml": "2a982fa9a6e73d9eb4fbb8e91c11cc86172dca5bc6ce92fd1c5dafcd57bc22c2",
+    "rust-toolchain.toml": "75cd8d73777ba32f23fcf6d5a7f49019b4a7c8ebe34a06ceb5a40d1c21ab8ffc",
+    "tools/readiness/evals-v1.json": "d1f7ec5a9acfa8f4a883d3d5904ee266331d86439bf2ad5bff00f3ea8542c03a",
+    "tools/readiness/model-evals-v1.json": "b919e93856c6f19587162dfd7e6a8a1b81669f45c5b1a38630aa66a10f847a5e",
+    "tools/readiness/run_evals.py": "752be952bf47383bc5edae4f2a9048d16b47a9abb83d7edce73367ee27dada97",
+    "tools/readiness/run_gate.py": "1451875302e47c670e11f9e7fc359b1a0a586aba5b45d9e17978e28d21261246",
+    "tools/readiness/run_model_evals.py": "155b33890329c4dce73bf9e3ad5013dcf8eb8db1b4d11199bda76e16f09f5429",
+    "tools/release/diagnose.py": "1744f5cc8111a81ed155618d6d7606cd638f07b66e08f1ab600a3e6dbf7dedfb",
+    "tools/release/distribution-common.ps1": "2a3e2367be23f3286c6ab6c69575947b79eef10d9a8d062d2d27c35f92ddb04e",
+    "tools/release/install-windows.ps1": "523e5c77ef4d10ffc2242c07b963203d1c52dd877379dfbb5046dc7b29849084",
+    "tools/release/package.py": "b9744e9ac4aada9cd527753d305b08c7f82a981f30bb7585cb42723455b5f2ce",
+    "tools/release/smoke.py": "9c8ed86eabd8b7af994f9b318a863222cb10089f8fd91a40223ee7ae702c0f38",
+    "tools/release/start-windows.ps1": "693da070ef5118da97b98cfd57a7a9201293a6123fba1cbeaf5da8bb1e192ffb",
+    "tools/release/test_distribution.py": "361850098ee21425c96d67dcfb93275af7e4155c72b2c456b901bf981e18ea96",
+    "tools/release/verify_windows_context.py": "d1abedbe6f6282d53b0422258b80991c4ffcfdce98888144e0089df6b6bbbf51",
+    "tools/release/verify_windows_install.py": "004310e58003179b3e37c7e443e76e56e55786ae09193d34f727584e2193ff60",
+    "tools/release/verify_windows_recovery.py": "f5d37415ef33811f5b1643548c38750b0199238a51f3e8f2ecb0a978b7a71aa5",
+    "tools/release/worker_smoke.py": "21a87d73bfacb75ef579c84d89c77e6419e5072c6f5458f5b624001544367c60"
+  },
+  "source_stable": true,
+  "suites": [
+    {
+      "suite": "core",
+      "pass": true,
+      "exit_code": 0,
+      "elapsed_ms": 220604,
+      "framework_summaries": [
+        [
+          "ok",
+          "49",
+          "0",
+          "2"
+        ],
+        [
+          "ok",
+          "0",
+          "0",
+          "0"
+        ],
+        [
+          "ok",
+          "0",
+          "0",
+          "0"
+        ],
+        [
+          "ok",
+          "0",
+          "0",
+          "0"
+        ],
+        [
+          "ok",
+          "1",
+          "0",
+          "0"
+        ],
+        [
+          "ok",
+          "25",
+          "0",
+          "0"
+        ],
+        [
+          "ok",
+          "1",
+          "0",
+          "0"
+        ],
+        [
+          "ok",
+          "1",
+          "0",
+          "0"
+        ],
+        [
+          "ok",
+          "33",
+          "0",
+          "0"
+        ],
+        [
+          "ok",
+          "1",
+          "0",
+          "0"
+        ],
+        [
+          "ok",
+          "1",
+          "0",
+          "0"
+        ],
+        [
+          "ok",
+          "8",
+          "0",
+          "0"
+        ],
+        [
+          "ok",
+          "11",
+          "0",
+          "0"
+        ],
+        [
+          "ok",
+          "3",
+          "0",
+          "0"
+        ],
+        [
+          "ok",
+          "0",
+          "0",
+          "6"
+        ],
+        [
+          "ok",
+          "3",
+          "0",
+          "0"
+        ],
+        [
+          "ok",
+          "4",
+          "0",
+          "0"
+        ],
+        [
+          "ok",
+          "0",
+          "0",
+          "1"
+        ],
+        [
+          "ok",
+          "0",
+          "0",
+          "0"
+        ]
+      ]
+    },
+    {
+      "suite": "python",
+      "pass": true,
+      "exit_code": 0,
+      "elapsed_ms": 10437,
+      "framework_summaries": []
+    },
+    {
+      "suite": "slint",
+      "pass": true,
+      "exit_code": 0,
+      "elapsed_ms": 96627,
+      "framework_summaries": [
+        [
+          "ok",
+          "23",
+          "0",
+          "8"
+        ]
+      ]
+    },
+    {
+      "suite": "distribution",
+      "pass": true,
+      "exit_code": 0,
+      "elapsed_ms": 11818,
+      "framework_summaries": []
+    },
+    {
+      "suite": "native",
+      "pass": true,
+      "exit_code": 0,
+      "elapsed_ms": 343109,
+      "framework_summaries": [
+        [
+          "ok",
+          "2",
+          "0",
+          "0"
+        ],
+        [
+          "ok",
+          "0",
+          "0",
+          "0"
+        ],
+        [
+          "ok",
+          "0",
+          "0",
+          "0"
+        ],
+        [
+          "ok",
+          "0",
+          "0",
+          "0"
+        ],
+        [
+          "ok",
+          "0",
+          "0",
+          "0"
+        ],
+        [
+          "ok",
+          "0",
+          "0",
+          "0"
+        ],
+        [
+          "ok",
+          "0",
+          "0",
+          "0"
+        ],
+        [
+          "ok",
+          "0",
+          "0",
+          "0"
+        ],
+        [
+          "ok",
+          "0",
+          "0",
+          "0"
+        ],
+        [
+          "ok",
+          "0",
+          "0",
+          "0"
+        ],
+        [
+          "ok",
+          "0",
+          "0",
+          "0"
+        ],
+        [
+          "ok",
+          "0",
+          "0",
+          "0"
+        ],
+        [
+          "ok",
+          "0",
+          "0",
+          "0"
+        ],
+        [
+          "ok",
+          "0",
+          "0",
+          "0"
+        ],
+        [
+          "ok",
+          "6",
+          "0",
+          "0"
+        ],
+        [
+          "ok",
+          "0",
+          "0",
+          "0"
+        ],
+        [
+          "ok",
+          "0",
+          "0",
+          "0"
+        ],
+        [
+          "ok",
+          "1",
+          "0",
+          "0"
+        ],
+        [
+          "ok",
+          "0",
+          "0",
+          "0"
+        ]
+      ]
+    }
+  ],
+  "pass": true,
+  "excluded_acceptance": [
+    "installed_package",
+    "real_model_evals",
+    "native_consent_dialog",
+    "host_reboot",
+    "abrupt_power_loss",
+    "other_platform_hardware"
+  ]
+}

@@ -410,6 +410,12 @@ fn invalid_full_results_never_partially_propose_or_leak_output() {
     value["checks"] = json!(vec![value["checks"][0].clone(); 9]);
     cases.push(value);
     cases.push(json!("RAW_SECRET_REJECTED"));
+    let mut duplicated_owner=valid_plan();
+    duplicated_owner["tasks"]=json!([
+        {"task_id":"create","objective":"RAW_SECRET_REJECTED","dependencies":[],"priority":0,"artifacts":["test_project.py"]},
+        {"task_id":"validate","objective":"RAW_SECRET_REJECTED","dependencies":["create"],"priority":1,"artifacts":["test_project.py"]}
+    ]);
+    cases.push(duplicated_owner);
     for (index, plan) in cases.iter().enumerate() {
         write_plan(&fixture, plan);
         let id = format!("negative-{index}");
@@ -450,6 +456,7 @@ fn invalid_full_results_never_partially_propose_or_leak_output() {
         assert_eq!(poll(&mut session, &id)["error"], "invalid_mission_plan");
     }
     let mut cursor = 0;
+    let mut rejections=0;
     loop {
         let events = session.call(req(
             &format!("events-{cursor}"),
@@ -458,6 +465,11 @@ fn invalid_full_results_never_partially_propose_or_leak_output() {
         let data = &events["result"];
         assert!(!data.to_string().contains("RAW_SECRET_REJECTED"));
         for event in data["events"].as_array().unwrap() {
+            if event["kind"]=="mission_plan_rejected" {
+                rejections+=1;
+                assert_eq!(event["payload"]["version"],1);
+                assert!(!event["payload"]["reason"].as_str().unwrap().is_empty());
+            }
             assert!(
                 ![
                     "mission_proposed",
@@ -474,6 +486,7 @@ fn invalid_full_results_never_partially_propose_or_leak_output() {
         }
         cursor = data["next_cursor"].as_u64().unwrap();
     }
+    assert_eq!(rejections,cases.len()+3);
     assert!(!root.path().join("test_project.py").exists());
 }
 #[test]
@@ -939,6 +952,16 @@ fn bounded_mixed_artifacts_and_both_fixed_recipes_are_accepted() {
         "mission_id":"mixed","contract_digest":digest,"swarm":"recommended"}),
     ));
     assert_eq!(accepted["result"]["state"], "approved", "{accepted}");
+    let orchestration = session.call(req(
+        "legacy-swarm-settings",
+        json!({"type":"orchestration","action":"settings_get","payload":{}}),
+    ));
+    assert_eq!(orchestration["result"]["execution_regime"], "NORMAL");
+    assert_eq!(
+        orchestration["result"]["transition"]["status"], "preparing",
+        "{orchestration}"
+    );
+    assert_eq!(orchestration["result"]["transition"]["mission_id"], "mixed");
     let after_approval = session.call(req(
         "get-approved-plan",
         json!({

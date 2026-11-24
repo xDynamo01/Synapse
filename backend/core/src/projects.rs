@@ -36,6 +36,7 @@ pub(crate) fn register(
         ));
     }
     let broker = pin(root, state)?;
+    crate::self_change::guard_project_root(root)?;
     let identity = broker.root_identity()?;
     let root = broker.target();
     if let Some((recorded_root, recorded_identity)) = record(tx, scope)? {
@@ -99,6 +100,7 @@ fn verify(root: &str, identity: &str, state: &Path) -> CoreResult<tools::Broker>
         )
     };
     let broker = pin(Path::new(root), state).map_err(|_| changed())?;
+    crate::self_change::guard_effect(Path::new(root))?;
     if broker.root_identity().map_err(|_| changed())? != identity || broker.target() != root {
         return Err(changed());
     }
@@ -148,6 +150,7 @@ pub(crate) fn for_mission<'a>(
         )
         .optional()?;
     let Some((root, identity)) = binding else {
+        crate::self_change::guard_effect(fallback)?;
         return Ok(ProjectRoot::Legacy(fallback));
     };
     let guard = verify(&root, &identity, state)?;

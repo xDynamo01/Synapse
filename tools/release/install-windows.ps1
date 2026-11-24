@@ -1,103 +1,87 @@
 [CmdletBinding(DefaultParameterSetName = 'Install')]
 param(
     [Parameter(Mandatory, ParameterSetName = 'Install')][string]$Package,
-    [Parameter(Mandatory, ParameterSetName = 'Install')][ValidatePattern('^[a-fA-F0-9]{64}$')][string]$Sha256,
+    [Parameter(Mandatory, ParameterSetName = 'Install')][Alias('Sha256')][ValidatePattern('^[a-fA-F0-9]{64}$')][string]$TrustedSha256,
     [Parameter(Mandatory, ParameterSetName = 'Rollback')][switch]$Rollback,
-    [string]$InstallRoot = (Join-Path $env:LOCALAPPDATA 'Synapse\distribution')
+    [string]$InstallRoot = (Join-Path $env:LOCALAPPDATA 'Synapse\distribution'),
+    [string]$StateRoot = (Join-Path $env:LOCALAPPDATA 'Synapse\state-0.3'),
+    [string]$Python
 )
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'distribution-common.ps1')
 $root = [IO.Path]::GetFullPath($InstallRoot)
+Assert-NoLinks $root
+Assert-NoLinks $StateRoot
 $versions = Join-Path $root 'versions'
 [IO.Directory]::CreateDirectory($versions) | Out-Null
-$lock = [IO.File]::Open((Join-Path $root 'install.lock'), 'OpenOrCreate', 'ReadWrite', 'None')
+$lock = [IO.File]::Open((Join-Path $root 'install.lock'), 'OpenOrCreate','ReadWrite','None')
 $pointer = Join-Path $root 'active.json'
-
-function Set-Active($current, $previous) {
+$stage = $null
+$stateLock = $null
+function Set-Active($current,$previous,$manifestHash,$previousManifestHash) {
     $temporary = Join-Path $root ([Guid]::NewGuid().ToString('n') + '.json')
     try {
-        $content = [ordered]@{ current = $current; previous = $previous } | ConvertTo-Json
-        [IO.File]::WriteAllText($temporary, $content, [Text.UTF8Encoding]::new($false))
-        [IO.File]::Move($temporary, $pointer, $true)
-    } finally {
-        [IO.File]::Delete($temporary)
-    }
+        $content = @{current=$current;previous=$previous;manifest_sha256=$manifestHash;previous_manifest_sha256=$previousManifestHash} | ConvertTo-Json
+        [IO.File]::WriteAllText($temporary,$content,[Text.UTF8Encoding]::new($false))
+        [IO.File]::Move($temporary,$pointer,$true)
+    } finally { [IO.File]::Delete($temporary) }
 }
-
 try {
-    $active = if (Test-Path -LiteralPath $pointer -PathType Leaf) {
-        Get-Content -LiteralPath $pointer -Raw | ConvertFrom-Json
-    }
+    $active = if (Test-Path -LiteralPath $pointer) { Get-Content -Raw -LiteralPath $pointer | ConvertFrom-Json }
+    if ($active -and $active.current -cnotmatch '^[a-f0-9]{64}$') { throw 'Invalid active pointer.' }
+    if (!$Python -and $active) { $Python = Join-Path $versions ($active.current + '/runtime/python.exe') }
     if ($Rollback) {
-        if (!$active -or $active.previous -cnotmatch '^[a-f0-9]{64}$' -or
-            !(Test-Path -LiteralPath (Join-Path $versions $active.previous) -PathType Container)) {
-            throw 'Não há versão anterior instalada.'
-        }
-        Set-Active $active.previous $active.current
+        if (!$active -or $active.previous -cnotmatch '^[a-f0-9]{64}$' -or !$active.previous_manifest_sha256) { throw 'No verified previous version; reinstall a trusted legacy archive to establish provenance.' }
+        $destination = Join-Path $versions $active.previous
+        if ((Get-FileHash -LiteralPath (Join-Path $destination 'manifest.json')).Hash -ine $active.previous_manifest_sha256) { throw 'Previous manifest changed.' }
+        $manifest = Read-PackageManifest $destination
+        $stateLock = Assert-StateCompatible $StateRoot $manifest $Python
+        Set-Active $active.previous $active.current $active.previous_manifest_sha256 $active.manifest_sha256
         Write-Output $active.previous
         return
     }
-
-    $resolved = (Resolve-Path -LiteralPath $Package).Path
-    $identity = $Sha256.ToLowerInvariant()
-    $inputStream = [IO.File]::Open($resolved, 'Open', 'Read', 'Read')
+    $identity = $TrustedSha256.ToLowerInvariant()
+    $stream = [IO.File]::Open((Resolve-Path -LiteralPath $Package).Path,'Open','Read','Read')
     try {
-        $hasher = [Security.Cryptography.SHA256]::Create()
-        try { $actual = [Convert]::ToHexString($hasher.ComputeHash($inputStream)).ToLowerInvariant() }
-        finally { $hasher.Dispose() }
-        if ($actual -cne $identity) { throw 'SHA-256 divergente.' }
-        if ($active.current -ceq $identity) { Write-Output $identity; return }
-        $inputStream.Position = 0
-        $archive = [IO.Compression.ZipArchive]::new($inputStream, 'Read', $true)
+        $actual = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($stream)).ToLowerInvariant()
+        if ($actual -cne $identity) { throw 'Archive differs from independently trusted SHA-256.' }
+        $stream.Position = 0
+        $archive = [IO.Compression.ZipArchive]::new($stream,'Read',$true)
         try {
-            $reader = [IO.StreamReader]::new($archive.GetEntry('manifest.json').Open())
-            try { $manifest = $reader.ReadToEnd() | ConvertFrom-Json -AsHashtable }
-            finally { $reader.Dispose() }
-            $machine = [Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToLowerInvariant()
-            if ($manifest.platform -cne 'windows' -or $manifest.architecture -cne $machine) {
-                throw 'Pacote incompatível com a plataforma.'
-            }
             $stage = Join-Path $versions ([Guid]::NewGuid().ToString('n') + '.staging')
             [IO.Directory]::CreateDirectory($stage) | Out-Null
-            $verifiedStage = (Resolve-Path -LiteralPath $stage).Path
-            if ([IO.Path]::GetDirectoryName($verifiedStage) -ine (Resolve-Path -LiteralPath $versions).Path -or
-                ((Get-Item -LiteralPath $verifiedStage).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
-                throw 'Diretório intermediário inválido.'
-            }
             $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+            [long]$expandedBytes = 0
             foreach ($entry in $archive.Entries) {
+                $expandedBytes += $entry.Length
+                if ($expandedBytes -gt 2147483648) { throw 'Expanded package size limit exceeded.' }
                 $name = $entry.FullName
-                if ($name -cnotmatch '^[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*$' -or
-                    ($name.Split('/') | Where-Object { $_ -in '.', '..' -or $_.EndsWith('.') }) -or
-                    !$seen.Add($name)) { throw 'Entrada de pacote inválida.' }
-                if ($name -cne 'manifest.json' -and !$manifest.sha256.Contains($name)) {
-                    throw 'Arquivo fora do manifesto.'
-                }
+                if ($name -cnotmatch '^[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*$' -or ($name.Split('/') | Where-Object { $_ -in '.', '..' -or $_.EndsWith('.') -or $_ -match '^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\.|$)' }) -or !$seen.Add($name) -or $entry.Length -gt 536870912) { throw 'Invalid ZIP entry.' }
+                if ($seen.Count -gt 20000) { throw 'Package entry limit exceeded.' }
                 $path = Join-Path $stage $name
                 [IO.Directory]::CreateDirectory((Split-Path -Parent $path)) | Out-Null
-                [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $path)
-                if ($name -cne 'manifest.json' -and
-                    (Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash -ine $manifest.sha256[$name]) {
-                    throw 'Arquivo corrompido.'
-                }
+                [IO.Compression.ZipFileExtensions]::ExtractToFile($entry,$path)
             }
-            if ($seen.Count -ne $manifest.sha256.Count + 1) { throw 'Pacote incompleto.' }
-            foreach ($required in 'synapse-backend.exe', 'synapse-desktop.exe', 'start-windows.ps1', 'python/synapse_ai/__init__.py') {
-                if (!$seen.Contains($required)) { throw "Componente ausente $required" }
-            }
+            $manifest = Read-PackageManifest $stage
+            if (!$Python -or !(Test-Path -LiteralPath $Python)) { $Python = Join-Path $stage 'runtime/python.exe' }
+            $stateLock = Assert-StateCompatible $StateRoot $manifest $Python
             $destination = Join-Path $versions $identity
-            if (Test-Path -LiteralPath $destination -PathType Container) {
-                foreach ($name in $manifest.sha256.Keys) {
-                    $installed = Join-Path $destination $name
-                    if ((Get-FileHash -Algorithm SHA256 -LiteralPath $installed).Hash -ine $manifest.sha256[$name]) {
-                        throw 'A cópia instalada diverge do pacote.'
-                    }
-                }
-                [IO.Directory]::Delete($verifiedStage, $true)
-            } else {
-                [IO.Directory]::Move($stage, $destination)
-            }
-            Set-Active $identity $active.current
+            $manifestHash = (Get-FileHash -LiteralPath (Join-Path $stage 'manifest.json')).Hash.ToLowerInvariant()
+            if (Test-Path -LiteralPath $destination) {
+                $null = Read-PackageManifest $destination
+                if ((Get-FileHash -LiteralPath (Join-Path $destination 'manifest.json')).Hash -ine $manifestHash) { throw 'Installed manifest differs.' }
+            } else { [IO.Directory]::Move($stage,$destination); $stage=$null }
+            if ($active.current -ceq $identity) { Write-Output $identity; return }
+            Set-Active $identity $active.current $manifestHash $active.manifest_sha256
             Write-Output $identity
         } finally { $archive.Dispose() }
-    } finally { $inputStream.Dispose() }
-} finally { $lock.Dispose() }
+    } finally { $stream.Dispose() }
+} finally {
+    if ($stage -and (Test-Path -LiteralPath $stage)) {
+        Assert-NoLinks $stage
+        if ([IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($stage)) -ine $versions -or !$stage.EndsWith('.staging')) { throw 'Unsafe staging cleanup refused.' }
+        [IO.Directory]::Delete($stage,$true)
+    }
+    if ($stateLock) { $stateLock.Dispose() }
+    $lock.Dispose()
+}

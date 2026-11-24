@@ -1,0 +1,244 @@
+{
+  "version": 1,
+  "dataset_sha256": "b919e93856c6f19587162dfd7e6a8a1b81669f45c5b1a38630aa66a10f847a5e",
+  "core_sha256": "9aa0ef6f0791fbbe8b9fdbab1f538198d16c602ba903da2187b203427fecb4b0",
+  "source_binary_stable": true,
+  "model": "qwen2.5-coder-7b-instruct",
+  "model_configuration": {
+    "identifier": "qwen2.5-coder-7b-instruct",
+    "modelKey": "qwen2.5-coder-7b-instruct",
+    "contextLength": 32768,
+    "quantization": {
+      "name": "Q4_K_M",
+      "bits": 4
+    },
+    "sizeBytes": 4683073536,
+    "parallel": 4
+  },
+  "context_tokens": 32768,
+  "generation": {
+    "max_output_tokens": 1400,
+    "timeout_ms": 120000,
+    "reasoning_effort": "none"
+  },
+  "cases": [
+    {
+      "id": "identity",
+      "class": "conversation",
+      "expected": true,
+      "observed": true,
+      "pass": true,
+      "latency_ms": 1366,
+      "operational": {
+        "attempt_duration_ms": 1290,
+        "budget": {
+          "elapsed_ms": 1800000,
+          "inference_calls": 64,
+          "ram_bytes": null,
+          "tokens": null,
+          "vram_bytes": null
+        },
+        "failed_attempts": 0,
+        "ram_scope": "worker_and_provider_separate",
+        "remote_inference_calls_limit": 0,
+        "retry_attempts": 1,
+        "scope_id": "job:eval-5",
+        "token_counter": "provider_reported_or_unavailable",
+        "usage": {
+          "attempts": 2,
+          "elapsed_ms": 1359,
+          "inference_calls": 1,
+          "known_tokens": 195,
+          "peak_provider_ram_bytes": null,
+          "peak_vram_bytes": null,
+          "peak_worker_rss_bytes": 27246592,
+          "remote_inference_calls": 0,
+          "unknown_call_attempts": 0,
+          "unknown_token_attempts": 0
+        },
+        "version": 1,
+        "vram_scope": "provider_only_when_measured"
+      }
+    },
+    {
+      "id": "memory-not-loaded",
+      "class": "memory",
+      "expected": false,
+      "observed": false,
+      "pass": true,
+      "latency_ms": 14181,
+      "operational": {
+        "attempt_duration_ms": 8977,
+        "budget": {
+          "elapsed_ms": 1800000,
+          "inference_calls": 64,
+          "ram_bytes": null,
+          "tokens": null,
+          "vram_bytes": null
+        },
+        "failed_attempts": 0,
+        "ram_scope": "worker_and_provider_separate",
+        "remote_inference_calls_limit": 0,
+        "retry_attempts": 1,
+        "scope_id": "job:eval-55",
+        "token_counter": "provider_reported_or_unavailable",
+        "usage": {
+          "attempts": 2,
+          "elapsed_ms": 9090,
+          "inference_calls": 1,
+          "known_tokens": 289,
+          "peak_provider_ram_bytes": null,
+          "peak_vram_bytes": null,
+          "peak_worker_rss_bytes": 27172864,
+          "remote_inference_calls": 0,
+          "unknown_call_attempts": 0,
+          "unknown_token_attempts": 0
+        },
+        "version": 1,
+        "vram_scope": "provider_only_when_measured"
+      }
+    },
+    {
+      "id": "memory-explicit",
+      "class": "memory",
+      "expected": true,
+      "observed": true,
+      "pass": true,
+      "latency_ms": 7702,
+      "operational": {
+        "attempt_duration_ms": 1876,
+        "budget": {
+          "elapsed_ms": 1800000,
+          "inference_calls": 64,
+          "ram_bytes": null,
+          "tokens": null,
+          "vram_bytes": null
+        },
+        "failed_attempts": 0,
+        "ram_scope": "worker_and_provider_separate",
+        "remote_inference_calls_limit": 0,
+        "retry_attempts": 1,
+        "scope_id": "job:eval-183",
+        "token_counter": "provider_reported_or_unavailable",
+        "usage": {
+          "attempts": 2,
+          "elapsed_ms": 1992,
+          "inference_calls": 1,
+          "known_tokens": 378,
+          "peak_provider_ram_bytes": null,
+          "peak_vram_bytes": null,
+          "peak_worker_rss_bytes": 27074560,
+          "remote_inference_calls": 0,
+          "unknown_call_attempts": 0,
+          "unknown_token_attempts": 0
+        },
+        "version": 1,
+        "vram_scope": "provider_only_when_measured"
+      }
+    },
+    {
+      "id": "translation",
+      "class": "specialization",
+      "expected": true,
+      "observed": true,
+      "pass": true,
+      "latency_ms": 3286,
+      "operational": {
+        "attempt_duration_ms": 1241,
+        "budget": {
+          "elapsed_ms": 1800000,
+          "inference_calls": 64,
+          "ram_bytes": null,
+          "tokens": null,
+          "vram_bytes": null
+        },
+        "failed_attempts": 0,
+        "ram_scope": "worker_and_provider_separate",
+        "remote_inference_calls_limit": 0,
+        "retry_attempts": 1,
+        "scope_id": "job:eval-219",
+        "token_counter": "provider_reported_or_unavailable",
+        "usage": {
+          "attempts": 2,
+          "elapsed_ms": 1272,
+          "inference_calls": 1,
+          "known_tokens": 236,
+          "peak_provider_ram_bytes": null,
+          "peak_vram_bytes": null,
+          "peak_worker_rss_bytes": 27181056,
+          "remote_inference_calls": 0,
+          "unknown_call_attempts": 0,
+          "unknown_token_attempts": 0
+        },
+        "version": 1,
+        "vram_scope": "provider_only_when_measured"
+      }
+    },
+    {
+      "id": "verified-json-project",
+      "class": "project",
+      "expected": true,
+      "observed": true,
+      "pass": true,
+      "latency_ms": 27154,
+      "operational": {
+        "attempt_duration_ms": 19714,
+        "budget": {
+          "elapsed_ms": 1800000,
+          "inference_calls": 64,
+          "ram_bytes": null,
+          "tokens": null,
+          "vram_bytes": null
+        },
+        "failed_attempts": 0,
+        "ram_scope": "worker_and_provider_separate",
+        "remote_inference_calls_limit": 0,
+        "retry_attempts": 0,
+        "scope_id": "mission:input-cf3f5d4786594e64e4ed927c320b02a2",
+        "token_counter": "provider_reported_or_unavailable",
+        "usage": {
+          "attempts": 3,
+          "elapsed_ms": 22513,
+          "inference_calls": 3,
+          "known_tokens": 1637,
+          "peak_provider_ram_bytes": null,
+          "peak_vram_bytes": null,
+          "peak_worker_rss_bytes": 27291648,
+          "remote_inference_calls": 0,
+          "unknown_call_attempts": 0,
+          "unknown_token_attempts": 0
+        },
+        "version": 1,
+        "vram_scope": "provider_only_when_measured"
+      }
+    }
+  ],
+  "classes": {
+    "conversation": {
+      "positive": 1,
+      "negative": 0,
+      "false_positives": 0,
+      "false_negatives": 0
+    },
+    "memory": {
+      "positive": 1,
+      "negative": 1,
+      "false_positives": 0,
+      "false_negatives": 0
+    },
+    "specialization": {
+      "positive": 1,
+      "negative": 0,
+      "false_positives": 0,
+      "false_negatives": 0
+    },
+    "project": {
+      "positive": 1,
+      "negative": 0,
+      "false_positives": 0,
+      "false_negatives": 0
+    }
+  },
+  "pass": true,
+  "limitations": "Small regression sample; no universal project/domain accuracy claim"
+}

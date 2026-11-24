@@ -3,6 +3,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -13,6 +14,21 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from synapse_ai.providers import ProviderError, validate_endpoint, infer, model_instance, _release_model, _cli_model_instance
 from synapse_ai.protocol import digest, validate
+from synapse_ai.model_ownership import ownership, OwnershipError
+
+
+class PlannerContractTests(unittest.TestCase):
+    def test_model_grammar_matches_core_task_cardinalities(self):
+        from synapse_ai.providers import MISSION_PLAN_FORMAT
+        tasks = MISSION_PLAN_FORMAT["json_schema"]["schema"]["properties"]["tasks"]
+        branches = tasks["anyOf"]
+        accepted = {size for size in range(10) if any(
+            branch.get("minItems", 0) <= size <= branch["maxItems"] for branch in branches)}
+        self.assertEqual(accepted, {0, 2, 3, 4, 5, 6, 7, 8})
+        for branch in branches:
+            self.assertEqual(branch["type"], "array")
+            self.assertEqual(set(branch["items"]["required"]),
+                             {"task_id", "objective", "dependencies", "priority", "artifacts"})
 
 
 class ModelLifecycleTests(unittest.TestCase):
@@ -111,6 +127,131 @@ class ModelLifecycleTests(unittest.TestCase):
                 self.assertEqual(api.call_args.args[1], {"instance_id": "owned"})
 
 
+class DurableModelLifecycleTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.env = {
+            "SYNAPSE_MANAGE_LOCAL_MODELS": "1",
+            "SYNAPSE_MODEL_OWNERSHIP_DIR": self.directory.name,
+            "SYNAPSE_MODEL_LEASE_ID": "sample-job",
+        }
+        self.base = "http://127.0.0.1:1234/v1"
+        self.api = "http://127.0.0.1:1234/api/v1/models"
+        self.catalog = {"models": [
+            {"key": "selected", "loaded_instances": [], "max_context_length": 32768},
+        ]}
+
+    def test_provider_lock_is_shared_between_independent_state_directories(self):
+        with tempfile.TemporaryDirectory() as second:
+            with patch.dict(os.environ,self.env,clear=True):
+                with ownership(self.base):
+                    with patch.dict(os.environ,{"SYNAPSE_MODEL_OWNERSHIP_DIR":second,"SYNAPSE_MODEL_LEASE_ID":"another-job"}):
+                        with self.assertRaisesRegex(OwnershipError,"model_capacity_busy"):
+                            with ownership(self.base):
+                                self.fail("another state directory acquired the live provider")
+                with patch.dict(os.environ,{"SYNAPSE_MODEL_OWNERSHIP_DIR":second,"SYNAPSE_MODEL_LEASE_ID":"another-job"}):
+                    with ownership(self.base) as journal:
+                        self.assertIsNotNone(journal)
+
+    def test_rest_writes_receipt_before_inference_and_releases_after_cancellation(self):
+        with patch.dict(os.environ, self.env, clear=True):
+            def api(url, payload=None, **kwargs):
+                if url.endswith("/load"):
+                    journal = next(Path(self.directory.name).glob("*.json"))
+                    self.assertEqual(json.loads(journal.read_bytes())["phase"], "pending")
+                    return {"instance_id": "known-id"}
+                if url.endswith("/unload"):
+                    self.assertEqual(payload, {"instance_id": "known-id"})
+                    return {}
+                return self.catalog
+
+            with patch("synapse_ai.providers._json", side_effect=api):
+                with self.assertRaisesRegex(RuntimeError, "cancelled"):
+                    with model_instance(self.base, "selected", 4) as instance:
+                        self.assertEqual(instance, "known-id")
+                        receipt = next(Path(self.directory.name).glob("*.json"))
+                        self.assertEqual(json.loads(receipt.read_bytes())["phase"], "acquired")
+                        raise RuntimeError("cancelled")
+            self.assertEqual(list(Path(self.directory.name).glob("*.json")), [])
+
+    def test_rest_crash_does_not_unload_an_instance_with_reused_id(self):
+        with patch.dict(os.environ, self.env, clear=True):
+            with ownership(self.base) as journal:
+                journal.write("selected", "rest", "known-id", "acquired")
+            self.catalog["models"][0]["loaded_instances"].append({"id": "known-id"})
+            with patch("synapse_ai.providers._json", return_value=self.catalog) as api:
+                with self.assertRaisesRegex(ProviderError, "model_release_uncertain"):
+                    with model_instance(self.base, "selected", 4):
+                        self.fail("a stale REST owner must not be reused or unloaded")
+                self.assertEqual(api.call_args_list[0].args, (self.api,))
+                self.assertEqual(api.call_count, 1)
+            self.assertTrue(journal.path.exists())
+
+    def test_partial_rest_load_remains_uncertain_even_if_catalog_is_empty(self):
+        with patch.dict(os.environ, self.env, clear=True):
+            with patch("synapse_ai.providers._json", side_effect=[
+                self.catalog, ProviderError("provider_timeout"), self.catalog,
+            ]) as api:
+                for _ in range(2):
+                    with self.assertRaisesRegex(ProviderError, "model_release_uncertain"):
+                        with model_instance(self.base, "selected", 4):
+                            self.fail("an ambiguous load must not allow another acquisition")
+                self.assertEqual(api.call_count, 3)
+            self.assertTrue(list(Path(self.directory.name).glob("*.json")))
+
+    def test_hard_kill_releases_only_the_cli_identifier_recorded_by_the_dead_worker(self):
+        child_code = """
+import sys
+import tempfile
+import time
+from synapse_ai.model_ownership import ownership
+with ownership(sys.argv[1]) as journal:
+    instance = journal.reserve_cli('selected')
+    journal.write('selected', 'cli', instance, 'acquired')
+    print(instance, flush=True)
+    while True:
+        time.sleep(0.1)
+"""
+        child = subprocess.Popen([sys.executable, "-c", child_code, self.base], cwd=ROOT,
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                 env=os.environ | self.env, text=True)
+        try:
+            instance = child.stdout.readline().strip()
+            self.assertTrue(instance.startswith("synapse-"))
+            with patch.dict(os.environ, self.env, clear=True):
+                with patch("synapse_ai.providers._json") as api:
+                    with self.assertRaisesRegex(ProviderError, "model_capacity_busy"):
+                        with model_instance(self.base, "selected", 4):
+                            self.fail("the live owner is still holding the provider lock")
+                    api.assert_not_called()
+        finally:
+            child.kill()
+            child.communicate(timeout=10)
+
+        self.catalog["models"][0]["loaded_instances"] = [{"id": instance}, {"id": "operator"}]
+
+        def api(url, payload=None, **kwargs):
+            if url.endswith("/unload"):
+                self.assertEqual(payload, {"instance_id": instance})
+                self.catalog["models"][0]["loaded_instances"].remove({"id": instance})
+                return {}
+            return self.catalog
+
+        with patch.dict(os.environ, self.env, clear=True):
+            with patch("synapse_ai.providers._json", side_effect=api) as request:
+                with model_instance(self.base, "selected", 4) as reused:
+                    self.assertEqual(reused, "operator")
+                self.assertEqual(request.call_count, 3)
+            lease = hashlib.sha256(self.env["SYNAPSE_MODEL_LEASE_ID"].encode()).hexdigest()
+            endpoint = hashlib.sha256(self.base.encode()).hexdigest()
+            proof = Path(self.directory.name) / f"released-{lease}.json"
+            self.assertEqual(list(Path(self.directory.name).glob("*.json")), [proof])
+            self.assertEqual(json.loads(proof.read_bytes()), {
+                "lease": lease, "endpoint": endpoint, "instance": instance, "kind": "cli",
+            })
+            self.assertEqual(self.catalog["models"][0]["loaded_instances"], [{"id": "operator"}])
+
 class Handler(BaseHTTPRequestHandler):
     mode = "ok"
     def log_message(self, *args):
@@ -175,15 +316,49 @@ class WorkerTests(unittest.TestCase):
         digest = hashlib.sha256(json.dumps(bare, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
         return bare | {"digest": digest}
     def worker(self, request):
-        child = subprocess.run([sys.executable, "-m", "synapse_ai"], input=json.dumps(request).encode()+b"\n", cwd=ROOT, capture_output=True, timeout=15)
+        child = subprocess.run([sys.executable, "-m", "synapse_ai", "--protocol-version=5"], input=json.dumps(request).encode()+b"\n", cwd=ROOT, capture_output=True, timeout=15)
         self.assertEqual(child.returncode, 0, child.stderr)
         return [json.loads(line) for line in child.stdout.splitlines()]
     def test_handshake_real_loopback_and_bound_request(self):
         hello, answer = self.worker(self.request())
-        self.assertEqual(hello, {"type": "hello", "version": 4})
+        self.assertEqual(hello, {"type": "hello", "version": 5, "supported_versions": [4, 5], "capabilities": ["operational_metrics_v1"]})
         self.assertTrue(answer["ok"])
         self.assertEqual(answer["content"], "answer")
         self.assertEqual(self.server.seen, {"model": "selected", "messages": [{"role": "user", "content": "private question"}], "stream": False, "max_tokens": 1024})
+        self.assertNotIn("metrics", answer)
+        self.assertEqual(len(answer), 6)
+
+    def test_old_core_gets_exact_v4_handshake_without_opt_in(self):
+        request = self.request()
+        child = subprocess.run([sys.executable, "-m", "synapse_ai"], input=json.dumps(request).encode()+b"\n", cwd=ROOT, capture_output=True, timeout=15)
+        self.assertEqual(child.returncode, 0, child.stderr)
+        hello, answer = [json.loads(line) for line in child.stdout.splitlines()]
+        self.assertEqual(hello, {"type": "hello", "version": 4})
+        self.assertTrue(answer["ok"])
+        self.assertEqual(answer["version"], 4)
+        self.assertNotIn("metrics", answer)
+
+    def test_v5_metrics_are_truthful_content_free_and_versioned(self):
+        request = self.request()
+        request["version"] = 5
+        request["digest"] = digest(request)
+        _, answer = self.worker(request)
+        self.assertTrue(answer["ok"])
+        self.assertEqual(answer["version"], 5)
+        self.assertEqual(len(answer), 7)
+        metrics = answer["metrics"]
+        self.assertEqual(metrics["version"], 1)
+        self.assertIsNone(metrics["input_tokens"])
+        self.assertIsNone(metrics["output_tokens"])
+        self.assertIsNone(metrics["gpu_available"])
+        self.assertIsNone(metrics["vram_bytes"])
+        self.assertIsNone(metrics["provider_ram_bytes"])
+        self.assertEqual(metrics["inference_calls"], 1)
+        self.assertEqual(metrics["remote_inference_calls"], 0)
+        self.assertEqual(metrics["remote_cost_microunits"], 0)
+        self.assertEqual(metrics["response_cache"], "disabled")
+        self.assertNotIn("private question", json.dumps(metrics))
+        self.assertEqual(set(metrics["phases_ms"]), {"validation", "model_acquisition", "inference", "model_cleanup", "provider_total", "worker_total"})
     def test_digest_and_version_rejected_before_provider(self):
         request = self.request(); request["digest"] = "0" * 64
         self.assertEqual(self.worker(request)[1]["error"], "digest_mismatch")
@@ -209,14 +384,21 @@ class WorkerTests(unittest.TestCase):
         request = self.request() | {'purpose': 'mission_plan'}
         request['digest'] = digest(request)
         hello, answer = self.worker(request)
-        self.assertEqual(hello['version'], 4)
+        self.assertEqual(hello['version'], 5)
         self.assertTrue(answer['ok'])
         schema = self.server.seen['response_format']['json_schema']
         self.assertEqual(schema['name'], 'mission_plan')
         self.assertTrue(schema['strict'])
         body = schema['schema']
         self.assertFalse(body['additionalProperties'])
-        self.assertEqual(set(body['required']), {'summary', 'artifacts', 'checks'})
+        self.assertEqual(set(body['required']), {'summary', 'artifacts', 'checks', 'tasks'})
+        tasks = body['properties']['tasks']
+        self.assertEqual([(branch.get('minItems', 0), branch['maxItems'])
+                          for branch in tasks['anyOf']], [(0, 0), (2, 8)])
+        for branch in tasks['anyOf']:
+            self.assertFalse(branch['items']['additionalProperties'])
+            self.assertEqual(set(branch['items']['required']),
+                             {'task_id', 'objective', 'dependencies', 'priority', 'artifacts'})
         artifacts = body['properties']['artifacts']
         self.assertEqual((artifacts['minItems'], artifacts['maxItems']), (1, 16))
         self.assertFalse(artifacts['items']['additionalProperties'])
@@ -256,7 +438,7 @@ class WorkerTests(unittest.TestCase):
                         {"artifacts": [{"path": "a.rs"}, {"path": "b.py"}]})}]
                 request['digest'] = digest(request)
                 hello, answer = self.worker(request)
-                self.assertEqual(hello, {"type": "hello", "version": 4})
+                self.assertEqual(hello, {"type": "hello", "version": 5, "supported_versions": [4, 5], "capabilities": ["operational_metrics_v1"]})
                 self.assertTrue(answer['ok'])
                 schema = self.server.seen['response_format']['json_schema']
                 self.assertEqual(schema['name'], purpose)
@@ -299,6 +481,13 @@ class WorkerTests(unittest.TestCase):
         review["purpose"] = "conversation"
         review["digest"] = digest(review)
         self.assertEqual(self.worker(review)[1]["error"], "invalid_request")
+
+    def test_truncated_provider_response_is_never_accepted_as_a_plan(self):
+        with patch("synapse_ai.providers._json",side_effect=[{"data":[{"id":"selected"}]},
+            {"choices":[{"finish_reason":"length","message":{"role":"assistant","content":"{\"summary\":","reasoning_content":"incomplete"}}]}]):
+            with self.assertRaisesRegex(ProviderError,"provider_output_limit"):
+                infer("http://127.0.0.1:1234","selected",[{"role":"user","content":"plan"}],
+                      {"max_output_tokens":20,"timeout_ms":1000,"reasoning_effort":"none"},"mission_plan")
 
     def test_endpoint_and_model_and_malformed_are_distinct(self):
         for url in ("https://127.0.0.1:1", "http://localhost:1", "http://127.0.0.1:1/v1/other", "http://user@127.0.0.1:1"):

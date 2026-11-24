@@ -4,8 +4,9 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use serde_json::{Value, json};
 use std::{
     collections::VecDeque,
+    ffi::OsStr,
     io::{BufRead, BufReader, Read, Write},
-    path::Path,
+    path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::mpsc::{self, Receiver, SyncSender},
     time::{Duration, Instant},
@@ -469,20 +470,182 @@ struct Worker {
     input: SyncSender<Value>,
     output: Receiver<Result<Value, String>>,
     child: Child,
+    #[cfg(windows)]
+    _job: std::os::windows::io::OwnedHandle,
+}
+
+#[cfg(windows)]
+fn own_worker_process(child: &mut Child) -> Result<std::os::windows::io::OwnedHandle, String> {
+    use std::{
+        ffi::c_void,
+        mem::size_of,
+        os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle},
+        ptr::null,
+    };
+    use windows_sys::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
+        SetInformationJobObject,
+    };
+    let result = (|| {
+        let raw = unsafe { CreateJobObjectW(null(), null()) };
+        if raw.is_null() {
+            return Err("Supervisão do processo de voz indisponível.".into());
+        }
+        let job = unsafe { OwnedHandle::from_raw_handle(raw) };
+        let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        if unsafe {
+            SetInformationJobObject(
+                job.as_raw_handle(),
+                JobObjectExtendedLimitInformation,
+                &limits as *const _ as *const c_void,
+                size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            )
+        } == 0
+            || unsafe { AssignProcessToJobObject(job.as_raw_handle(), child.as_raw_handle()) } == 0
+        {
+            return Err("Supervisão do processo de voz indisponível.".into());
+        }
+        Ok(job)
+    })();
+    if result.is_err() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    result
+}
+
+struct VoiceRuntime {
+    python: PathBuf,
+    models: Option<PathBuf>,
+}
+
+fn safe_runtime_path(path: &Path, directory: bool) -> Result<(), String> {
+    if !path.is_absolute()
+        || path
+            .components()
+            .any(|part| matches!(part, std::path::Component::ParentDir))
+        || path.to_string_lossy().contains(['\0', '"'])
+    {
+        return Err("Configuração de voz local inválida.".into());
+    }
+    #[cfg(windows)]
+    if path.components().any(|part|matches!(part,std::path::Component::Prefix(prefix) if !matches!(prefix.kind(),std::path::Prefix::Disk(_)|std::path::Prefix::VerbatimDisk(_)))) {
+        return Err("A voz exige caminhos locais do computador.".into());
+    }
+    for ancestor in path.ancestors() {
+        let metadata = std::fs::symlink_metadata(ancestor)
+            .map_err(|_| "Caminho de voz local indisponível.")?;
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::MetadataExt;
+            if metadata.file_attributes() & 0x400 != 0 {
+                return Err("Links não são permitidos na configuração de voz.".into());
+            }
+        }
+        if metadata.file_type().is_symlink() {
+            return Err("Links não são permitidos na configuração de voz.".into());
+        }
+    }
+    let metadata = std::fs::metadata(path).map_err(|_| "Caminho de voz local indisponível.")?;
+    if (directory && !metadata.is_dir()) || (!directory && !metadata.is_file()) {
+        return Err("Configuração de voz local inválida.".into());
+    }
+    Ok(())
+}
+
+fn voice_runtime(
+    path: Option<&Path>,
+    python_override: Option<&OsStr>,
+    models_override: Option<&OsStr>,
+) -> Result<VoiceRuntime, String> {
+    let mut python = None;
+    let mut models = None;
+    if let Some(path) = path {
+        match std::fs::symlink_metadata(path) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+            Err(_) => return Err("Configuração de voz local indisponível.".into()),
+            Ok(metadata) => {
+                safe_runtime_path(path, false)?;
+                if metadata.len() > 16_384 {
+                    return Err("Configuração de voz local inválida.".into());
+                }
+                let value: Value = serde_json::from_slice(
+                    &std::fs::read(path).map_err(|_| "Configuração de voz local indisponível.")?,
+                )
+                .map_err(|_| "Configuração de voz local inválida.")?;
+                let values = value
+                    .as_object()
+                    .ok_or("Configuração de voz local inválida.")?;
+                if values.len() != 2
+                    || !values.contains_key("python")
+                    || !values.contains_key("models")
+                {
+                    return Err("Configuração de voz local inválida.".into());
+                }
+                python = Some(PathBuf::from(
+                    values["python"]
+                        .as_str()
+                        .ok_or("Configuração de voz local inválida.")?,
+                ));
+                models = Some(PathBuf::from(
+                    values["models"]
+                        .as_str()
+                        .ok_or("Configuração de voz local inválida.")?,
+                ));
+                safe_runtime_path(python.as_ref().unwrap(), false)?;
+                safe_runtime_path(models.as_ref().unwrap(), true)?;
+            }
+        }
+    }
+    if let Some(value) = python_override {
+        python = Some(PathBuf::from(value));
+    }
+    if let Some(value) = models_override {
+        models = Some(PathBuf::from(value));
+    }
+    let python = python.ok_or("Configure o ambiente de voz em voice-runtime.json.")?;
+    safe_runtime_path(&python, false)?;
+    #[cfg(windows)]
+    if !python
+        .file_name()
+        .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case("python.exe"))
+    {
+        return Err("A voz exige o executável Python local.".into());
+    }
+    if let Some(models) = &models {
+        safe_runtime_path(models, true)?;
+    }
+    Ok(VoiceRuntime { python, models })
+}
+
+fn configured_voice_runtime() -> Result<VoiceRuntime, String> {
+    let root = std::env::var_os("SYNAPSE_CONFIG_ROOT")
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("LOCALAPPDATA").map(|root| PathBuf::from(root).join("Synapse"))
+        });
+    let config = root.map(|root| root.join("voice-runtime.json"));
+    voice_runtime(
+        config.as_deref(),
+        std::env::var_os("SYNAPSE_VOICE_PYTHON").as_deref(),
+        std::env::var_os("SYNAPSE_VOICE_MODELS").as_deref(),
+    )
 }
 
 impl Worker {
     fn start() -> Result<Self, String> {
-        let python = std::env::var_os("SYNAPSE_VOICE_PYTHON")
-            .ok_or("Configure SYNAPSE_VOICE_PYTHON para o ambiente local de voz.")?;
-        if !Path::new(&python).is_absolute() {
-            return Err("Use um caminho absoluto para SYNAPSE_VOICE_PYTHON.".into());
-        }
+        let runtime = configured_voice_runtime()?;
         let package = synapse_core::python_package_root(
             &Path::new(env!("CARGO_MANIFEST_DIR")).join("../python"),
-        ).map_err(|_| "Pacote Python do Synapse indisponível.")?;
-        let mut command = Command::new(python);
-        command.args(["-I","-u","-c","import runpy,sys;sys.path.insert(0,sys.argv[1]);runpy.run_module('synapse_ai.voice_worker',run_name='__main__')"])
+        )
+        .map_err(|_| "Pacote Python do Synapse indisponível.")?;
+        let mut command = Command::new(runtime.python);
+        if let Some(models) = runtime.models {
+            command.env("SYNAPSE_VOICE_MODELS", models);
+        }
+        command.args(["-I","-B","-u","-c","import runpy,sys;sys.path.insert(0,sys.argv[1]);runpy.run_module('synapse_ai.voice_worker',run_name='__main__')"])
             .arg(package).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
         #[cfg(windows)]
         {
@@ -490,6 +653,9 @@ impl Worker {
             command.creation_flags(0x08000000);
         }
         let mut child = command.spawn().map_err(|error| error.to_string())?;
+        // No worker request is sent until the process belongs to our private job.
+        #[cfg(windows)]
+        let job = own_worker_process(&mut child)?;
         let mut stdin = child.stdin.take().expect("piped voice input");
         let mut stdout = BufReader::new(child.stdout.take().expect("piped voice output"));
         let (input, requests) = mpsc::sync_channel::<Value>(1);
@@ -536,6 +702,8 @@ impl Worker {
             input,
             output,
             child,
+            #[cfg(windows)]
+            _job: job,
         })
     }
 }
@@ -550,6 +718,253 @@ impl Drop for Worker {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "private subprocess fixture; does nothing without its explicit test flag"]
+    fn synthetic_voice_job_child() {
+        if std::env::var_os("SYNAPSE_TEST_VOICE_JOB_CHILD").is_some() {
+            std::thread::sleep(Duration::from_secs(60));
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "private subprocess fixture; does nothing without its explicit test flag"]
+    fn synthetic_voice_job_owner() {
+        use std::os::windows::process::CommandExt;
+        let Some(marker) = std::env::var_os("SYNAPSE_TEST_VOICE_JOB_PID") else {
+            return;
+        };
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .creation_flags(0x08000000)
+            .args([
+                "--exact",
+                "voice::tests::synthetic_voice_job_child",
+                "--ignored",
+            ])
+            .env("SYNAPSE_TEST_VOICE_JOB_CHILD", "1")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let _job = own_worker_process(&mut child).unwrap();
+        std::fs::write(marker, child.id().to_string()).unwrap();
+        std::thread::sleep(Duration::from_secs(60));
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn abrupt_voice_owner_death_kills_its_owned_child() {
+        use std::os::windows::{
+            io::{AsRawHandle, FromRawHandle, OwnedHandle},
+            process::CommandExt,
+        };
+        use windows_sys::Win32::System::Threading::{
+            OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE,
+            TerminateProcess, WaitForSingleObject,
+        };
+        struct TestHost(Child);
+        impl Drop for TestHost {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+        let fixture = RuntimeFixture::new();
+        let marker = fixture.0.join("pid");
+        let mut host = TestHost(
+            Command::new(std::env::current_exe().unwrap())
+                .creation_flags(0x08000000)
+                .args([
+                    "--exact",
+                    "voice::tests::synthetic_voice_job_owner",
+                    "--ignored",
+                ])
+                .env("SYNAPSE_TEST_VOICE_JOB_PID", &marker)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap(),
+        );
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while !marker.is_file() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let pid: u32 = std::fs::read_to_string(&marker)
+            .expect("Owned fixture process must publish its child")
+            .parse()
+            .unwrap();
+        let raw = unsafe {
+            OpenProcess(
+                PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE | PROCESS_SYNCHRONIZE,
+                0,
+                pid,
+            )
+        };
+        assert!(
+            !raw.is_null(),
+            "Open only the child created by our synthetic owner"
+        );
+        let child = unsafe { OwnedHandle::from_raw_handle(raw) };
+        host.0.kill().unwrap();
+        host.0.wait().unwrap();
+        let status = unsafe { WaitForSingleObject(child.as_raw_handle(), 5000) };
+        if status != 0 {
+            unsafe {
+                TerminateProcess(child.as_raw_handle(), 1);
+            };
+        }
+        assert_eq!(
+            status, 0,
+            "Closing the killed owner's job must kill its child"
+        );
+    }
+
+    #[test]
+    #[ignore = "requires an existing trusted persisted voice-runtime.json and local voice assets; no audio I/O"]
+    fn persisted_voice_runtime_starts_real_worker_health() {
+        let root = std::env::var_os("SYNAPSE_CONFIG_ROOT")
+            .map(PathBuf::from)
+            .or_else(|| {
+                std::env::var_os("LOCALAPPDATA").map(|root| PathBuf::from(root).join("Synapse"))
+            })
+            .expect("Local configuration root is required");
+        let configuration = root.join("voice-runtime.json");
+        assert!(
+            configuration.is_file(),
+            "A persisted trusted voice runtime is required"
+        );
+        let selected = voice_runtime(Some(&configuration), None, None)
+            .expect("Persisted voice configuration must validate without terminal overrides");
+        assert!(selected.models.is_some());
+        let worker = Worker::start().expect("Start only the configured trusted voice worker");
+        worker.input.send(json!({"action":"health"})).unwrap();
+        let health = worker
+            .output
+            .recv_timeout(Duration::from_secs(15))
+            .expect("Voice health deadline")
+            .expect("Voice worker health response");
+        for component in ["wake", "stt", "tts"] {
+            assert_eq!(
+                health[component], true,
+                "{component} dependency/assets unavailable"
+            );
+        }
+        assert_eq!(health["voice"], "supertonic-3:F1");
+        // Worker Drop kills and waits only for its owned process. Audio is never initialized.
+        drop(worker);
+    }
+
+    struct RuntimeFixture(PathBuf);
+    impl RuntimeFixture {
+        fn new() -> Self {
+            let root = std::env::temp_dir().join(format!(
+                "synapse-voice-config-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            std::fs::create_dir(&root).unwrap();
+            std::fs::create_dir(root.join("models")).unwrap();
+            std::fs::write(root.join("python.exe"), b"synthetic only").unwrap();
+            Self(root)
+        }
+        fn config(&self, value: Value) -> PathBuf {
+            let path = self.0.join("voice-runtime.json");
+            std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+            path
+        }
+        fn valid(&self) -> Value {
+            json!({"python":self.0.join("python.exe"),"models":self.0.join("models")})
+        }
+    }
+    impl Drop for RuntimeFixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn persisted_voice_runtime_and_explicit_overrides_are_bounded() {
+        let fixture = RuntimeFixture::new();
+        let path = fixture.config(fixture.valid());
+        let runtime = voice_runtime(Some(&path), None, None).unwrap();
+        assert_eq!(runtime.python, fixture.0.join("python.exe"));
+        assert_eq!(runtime.models, Some(fixture.0.join("models")));
+        let other = RuntimeFixture::new();
+        let runtime = voice_runtime(
+            Some(&path),
+            Some(other.0.join("python.exe").as_os_str()),
+            Some(other.0.join("models").as_os_str()),
+        )
+        .unwrap();
+        assert_eq!(runtime.python, other.0.join("python.exe"));
+        assert_eq!(runtime.models, Some(other.0.join("models")));
+        let missing = fixture.0.join("missing.json");
+        assert!(voice_runtime(Some(&missing), None, None).is_err());
+        let runtime = voice_runtime(
+            Some(&missing),
+            Some(fixture.0.join("python.exe").as_os_str()),
+            None,
+        )
+        .unwrap();
+        assert!(runtime.models.is_none());
+    }
+
+    #[test]
+    fn malformed_unknown_and_unsafe_voice_configuration_is_rejected() {
+        let fixture = RuntimeFixture::new();
+        for value in [
+            json!({}),
+            json!({"python":"relative.exe","models":fixture.0.join("models")}),
+            json!({"python":fixture.0.join("python.exe"),"models":fixture.0.join("models"),"command":"execute"}),
+            json!({"python":fixture.0.join("missing.exe"),"models":fixture.0.join("models")}),
+        ] {
+            let path = fixture.config(value);
+            assert!(voice_runtime(Some(&path), None, None).is_err());
+        }
+        let path = fixture.0.join("voice-runtime.json");
+        std::fs::write(&path, b"{bad").unwrap();
+        assert!(voice_runtime(Some(&path), None, None).is_err());
+        std::fs::write(&path, vec![b' '; 16_385]).unwrap();
+        assert!(voice_runtime(Some(&path), None, None).is_err());
+        #[cfg(windows)]
+        {
+            std::fs::write(fixture.0.join("cmd.exe"), b"synthetic").unwrap();
+            assert!(
+                voice_runtime(None, Some(fixture.0.join("cmd.exe").as_os_str()), None).is_err()
+            );
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn voice_runtime_refuses_reparse_ancestors() {
+        use std::os::windows::process::CommandExt;
+        let fixture = RuntimeFixture::new();
+        let target = RuntimeFixture::new();
+        let link = fixture.0.join("link");
+        let status = Command::new("cmd")
+            .creation_flags(0x08000000)
+            .args(["/c", "mklink", "/J"])
+            .arg(&link)
+            .arg(&target.0)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success(), "Fixture junction creation failed");
+        let path = fixture
+            .config(json!({"python":link.join("python.exe"),"models":target.0.join("models")}));
+        assert!(voice_runtime(Some(&path), None, None).is_err());
+    }
 
     #[test]
     fn conversation_window_survives_reply_and_expires_only_while_idle() {

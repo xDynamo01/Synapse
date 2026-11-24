@@ -1030,7 +1030,10 @@ pub(crate) fn skill_get(
 }
 
 pub(crate) fn capabilities() -> Value {
-    json!({"capabilities":[
+    json!({"inference_providers":["lm_studio"],"model_slots":["conversation","task","review","translation"],"capabilities":[
+        {"id":"unified_input","status":"implemented","requires":"saved chat and compatible model, exact references for project context"},
+        {"id":"task_graph","status":"implemented","requires":"sealed task missions, reviewed graph digest, approved dependencies and native checks"},
+        {"id":"resource_orchestration","status":"implemented","requires":"persisted preferences, Core admission and local provider ownership reconciliation"},
         {"id":"core_storage","status":"operational"},
         {"id":"chats","status":"operational"},
         {"id":"canonical_memory","status":"operational"},

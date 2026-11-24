@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "inference": "synthetic loopback fixture only",
+  "cases": [
+    {
+      "variant": "old-core-new-worker",
+      "pass": true,
+      "core_sha256": "9ec2c724e0014405c61ef4c387e70cb3f9cfec7dabef96d06e3dbac6ad58e493",
+      "worker_sha256": "ac54d8c1ed6cbd6516dbbc4ad4aeca5c9ae68f88fa58daf494efe686de21d512"
+    },
+    {
+      "variant": "new-core-old-worker",
+      "pass": true,
+      "core_sha256": "9aa0ef6f0791fbbe8b9fdbab1f538198d16c602ba903da2187b203427fecb4b0",
+      "worker_sha256": "64c0ac320fbffb23b17f552158202a9a9e6b8784418bc91bf176b58ea7eff1e9"
+    },
+    {
+      "variant": "new-core-new-worker",
+      "pass": true,
+      "core_sha256": "9aa0ef6f0791fbbe8b9fdbab1f538198d16c602ba903da2187b203427fecb4b0",
+      "worker_sha256": "ac54d8c1ed6cbd6516dbbc4ad4aeca5c9ae68f88fa58daf494efe686de21d512"
+    }
+  ],
+  "pass": true
+}

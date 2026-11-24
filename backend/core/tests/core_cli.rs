@@ -738,6 +738,20 @@ fn tool_denies_unapproved_paths_state_links_overwrite_and_replace() {
         root.path().join("link.txt"),
     )
     .unwrap();
+    // The owner-scoped store rejects an aliased database before accepting any
+    // command. This is stronger than the previous per-tool state-path denial.
+    let original_database = std::fs::read(root.path().join("state/core.sqlite3")).unwrap();
+    let refused = Command::new(env!("CARGO_BIN_EXE_synapse-backend"))
+        .args(["--state-dir", root.path().join("state").to_str().unwrap(),
+               "--workspace", root.path().to_str().unwrap()])
+        .output().unwrap();
+    assert!(!refused.status.success());
+    assert!(refused.stdout.is_empty(), "A rejected store must expose no protocol result");
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("private_storage_unavailable"));
+    assert_eq!(std::fs::read(root.path().join("state/core.sqlite3")).unwrap(), original_database);
+    // Remove only the synthetic alias, preserving the database and its contents.
+    std::fs::remove_file(root.path().join("link.txt")).unwrap();
+    std::fs::hard_link(root.path().join("existing.txt"), root.path().join("link.txt")).unwrap();
     let out = run(
         &root,
         &[
@@ -1675,7 +1689,7 @@ fn state_directory_has_one_live_process_owner() {
         .read_line(&mut owner_output)
         .unwrap();
     ok(&serde_json::from_str::<Value>(&owner_output).unwrap());
-    let alias = state.join("..").join("state");
+    let alias = state.join(".");
     let refused = Command::new(binary)
         .args([
             "--state-dir",
@@ -1687,6 +1701,14 @@ fn state_directory_has_one_live_process_owner() {
         .unwrap();
     assert!(!refused.status.success());
     assert!(String::from_utf8_lossy(&refused.stderr).contains("state_in_use"));
+    // Parent-directory path syntax is rejected before ownership resolution.
+    let traversal = Command::new(binary)
+        .args(["--state-dir", state.join("..").join("state").to_str().unwrap(),
+               "--workspace", root.path().to_str().unwrap()])
+        .output().unwrap();
+    assert!(!traversal.status.success());
+    assert!(traversal.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&traversal.stderr).contains("private_storage_unavailable"));
     owner.kill().unwrap();
     owner.wait().unwrap();
     let reopened = run(&root, &[req("after-death", json!({"type":"health"}))]);

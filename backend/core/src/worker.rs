@@ -10,14 +10,30 @@ use std::{
     time::{Duration, Instant},
 };
 
-#[derive(Default)]
 pub(crate) struct Stop {
     managed: bool,
     state: AtomicU8, // 0 active, 1 user cancellation, 2 deadline
+    metrics: Mutex<crate::operational::WorkerMetrics>,
     #[cfg(windows)]
     job: Mutex<Option<std::os::windows::io::OwnedHandle>>,
 }
+impl Default for Stop {
+    fn default() -> Self {
+        Self {
+            managed: false,
+            state: AtomicU8::new(0),
+            // A launch can fail before run() starts (for example lease lookup).
+            // Such an attempt still has a valid unavailable metrics envelope.
+            metrics: Mutex::new(crate::operational::WorkerMetrics::unavailable()),
+            #[cfg(windows)]
+            job: Mutex::new(None),
+        }
+    }
+}
 impl Stop {
+    pub(crate) fn metrics(&self) -> crate::operational::WorkerMetrics {
+        self.metrics.lock().unwrap().clone()
+    }
     pub(crate) fn for_model() -> Self {
         Self {
             managed: std::env::var("SYNAPSE_MANAGE_LOCAL_MODELS").as_deref() == Ok("1"),
@@ -58,7 +74,25 @@ fn digest(request: &Value) -> CoreResult<String> {
         .collect())
 }
 
-pub(crate) fn run(launch: Launch, stop: Arc<Stop>) -> Result<String, String> {
+fn negotiated_version(hello: &Value) -> Result<u32, String> {
+    if hello == &json!({"type":"hello","version":4}) {
+        Ok(4)
+    } else if hello
+        == &json!({"type":"hello","version":5,"supported_versions":[4,5],"capabilities":["operational_metrics_v1"]})
+    {
+        Ok(5)
+    } else {
+        Err("worker_protocol".into())
+    }
+}
+
+pub(crate) fn run(
+    launch: Launch,
+    stop: Arc<Stop>,
+    ownership: &std::path::Path,
+    lease: &str,
+) -> Result<String, String> {
+    *stop.metrics.lock().unwrap() = crate::operational::WorkerMetrics::unavailable();
     // A managed worker may need two unload attempts and a catalog reconciliation.
     let cleanup_ms = if stop.managed { 8_000 } else { 5_000 };
     let timeout_ms = launch.generation.timeout_ms + cleanup_ms;
@@ -82,11 +116,19 @@ pub(crate) fn run(launch: Launch, stop: Arc<Stop>) -> Result<String, String> {
         }
     });
     #[cfg(windows)]
-    let outcome = windows::run(&request, &bare, &digest, &stop);
+    let outcome = windows::run(&request, &bare, &digest, &stop, ownership, lease);
     #[cfg(not(windows))]
     let outcome: Result<String, String> = Err("worker_unavailable".into());
     finished.store(1, Ordering::SeqCst);
     let _ = watcher.join();
+    if outcome.as_ref().err().is_some_and(|code| {
+        matches!(
+            code.as_str(),
+            "model_release_uncertain" | "model_ownership_unavailable"
+        )
+    }) {
+        return outcome;
+    }
     match stop.state.load(Ordering::SeqCst) {
         1 => Err("cancelled".into()),
         2 => Err("provider_timeout".into()),
@@ -232,8 +274,10 @@ mod windows {
     pub(super) fn run(
         request: &Value,
         bare: &Value,
-        digest: &str,
+        _digest: &str,
         stop: &Arc<Stop>,
+        ownership: &std::path::Path,
+        lease: &str,
     ) -> Result<String, String> {
         if stop.state.load(Ordering::SeqCst) != 0 {
             return Err("cancelled".into());
@@ -287,7 +331,9 @@ mod windows {
             return Err("worker_unavailable".into());
         }
         let app = wide(&python);
-        let mut cmd = wide(&format!("\"{python}\" -m synapse_ai"));
+        let mut cmd = wide(&format!(
+            "\"{python}\" -B -m synapse_ai --protocol-version=5"
+        ));
         let package = crate::python_package_root(
             &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../python"),
         )
@@ -301,7 +347,27 @@ mod windows {
             format!("PATH={}", std::env::var("PATH").unwrap_or_default()),
         ];
         if stop.managed {
+            std::fs::create_dir_all(ownership).map_err(|_| "model_ownership_unavailable")?;
+            if ownership
+                .symlink_metadata()
+                .map_err(|_| "model_ownership_unavailable")?
+                .file_type()
+                .is_symlink()
+            {
+                return Err("model_ownership_unavailable".into());
+            }
+            let lock_root = std::env::var_os("LOCALAPPDATA")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(std::env::temp_dir)
+                .join("Synapse")
+                .join("model-provider-locks");
+            env_values.push(format!("SYNAPSE_MODEL_LOCK_DIR={}", lock_root.display()));
             env_values.push("SYNAPSE_MANAGE_LOCAL_MODELS=1".into());
+            env_values.push(format!(
+                "SYNAPSE_MODEL_OWNERSHIP_DIR={}",
+                ownership.display()
+            ));
+            env_values.push(format!("SYNAPSE_MODEL_LEASE_ID={lease}"));
             if let Ok(cli) = std::env::var("SYNAPSE_LMS_EXECUTABLE") {
                 env_values.push(format!("SYNAPSE_LMS_EXECUTABLE={cli}"));
             }
@@ -363,10 +429,14 @@ mod windows {
         let mut reader = BufReader::new(File::from(parent_stdout));
         let result = (|| {
             let hello = read_line(&mut reader, 65536)?;
-            if hello != json!({"type":"hello","version":4}) {
-                return Err("worker_protocol".into());
-            }
-            serde_json::to_writer(&mut writer, request)
+            let version = negotiated_version(&hello)?;
+            let mut request = request.clone();
+            let mut bare = bare.clone();
+            bare["version"] = json!(version);
+            let digest = super::digest(&bare).map_err(|_| "worker_protocol".to_string())?;
+            request["version"] = json!(version);
+            request["digest"] = json!(digest);
+            serde_json::to_writer(&mut writer, &request)
                 .map_err(|_| "worker_protocol".to_string())?;
             writer
                 .write_all(b"\n")
@@ -377,12 +447,19 @@ mod windows {
             let frame_limit = if generating { 320 * 1024 } else { 65536 };
             let content_limit = if generating { 160 * 1024 } else { 32768 };
             let answer = read_line(&mut reader, frame_limit)?;
-            if answer.get("version") != Some(&json!(4))
+            if answer.get("version") != Some(&json!(version))
                 || answer.get("request_id") != bare.get("request_id")
                 || answer.get("digest") != Some(&json!(digest))
-                || answer.as_object().map(|o| o.len()) != Some(6)
+                || answer.as_object().map(|o| o.len()) != Some(if version == 5 { 7 } else { 6 })
             {
                 return Err("worker_protocol".into());
+            }
+            if version == 5 {
+                *stop.metrics.lock().unwrap() = crate::operational::WorkerMetrics::parse(
+                    answer
+                        .get("metrics")
+                        .ok_or_else(|| "worker_protocol".to_string())?,
+                )?;
             }
             let code = answer.get("error");
             match (answer.get("ok"), answer.get("content"), code) {
@@ -395,9 +472,12 @@ mod windows {
                     if [
                         "model_unavailable",
                         "model_capacity_busy",
+                        "model_release_uncertain",
+                        "model_ownership_unavailable",
                         "provider_unavailable",
                         "provider_timeout",
                         "provider_malformed",
+                        "provider_output_limit",
                         "provider_error",
                         "provider_redirect",
                         "invalid_endpoint",
@@ -416,5 +496,46 @@ mod windows {
             WaitForSingleObject(raw(&process_handle), 5000);
         }
         result
+    }
+}
+
+#[cfg(test)]
+mod compatibility_tests {
+    use super::*;
+    #[test]
+    fn prelaunch_failure_has_versioned_unavailable_metrics() {
+        let metrics = Stop::default().metrics();
+        assert_eq!(metrics.version, 1);
+        assert_eq!(metrics.input_tokens, None);
+        assert_eq!(metrics.inference_calls, None);
+        assert_eq!(metrics.residency, "unavailable");
+    }
+    #[test]
+    fn legacy_v4_is_explicitly_negotiated_without_fabricating_metrics() {
+        assert_eq!(
+            negotiated_version(&json!({"type":"hello","version":4})),
+            Ok(4)
+        );
+        let metrics = crate::operational::WorkerMetrics::unavailable();
+        assert_eq!(metrics.input_tokens, None);
+        assert_eq!(metrics.inference_calls, None);
+        assert_eq!(metrics.vram_bytes, None);
+    }
+    #[test]
+    fn metric_extension_requires_v5_and_exact_capability() {
+        assert_eq!(
+            negotiated_version(
+                &json!({"type":"hello","version":5,"supported_versions":[4,5],"capabilities":["operational_metrics_v1"]})
+            ),
+            Ok(5)
+        );
+        assert!(negotiated_version(&json!({"type":"hello","version":5})).is_err());
+        assert!(negotiated_version(&json!({"type":"hello","version":6})).is_err());
+        assert!(
+            negotiated_version(
+                &json!({"type":"hello","version":4,"capabilities":["operational_metrics_v1"]})
+            )
+            .is_err()
+        );
     }
 }

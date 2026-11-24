@@ -641,8 +641,15 @@ fn conversation_fixture_persists_once_and_replays_across_restart() {
     let first_payload: Value =
         serde_json::from_slice(&std::fs::read(&fixture.marker).unwrap()).unwrap();
     assert_eq!(
-        first_payload["messages"],
-        json!([{"role":"user","content":"Olá, ação?"}])
+        first_payload["messages"].as_array().unwrap()[1..],
+        [json!({"role":"user","content":"Olá, ação?"})]
+    );
+    assert_eq!(first_payload["messages"][0]["role"], "system");
+    assert!(
+        first_payload["messages"][0]["content"]
+            .as_str()
+            .unwrap()
+            .contains("ARTEMIS")
     );
     let replay = session.call(start.clone());
     assert_eq!(first, replay);
@@ -655,7 +662,7 @@ fn conversation_fixture_persists_once_and_replays_across_restart() {
     let mut session = Session::new(&root, None);
     assert_eq!(
         session.call(req("migrated-health", json!({"type":"health"})))["result"]["storage_schema"],
-        15
+        16
     );
     let migrated = session.call(req(
         "migrated-job",
@@ -679,8 +686,8 @@ fn conversation_fixture_persists_once_and_replays_across_restart() {
     let second_payload: Value =
         serde_json::from_slice(&std::fs::read(&fixture.marker).unwrap()).unwrap();
     assert_eq!(
-        second_payload["messages"],
-        json!([{"role":"user","content":"Olá, ação?"},{"role":"assistant","content":"Olá, ação"},{"role":"assistant","content":"manual answer"},{"role":"system","content":"system instruction"},{"role":"user","content":"E agora?"}])
+        second_payload["messages"].as_array().unwrap()[1..],
+        *json!([{"role":"user","content":"Olá, ação?"},{"role":"assistant","content":"Olá, ação"},{"role":"assistant","content":"manual answer"},{"role":"system","content":"system instruction"},{"role":"user","content":"E agora?"}]).as_array().unwrap()
     );
     assert!(!second_payload.to_string().contains("other project secret"));
     let chat = session.call(req("read", json!({"type":"chat_get","chat_id":"one"})));

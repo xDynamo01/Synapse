@@ -334,8 +334,23 @@ impl Desktop {
                 }
             }
             "conversation" => {
-                self.message.clear();
-                self.job_id = value["job_id"].as_str().map(str::to_owned);
+                if value["route"] == "mission" {
+                    self.workspace = true;
+                    self.objective = self.message.clone();
+                    if let Some(mission) = value["mission_id"].as_str() {
+                        self.mission_id = mission.into();
+                        self.plan = value.clone();
+                        self.refresh();
+                        self.message.clear();
+                    } else {
+                        self.error = "Selecione a pasta do projeto para preparar esta tarefa.".into();
+                    }
+                } else if value["status"] == "needs_clarification" {
+                    self.error = "Informe a conversa ou o resultado que deseja continuar.".into();
+                } else {
+                    self.message.clear();
+                    self.job_id = value["job_id"].as_str().map(str::to_owned);
+                }
                 self.chat();
             }
             "job" if value["status"] != "running" => {
@@ -1406,7 +1421,8 @@ fn skill_label(skill: &Value) -> String {
 
 impl Desktop {
     fn send_message(&mut self, skill: Option<Value>, budget: Option<u64>) {
-        let mut command = json!({"type":"conversation_start","chat_id":self.active_chat,"model_id":self.model,"content":self.message});
+        let mut command = json!({"chat_id":self.active_chat,"model_id":self.model,"content":self.message,"intent":"auto"});
+        if !self.scope.is_empty() { command["scope"] = json!(self.scope); }
         if let Some(budget) = budget {
             command["model_id"] = json!("");
             command["model_memory_budget_bytes"] = json!(budget);
@@ -1426,7 +1442,7 @@ impl Desktop {
                 if !references.is_empty() {
                     command["context"] = json!(references);
                 }
-                self.send("conversation", command);
+                self.send("conversation", json!({"type":"input_submit","input":command}));
             }
             Err(error) => self.error = error.into(),
         }
@@ -1796,7 +1812,16 @@ impl Desktop {
             }
             return;
         }
-        if value["status"] == "stopped" {
+        if value["route"] == "mission" {
+            self.workspace = true;
+            if let Some(mission) = value["mission_id"].as_str() {
+                self.mission_id = mission.into();
+                self.refresh();
+            } else {
+                self.error = "Selecione a pasta do projeto para preparar a tarefa falada.".into();
+            }
+            if self.voice.phase == Phase::Processing { self.voice.resume(); }
+        } else if value["status"] == "stopped" {
             self.update_voice_mode(json!({"active":false}));
             if self.voice.phase == Phase::Processing {
                 self.voice.resume();

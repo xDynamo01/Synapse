@@ -1,0 +1,21 @@
+export component BlenderPresence inherits Rectangle {
+    in property <bool> suspended;
+    in property <string> state;
+    in property <float> level;
+    pure callback presence-frame(string, int, float) -> image;
+    property <int> frame;
+    property <length> diameter: min(root.width, root.height, 900px);
+    clip: true;
+    Timer {
+        interval: Math.mod(root.frame, 3) == 2 ? 34ms : 33ms;
+        running: !root.suspended;
+        triggered => { root.frame = Math.mod(root.frame + 1, 480); }
+    }
+    Image {
+        width: root.diameter; height: self.width;
+        x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
+        source: root.presence-frame(root.state, root.frame, root.state == "speaking" ? root.level : 0);
+        image-fit: contain;
+        image-rendering: smooth;
+    }
+}

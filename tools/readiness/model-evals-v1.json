@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "scope": "local text identity, referenced memory, unreferenced memory, translation and one verified JSON project",
+  "thresholds": {"false_positives": 0, "false_negatives": 0},
+  "cases": [
+    {"id":"identity", "class":"conversation", "expected":true},
+    {"id":"memory-not-loaded", "class":"memory", "expected":false},
+    {"id":"memory-explicit", "class":"memory", "expected":true},
+    {"id":"translation", "class":"specialization", "expected":true},
+    {"id":"verified-json-project", "class":"project", "expected":true}
+  ]
+}

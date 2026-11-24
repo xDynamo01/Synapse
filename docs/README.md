@@ -1,5 +1,11 @@
 # Synapse 0.3 documentation
 
+Current executable architecture, contract matrix and recovery procedures:
+[runtime and operations](guides/current-runtime-and-operations.md).
+Operational acceptance is tracked separately in the
+[2026-11-22 readiness checklist](superpowers/plans/2026-11-22-auditoria-prontidao-operacional.md).
+The dated foundation status below is historical context; use current evidence for current artifact claims.
+
 ## Authority
 
 2026-11-09 owner amendment PL-001/PL-006 requires native Rust plus Python AI.

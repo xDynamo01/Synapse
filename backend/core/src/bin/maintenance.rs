@@ -1,0 +1,1 @@
+fn main(){match synapse_core::maintenance::run(std::env::args().skip(1)){Ok(value)=>println!("{}",value),Err(error)=>{println!("{}",serde_json::json!({"ok":false,"error":error}));std::process::exit(1);}}}

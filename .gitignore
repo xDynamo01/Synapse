@@ -12,6 +12,7 @@ data/
 logs/
 secrets/
 /target/
+/Synapse.exe
 __pycache__/
 *.pyc
 python_install_*.log

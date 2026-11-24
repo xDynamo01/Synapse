@@ -105,6 +105,8 @@ pub(crate) struct Launch {
     pub root: PathBuf,
     pub profile_name: String,
     pub artifacts: Vec<CandidateArtifact>,
+    /// Verified predecessor files; never candidate outputs or publication targets.
+    pub dependency_artifacts: Vec<CandidateArtifact>,
     pub recipe: PlannedCheck,
     pub tools: Tools,
 }

@@ -150,7 +150,7 @@ pub(super) fn run(
             .map_err(|_| "cancelled")?;
         authorize(control, authorization)?;
 
-        for artifact in &launch.artifacts {
+        for artifact in launch.artifacts.iter().chain(&launch.dependency_artifacts) {
             control.preparation().map_err(|error| failure(&error))?;
             let relative = Path::new(&artifact.path);
             if relative.file_name() != Some(relative.as_os_str()) || artifact.path.contains(':') {
@@ -162,6 +162,9 @@ pub(super) fn run(
                 .open(project.join(relative))
                 .and_then(|mut file| file.write_all(artifact.content.as_bytes()))
                 .map_err(|_| "artifact_stage_failed")?;
+            package
+                .protect(&project.join(relative), false)
+                .map_err(|_| "containment_unavailable")?;
         }
         let entrypoint = Path::new(&launch.recipe.entrypoint);
         match staged {

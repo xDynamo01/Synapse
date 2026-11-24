@@ -291,6 +291,13 @@ mod tests {
             )
         };
         let passing = run_case(&pass_source, &pass_output);
+        assert!(
+            passing.as_ref().is_ok_and(|receipt| receipt
+                .link
+                .as_ref()
+                .is_some_and(|phase| phase.exit_code == 0)),
+            "passing Rust link: {passing:?}"
+        );
         let failing = run_case(&fail_source, &fail_output);
         let network = run_case(&network_source, &network_output);
         let budget_control = Control::new();

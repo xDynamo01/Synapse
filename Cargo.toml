@@ -1,5 +1,5 @@
 [workspace]
-members = ["backend/core", "backend/desktop"]
+members = ["backend/core", "backend/desktop", "backend/desktop-slint"]
 resolver = "3"
 
 [workspace.package]

@@ -62,12 +62,19 @@ class Handler(BaseHTTPRequestHandler):
         while "response_format" in request and not is_plan and not is_mission_stage and not is_translation and (marker.parent / "learning-hold").exists():
             time.sleep(.01)
         try:
+            if (marker.parent / "truncate-response").exists():
+                self.reply({"choices":[{"finish_reason":"length","message":{"role":"assistant","content":"{\"summary\":"}}]})
+                return
             scripted = marker.parent / "learning-response"
             mapping = marker.parent / "learning-map"
             if is_translation:
                 content = (marker.parent / "translation-response").read_text(encoding="utf-8")
             elif is_plan:
                 content = (marker.parent / "mission-response").read_text(encoding="utf-8")
+            elif purpose == "mission_generate" and (marker.parent / "mission_generate-map").exists():
+                prompt = json.loads(request["messages"][-1]["content"])
+                mapping = json.loads((marker.parent / "mission_generate-map").read_text(encoding="utf-8"))
+                content = json.dumps(mapping[prompt["artifacts"][0]["path"]])
             elif is_mission_stage:
                 content = (marker.parent / f"{purpose}-response").read_text(encoding="utf-8")
             elif "response_format" in request and mapping.exists():

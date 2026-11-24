@@ -17,6 +17,35 @@ pub struct Request {
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Command {
     Health,
+    Compatibility,
+    SelfChange {
+        action: String,
+        #[serde(default)]
+        payload: Value,
+    },
+    Operational {
+        action: String,
+        #[serde(default)]
+        payload: Value,
+    },
+    InputSubmit {
+        input: Value,
+    },
+    InputControl {
+        action: String,
+        #[serde(default)]
+        payload: Value,
+    },
+    Orchestration {
+        action: String,
+        #[serde(default)]
+        payload: Value,
+    },
+    TaskGraph {
+        action: String,
+        #[serde(default)]
+        payload: Value,
+    },
     ProjectRegister {
         scope: String,
         root: String,
@@ -627,6 +656,17 @@ pub struct MissionPlan {
     pub summary: String,
     pub artifacts: Vec<PlannedArtifact>,
     pub checks: Vec<PlannedCheck>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tasks: Vec<PlannedTask>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlannedTask {
+    pub task_id: String,
+    pub objective: String,
+    pub dependencies: Vec<String>,
+    pub priority: i32,
+    pub artifacts: Vec<String>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -674,6 +714,10 @@ impl CheckKind {
 #[serde(deny_unknown_fields)]
 pub struct MissionExecutionSpec {
     pub plan_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_graph_digest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_handoff: Option<serde_json::Value>,
     pub primary_model: ModelManifest,
     pub primary_model_digest: String,
     pub review_model: ModelManifest,

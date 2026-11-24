@@ -36,7 +36,17 @@ impl Session {
     fn with_env(root: &TempDir, python: Option<&str>, settings: &[(&str, &str)]) -> Self {
         let workspace = root.path().join("workspace");
         std::fs::create_dir_all(&workspace).unwrap();
-        let mut cmd = Command::new(env!("CARGO_BIN_EXE_synapse-backend"));
+        let binaries=root.path().join("private-binaries");
+        std::fs::create_dir_all(&binaries).unwrap();
+        let executable = binaries.join(format!(
+            "synapse-backend-{}.exe",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::copy(env!("CARGO_BIN_EXE_synapse-backend"), &executable).unwrap();
+        let mut cmd = Command::new(executable);
         cmd.args([
             "--state-dir",
             root.path().join("state").to_str().unwrap(),

@@ -1,5 +1,8 @@
 # Cliente nativo e ponte local do Synapse no Windows
 
+A [fundação Rust + Slint](desktop-slint.md) está disponível em paralelo.
+Este guia descreve o cliente eframe e a ponte nativa já integrados ao Core.
+
 Compile `cargo build --locked -p synapse-core -p synapse-desktop`. Prepare o
 [Python e os runtimes de testes](windows-mission-recovery.md) para os fluxos que
 precisam deles. Registre o modelo local no Core pelo protocolo v1.

@@ -10,10 +10,21 @@ Python usam modelos locais para planejar, gerar e revisar o trabalho. As
 Skills acrescentam conhecimento de cada área. As ações seguem o escopo
 aprovado da missão.
 
-**Estado atual.** O Core já executou pelo CLI uma missão real no Windows com
-o Qwen local. A missão gerou arquivos Rust e Python, passou por testes e
-revisão separada, publicou os arquivos em um Workspace sem Git e passou pelos
-pós-testes. A interface nativa é a próxima entrega visual. [Evidências da missão](docs/evidence/backend/2026-11-11-mission-auto-integration.md)
+**Estado atual.** No Windows, o aplicativo Rust/Slint conversa com ARTEMIS e
+encaminha tarefas ao Core. Planejamento, aprovação, dependências, testes,
+revisão e publicação foram verificados com modelos locais. MoM e Swarm usam
+estados independentes, e o Workspace acompanha os resultados reais.
+[Integração das oito prioridades e aceite do aplicativo](docs/evidence/backend/2026-11-22-integracao-oito-prioridades.md).
+
+## Versões no GitHub
+
+- `0.3`: branch padrão, com a reconstrução atual em Rust e Python.
+- `0.2`: versão anterior preservada somente como referência.
+
+Windows, Linux e macOS compartilham a `0.3`; os builds e artefatos são
+separados por sistema. Versões históricas ficam em tags, sem branches
+adicionais de desenvolvimento ou plataforma.
+[Política de versões e preservação do histórico](docs/guides/github-versions.md).
 
 ## Como o Synapse deve ficar
 
@@ -48,6 +59,10 @@ do Planner.
 O checklist resume os marcos. Cada commit que conclui um marco atualiza a
 marcação e vincula a evidência do teste. Os critérios de aceite e as tarefas
 de cada etapa estão no [roteiro até a finalização](docs/superpowers/plans/2026-11-11-synapse-0.3-roteiro-de-automacao.md).
+
+**Integração complementar, 22/11/2026: 27/27 itens concluídos.** [Checklist detalhado](docs/superpowers/plans/2026-11-22-auditoria-conexoes-e-backlog.md).
+
+**Prontidão operacional, 24/11/2026: 33/34 critérios verificados para o software Windows.** Instalação, atualização, backup/restauração, contratos, métricas, isolamento e autogovernança foram exercitados no pacote local 0.3.1. O ensaio de reinício/falha abrupta está marcado como **não realizado, dispensado pelo usuário**. [Checklist](docs/superpowers/plans/2026-11-22-auditoria-prontidao-operacional.md) · [Evidências e limites](docs/evidence/backend/2026-11-24-operational-readiness.md).
 
 ### Etapas concluídas
 

@@ -235,20 +235,25 @@ pub(crate) fn turn(
         let chat = input
             .chat
             .ok_or_else(|| CoreError::invalid("Spoken conversation requires a chat"))?;
-        let (mut result, launch) = conversation::start(
+        let (mut result, launch) = crate::intake::submit(
             tx,
             id,
-            Some(chat),
-            input.model,
-            input.text,
-            input.skill,
-            input.context,
-            Some(input.language),
+            crate::intake::Input {
+                chat_id: chat.to_owned(),
+                content: input.text.to_owned(),
+                source: "voice".into(),
+                model_id: input.model.to_owned(),
+                context: input.context.to_vec(),
+                skill: input.skill.cloned(),
+                language: Some(input.language),
+                ..Default::default()
+            },
+            false,
         )?;
         result["mode"] = json!("conversation");
         result["source_language"] = json!(input.language);
         result["target_language"] = json!(input.language);
-        return Ok((result, Some(launch)));
+        return Ok((result, launch));
     };
     if input.skill.is_some() || !input.context.is_empty() {
         return Err(CoreError::invalid(

@@ -3,9 +3,7 @@ name: Platform package
 on:
   push:
     branches:
-      - platform/windows
-      - platform/linux
-      - platform/macos
+      - '0.3'
   workflow_dispatch:
 
 permissions:
@@ -13,8 +11,11 @@ permissions:
 
 jobs:
   package:
-    if: contains(fromJSON('["platform/windows","platform/linux","platform/macos"]'), github.ref_name)
-    runs-on: ${{ fromJSON('{"platform/windows":"windows-2025","platform/linux":"ubuntu-24.04","platform/macos":"macos-15"}')[github.ref_name] }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2025, ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
@@ -31,18 +32,33 @@ jobs:
         run: rustup toolchain install 1.96.0 --profile minimal
       - name: Run Rust tests
         run: cargo +1.96.0 test --locked --workspace --all-features
+      - name: Distribution guards (Windows)
+        if: runner.os == 'Windows'
+        run: python -m unittest discover -s tools/release -p test_distribution.py -v
       - name: Run Python tests
         run: python -m unittest discover -s backend/python/tests
       - name: Build release
         run: cargo +1.96.0 build --locked --workspace --release
       - name: Verify release binaries
         run: python tools/release/smoke.py target/release
-      - name: Package verified binaries
-        run: python tools/release/package.py build --version 0.3.0 --output release-artifacts
+      - name: Build pinned isolated Windows checker runtime
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $msbuild = & "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe" -latest -products '*' -requires Microsoft.Component.MSBuild -find MSBuild/**/Bin/MSBuild.exe | Select-Object -First 1
+          if (!$msbuild) { throw 'MSBuild unavailable for isolated checker runtime.' }
+          python tools/runner/build_windows_python.py --msbuild "$msbuild" --work-dir target/check-runtime
+          if ($LASTEXITCODE -ne 0) { throw 'Isolated checker runtime build failed.' }
+      - name: Package verified binaries (Windows bundled Python)
+        if: runner.os == 'Windows'
+        run: python tools/release/package.py build --version 0.3.1 --output release-artifacts --python-runtime "${{ env.pythonLocation }}" --check-runtime target/check-runtime
+      - name: Package verified binaries (Unix)
+        if: runner.os != 'Windows'
+        run: python tools/release/package.py build --version 0.3.1 --output release-artifacts
       - name: Smoke installed artifacts
         run: python tools/release/smoke.py --archive release-artifacts
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         with:
-          name: synapse-0.3.0-${{ runner.os }}-${{ runner.arch }}
+          name: synapse-0.3.1-${{ runner.os }}-${{ runner.arch }}
           path: release-artifacts/*
           if-no-files-found: error

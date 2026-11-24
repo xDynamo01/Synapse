@@ -6,7 +6,10 @@ use serde_json::{Value, json};
 
 use crate::{
     candidate,
-    contracts::{CandidateArtifact, CheckKind, CoreError, CoreResult, MissionContract, bounded},
+    contracts::{
+        CandidateArtifact, CheckKind, CoreError, CoreResult, MissionContract,
+        MissionExecutionLimits, PlannedCheck, bounded,
+    },
     planner, runner, store,
 };
 
@@ -77,7 +80,35 @@ pub(crate) fn start(
     let mut artifacts = candidates.to_vec();
     artifacts.sort_unstable_by(|left, right| left.path.cmp(&right.path));
     let candidate_digest = store::digest(&artifacts)?;
-    let check_digest = store::digest(&(&contract_digest, check_index, recipe, &policy.limits))?;
+    let dependencies = crate::task_graph::dependency_inputs(tx, mission_id)?;
+    let dependency_digest = (!dependencies.as_array().unwrap().is_empty())
+        .then(|| store::digest(&dependencies))
+        .transpose()?;
+    let mut dependency_artifacts = Vec::<CandidateArtifact>::new();
+    let mut paths: std::collections::BTreeSet<_> = artifacts
+        .iter()
+        .map(|artifact| artifact.path.to_lowercase())
+        .collect();
+    for input in dependencies.as_array().unwrap() {
+        for artifact in
+            serde_json::from_value::<Vec<CandidateArtifact>>(input["artifacts"].clone())?
+        {
+            if !paths.insert(artifact.path.to_lowercase()) {
+                return Err(CoreError::new(
+                    "contract_conflict",
+                    "Dependency files collide with approved outputs or another dependency",
+                ));
+            }
+            dependency_artifacts.push(artifact);
+        }
+    }
+    let check_digest = recipe_digest(
+        &contract_digest,
+        check_index,
+        recipe,
+        &policy.limits,
+        dependency_digest.as_deref(),
+    )?;
     let parent = if matches!(recipe.kind, CheckKind::RustTest) {
         match std::env::var_os("SYNAPSE_CHECK_RUST_RUN_ROOT") {
             Some(value) if Path::new(&value).is_absolute() => std::fs::canonicalize(value)
@@ -90,7 +121,22 @@ pub(crate) fn start(
                     "Rust run root must be absolute",
                 ));
             }
-            None => state.to_owned(),
+            // LLVM's Windows linker resolves its executable through the parent
+            // directory chain. Under a user-profile directory that lookup is
+            // denied to the LPAC even when the private runtime itself is readable.
+            // Use a fresh private run on the state volume, without granting the
+            // package access to any user-profile ancestor.
+            None => state
+                .ancestors()
+                .last()
+                .filter(|root| root.is_absolute())
+                .ok_or_else(|| {
+                    CoreError::new(
+                        "run_path_unavailable",
+                        "Rust staging requires an absolute volume root",
+                    )
+                })?
+                .to_owned(),
         }
     } else {
         state.to_owned()
@@ -113,6 +159,12 @@ pub(crate) fn start(
          VALUES(?1,?2,?3,?4,?5,?6,?7,?8,'running','pending')",
         params![id, mission_id, contract_digest, check_index, candidate_digest, check_digest, run_name, root.to_string_lossy().as_ref()],
     )?;
+    if let Some(digest) = &dependency_digest {
+        tx.execute(
+            "INSERT INTO task_graph_check_inputs(check_id,digest) VALUES(?1,?2)",
+            params![id, digest],
+        )?;
+    }
     store::event(
         tx,
         "project_check_started",
@@ -127,6 +179,7 @@ pub(crate) fn start(
             root,
             profile_name: run_name,
             artifacts,
+            dependency_artifacts,
             recipe: recipe.clone(),
             tools,
         },
@@ -154,7 +207,28 @@ pub(crate) fn get(tx: &Transaction<'_>, id: &str) -> CoreResult<Value> {
         .map(|json| serde_json::from_str(&json))
         .transpose()?
         .unwrap_or(Value::Null);
+    value["dependency_digest"] = json!(
+        tx.query_row(
+            "SELECT digest FROM task_graph_check_inputs WHERE check_id=?1",
+            [id],
+            |row| row.get::<_, String>(0)
+        )
+        .optional()?
+    );
     Ok(value)
+}
+
+pub(crate) fn recipe_digest(
+    contract: &str,
+    index: u32,
+    recipe: &PlannedCheck,
+    limits: &MissionExecutionLimits,
+    dependency_digest: Option<&str>,
+) -> CoreResult<String> {
+    match dependency_digest {
+        Some(dependencies) => store::digest(&(contract, index, recipe, limits, dependencies)),
+        None => store::digest(&(contract, index, recipe, limits)),
+    }
 }
 
 pub(crate) fn cancel(tx: &Transaction<'_>, id: &str) -> CoreResult<Value> {

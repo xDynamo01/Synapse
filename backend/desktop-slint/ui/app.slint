@@ -1,0 +1,737 @@
+import { Button, ComboBox, LineEdit, ScrollView, TextEdit } from "std-widgets.slint";
+import { BlenderPresence } from "blender-presence.slint";
+
+export struct ModelSlot { id: string, label: string, selected: string, available: bool }
+
+global Theme {
+    out property <color> chrome: #101318;
+    out property <color> chrome-end: #171421;
+    out property <color> chrome-edge: #343143;
+    out property <color> composer: #131720;
+    out property <color> background: #17181a;
+    out property <color> rail: #111213;
+    out property <color> surface: #222426;
+    out property <color> border: #383b3e;
+    out property <color> text: #eeece8;
+    out property <color> muted: #aeb2b5;
+    out property <color> cyan: #97ded5;
+    out property <color> success: #76d4a0;
+    out property <color> failure: #ee9191;
+    out property <color> warning: #e7bd80;
+    out property <color> model: #c7b2ed;
+    out property <color> knowledge: #85c6b7;
+    out property <color> user-message: #283d3a;
+    out property <color> artemis-message: #302c3a;
+    out property <length> radius: 8px;
+    out property <length> gap: 12px;
+}
+
+component Caption inherits Text {
+    color: Theme.muted;
+    font-size: 13px;
+    wrap: word-wrap;
+}
+
+component Heading inherits Text {
+    color: Theme.text;
+    font-size: 22px;
+    font-weight: 650;
+}
+
+component SettingsBlock inherits Rectangle {
+    in property <string> label;
+    in property <string> detail;
+    in property <color> accent: Theme.text;
+    min-height: 75px;
+    background: Theme.surface;
+    border-color: Theme.border;
+    border-width: 1px;
+    border-radius: Theme.radius;
+    VerticalLayout {
+        padding: 14px; spacing: 5px;
+        Text { text: root.label; color: root.accent; font-weight: 600; }
+        Caption { text: root.detail; }
+    }
+}
+
+component ProviderCard inherits Rectangle {
+    in property <string> label;
+    in property <string> kind;
+    in property <string> status;
+    in property <bool> connected;
+    min-width: 150px;
+    height: 112px;
+    background: Theme.surface;
+    border-color: root.connected ? Theme.knowledge : Theme.border;
+    border-width: 1px;
+    border-radius: Theme.radius;
+    VerticalLayout {
+        padding: 14px; spacing: 8px; alignment: start;
+        Text { text: root.label; color: Theme.text; font-weight: 600; }
+        Caption { text: root.kind; }
+        HorizontalLayout {
+            spacing: 7px;
+            Rectangle { width: 6px; height: 6px; border-radius: 3px; background: root.connected ? Theme.success : Theme.muted; y: 5px; }
+            Text { text: root.status; color: root.connected ? Theme.knowledge : Theme.muted; font-size: 12px; horizontal-stretch: 1; }
+        }
+    }
+}
+
+component MoMAssignmentCard inherits Rectangle {
+    in property <string> label;
+    in property <[string]> models;
+    in-out property <string> selected;
+    in property <bool> available;
+    callback choose(string);
+    min-width: 200px;
+    height: 104px;
+    background: Theme.surface;
+    border-color: Theme.border;
+    border-width: 1px;
+    border-radius: Theme.radius;
+    VerticalLayout {
+        padding: 14px; spacing: 12px;
+        Text { text: root.label; color: Theme.model; font-weight: 600; }
+        ComboBox {
+            model: root.available ? root.models : ["Indisponível"];
+            current-value: root.available ? root.selected : "Indisponível";
+            accessible-label: root.label;
+            enabled: root.available && root.models.length > 0;
+            selected(value) => { root.selected = value; root.choose(value); }
+        }
+    }
+}
+
+component AudioBlock inherits SettingsBlock {
+    detail: "Dispositivo e teste indisponíveis";
+}
+
+component Presence inherits Rectangle {
+    in property <string> state: "idle";
+    in property <float> voice-level;
+    pure callback presence-frame(string, int, float) -> image;
+    in property <bool> active;
+    in property <bool> suspended;
+    in property <string> notice;
+    background: #050508;
+    VerticalLayout {
+        BlenderPresence {
+            suspended: root.suspended; state: root.state; level: root.voice-level; vertical-stretch: 1;
+            presence-frame(state, frame, level) => root.presence-frame(state, frame, level);
+        }
+        Heading { height: 29px; horizontal-alignment: center; text: "ARTEMIS"; }
+        Caption { height: 26px; horizontal-alignment: center; text: !root.active || root.state == "error" ? root.notice : root.state == "processing" ? "Processando" : root.state == "speaking" ? "Falando" : root.state == "listening" ? "Ouvindo" : root.notice; }
+    }
+}
+
+component TopBar inherits Rectangle {
+    in property <bool> connected;
+    in property <bool> console-open;
+    in property <bool> maximized;
+    callback notifications();
+    callback home();
+    callback minimize();
+    callback maximize();
+    callback close();
+    height: 52px;
+    background: @linear-gradient(90deg, Theme.chrome 0%, #12151b 55%, Theme.chrome-end 100%);
+    Rectangle {
+        width: parent.width; height: 1px; y: parent.height - self.height;
+        background: @linear-gradient(90deg, #4a929286 0%, Theme.chrome-edge 18%, #22252e 70%, #705e9e85 100%);
+    }
+    identity := HorizontalLayout {
+        x: 18px; y: 0px; height: root.height; width: root.console-open ? 112px : 54px;
+        spacing: 12px; alignment: start;
+        Image { source: @image-url("assets/synapse.svg"); width: 34px; image-fit: contain; }
+        Rectangle {
+            width: 8px;
+            Rectangle { width: 8px; height: 8px; y: (parent.height - 8px) / 2; border-radius: 4px; background: root.connected ? Theme.success : Theme.failure; }
+            accessible-role: text;
+            accessible-label: root.connected ? "Core conectado" : "Core desconectado";
+        }
+        if root.console-open: Button { width: 42px; icon: @image-url("assets/artemis.svg"); accessible-label: "Voltar à ARTEMIS"; clicked => root.home(); }
+    }
+    WindowMoveArea {
+        x: identity.x + identity.width;
+        width: controls.x - self.x; height: root.height;
+    }
+    controls := HorizontalLayout {
+        x: root.width - self.width - 5px; y: (root.height - self.height) / 2;
+        width: root.console-open ? 138px : 184px; height: 38px;
+        if !root.console-open: Button { width: 46px; icon: @image-url("assets/notifications.svg"); accessible-label: "Notificações"; clicked => root.notifications(); }
+        Button { width: 46px; icon: @image-url("assets/minimize.svg"); accessible-label: "Minimizar janela"; clicked => root.minimize(); }
+        Button { width: 46px; icon: root.maximized ? @image-url("assets/restore.svg") : @image-url("assets/maximize.svg"); accessible-label: root.maximized ? "Restaurar janela" : "Maximizar janela"; clicked => root.maximize(); }
+        Button { width: 46px; icon: @image-url("assets/close.svg"); accessible-label: "Fechar janela"; clicked => root.close(); }
+    }
+}
+
+component GlobalSidebar inherits Rectangle {
+    callback navigate(bool);
+    in property <bool> settings;
+    in property <bool> console-open;
+    width: 55px;
+    background: @linear-gradient(180deg, Theme.chrome 0%, #0c1016 55%, Theme.chrome-end 100%);
+    Rectangle {
+        x: parent.width - self.width; width: 1px; height: parent.height;
+        background: @linear-gradient(180deg, #55958f70 0%, Theme.chrome-edge 20%, #22252e 72%, #705e9e85 100%);
+    }
+    Button {
+        x: 6px; y: 10px; width: 43px; height: 36px;
+        icon: @image-url("assets/workspace.svg"); accessible-label: "Console do Workspace";
+        primary: !root.settings && root.console-open; clicked => root.navigate(false);
+    }
+    Button {
+        x: 6px; y: root.height - self.height - 8px; width: 43px; height: 36px;
+        icon: @image-url("assets/settings.svg"); accessible-label: "Configurações";
+        primary: root.settings; clicked => root.navigate(true);
+    }
+}
+
+component TaskGraphPanel inherits VerticalLayout {
+    in-out property <string> graph-id;
+    in-out property <string> graph-objective;
+    in-out property <string> graph-tasks;
+    in property <string> loaded-graph-id;
+    in property <string> graph-state;
+    in property <string> graph-summary;
+    in property <string> graph-details;
+    in property <string> graph-error;
+    in property <bool> graph-pending;
+    callback graph-action(string);
+    in property <bool> connected;
+    out property <bool> loaded: root.graph-id != "" && root.loaded-graph-id == root.graph-id;
+    out property <bool> ready: root.connected && !root.graph-pending;
+    spacing: 8px;
+    alignment: start;
+    HorizontalLayout {
+        spacing: 8px;
+        LineEdit { text <=> root.graph-id; placeholder-text: "ID do grafo"; enabled: !root.graph-pending; }
+        Button { text: "Carregar"; enabled: root.ready && root.graph-id != ""; clicked => root.graph-action("get"); }
+    }
+    if root.graph-error != "": Caption { text: root.graph-error; }
+    if root.loaded: Caption { text: root.graph-summary; }
+    LineEdit { text <=> root.graph-objective; placeholder-text: "Objetivo do RFC"; enabled: !root.graph-pending && !root.loaded; }
+    TextEdit {
+        text <=> root.graph-tasks;
+        placeholder-text: "[{\"task_id\":\"analisar\",\"mission_id\":\"input-…\",\"dependencies\":[]}]";
+        font-family: "Consolas";
+        height: 70px;
+        enabled: !root.graph-pending;
+    }
+    HorizontalLayout {
+        spacing: 8px;
+        alignment: start;
+        Button { text: "Propor grafo"; enabled: root.ready && !root.loaded && root.graph-id != "" && root.graph-tasks != ""; clicked => root.graph-action("plan"); }
+        if root.loaded && root.graph-state == "draft": Button { text: "Aprovar e executar"; enabled: root.ready; clicked => root.graph-action("activate"); }
+        if root.loaded && (root.graph-state == "active" || root.graph-state == "failed"): Button { text: "Pausar"; enabled: root.ready; clicked => root.graph-action("pause"); }
+        if root.loaded && root.graph-state == "paused": Button { text: "Retomar"; enabled: root.ready; clicked => root.graph-action("resume"); }
+        if root.loaded && root.graph-state == "paused": Button { text: "Propor revisão"; enabled: root.ready && root.graph-tasks != ""; clicked => root.graph-action("replan"); }
+        if root.loaded && root.graph-state != "cancelled" && root.graph-state != "integrated": Button { text: "Cancelar grafo"; enabled: root.ready; clicked => root.graph-action("cancel"); }
+    }
+    if root.loaded: details := ScrollView {
+        vertical-stretch: 1;
+        VerticalLayout {
+            width: details.visible-width;
+            Text { text: root.graph-details; color: Theme.text; wrap: word-wrap; }
+        }
+    }
+}
+
+component Workspace inherits Rectangle {
+    in property <bool> connected;
+    in property <string> notice;
+    in property <string> output;
+    in-out property <string> objective;
+    in-out property <string> task-root;
+    in property <bool> task-busy;
+    in property <bool> approve-ready;
+    in property <bool> execute-ready;
+    in property <bool> swarm-ready;
+    in property <bool> swarm-confirmation;
+    callback swarm-task();
+    callback withdraw-swarm();
+    in-out property <bool> graph-open;
+    in-out property <string> graph-id;
+    in-out property <string> graph-objective;
+    in-out property <string> graph-tasks;
+    in property <string> loaded-graph-id;
+    in property <string> graph-state;
+    in property <string> graph-summary;
+    in property <string> graph-details;
+    in property <string> graph-error;
+    in property <bool> graph-pending;
+    callback graph-action(string);
+    callback plan-task();
+    callback approve-task();
+    callback execute-task();
+    callback cancel-task();
+    callback reconnect();
+    callback command(string);
+    clip: true;
+    background: #0b0c0d;
+    Rectangle {
+            x: 20px; y: 20px;
+            width: parent.width - 40px; height: parent.height - 40px;
+            background: Theme.rail; border-color: Theme.border; border-width: 1px; border-radius: Theme.radius;
+            VerticalLayout {
+                padding: 16px; spacing: 10px; alignment: start;
+                HorizontalLayout {
+                    spacing: 8px;
+                    Text { text: "SYNAPSE / WORKSPACE"; color: Theme.cyan; font-family: "Consolas"; vertical-alignment: center; }
+                    Caption { text: root.notice; horizontal-stretch: 1; vertical-alignment: center; }
+                    Button { text: root.graph-open ? "Missão" : "Grafo"; clicked => { root.graph-open = !root.graph-open; } }
+                    Button { icon: root.connected ? @image-url("assets/refresh.svg") : @image-url("assets/reconnect.svg"); text: root.connected ? "Atualizar" : "Reconectar"; clicked => root.reconnect(); }
+                }
+                if root.graph-open && root.swarm-ready: HorizontalLayout {
+                    spacing: 8px;
+                    Button { text: root.swarm-confirmation ? "Confirmar Swarm" : "Solicitar Swarm"; enabled: !root.task-busy; clicked => root.swarm-task(); }
+                    if root.swarm-confirmation && root.approve-ready: Button { text: "Retirar Swarm"; enabled: !root.task-busy; clicked => root.withdraw-swarm(); }
+                }
+                if root.graph-open: TaskGraphPanel {
+                    connected: root.connected; vertical-stretch: 1;
+                    graph-id <=> root.graph-id; graph-objective <=> root.graph-objective; graph-tasks <=> root.graph-tasks;
+                    loaded-graph-id: root.loaded-graph-id; graph-state: root.graph-state; graph-summary: root.graph-summary;
+                    graph-details: root.graph-details; graph-error: root.graph-error; graph-pending: root.graph-pending;
+                    graph-action(action) => root.graph-action(action);
+                }
+                if !root.graph-open: VerticalLayout {
+                    spacing: 10px; vertical-stretch: 1; alignment: start;
+                    LineEdit { text <=> root.task-root; placeholder-text: "Pasta da tarefa"; enabled: !root.task-busy && !root.approve-ready && !root.execute-ready; }
+                    LineEdit { text <=> root.objective; placeholder-text: "Objetivo para a ARTEMIS executar"; enabled: !root.task-busy; }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Button { text: "Planejar tarefa"; enabled: root.connected && !root.task-busy && root.objective != ""; clicked => root.plan-task(); }
+                        Button { text: "Aprovar proposta"; enabled: root.approve-ready && !root.task-busy && !root.swarm-confirmation; clicked => root.approve-task(); }
+                        if root.swarm-ready: Button {
+                            text: root.swarm-confirmation ? "Confirmar Swarm" : "Solicitar Swarm";
+                            enabled: !root.task-busy;
+                            clicked => root.swarm-task();
+                        }
+                        if root.swarm-confirmation && root.approve-ready: Button { text: "Retirar Swarm"; enabled: !root.task-busy; clicked => root.withdraw-swarm(); }
+                        Button { text: "Executar"; enabled: root.execute-ready && !root.task-busy; clicked => root.execute-task(); }
+                        Button { text: "Cancelar tarefa"; enabled: root.task-busy || root.approve-ready || root.execute-ready; clicked => root.cancel-task(); }
+                    }
+                    console := ScrollView {
+                        vertical-stretch: 1;
+                        VerticalLayout {
+                            width: console.visible-width;
+                            Text { text: root.output == "" ? "Nenhum evento carregado" : root.output; color: Theme.text; font-family: "Consolas"; wrap: word-wrap; }
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: 10px;
+                        Text { text: ">"; color: Theme.cyan; font-family: "Consolas"; vertical-alignment: center; }
+                        LineEdit {
+                            enabled: root.connected;
+                            placeholder-text: "status ou eventos";
+                            font-family: "Consolas";
+                            accepted => { root.command(self.text); self.text = ""; }
+                        }
+                    }
+                }
+            }
+    }
+}
+
+export struct ChatMessage { body: string, from-user: bool }
+
+component ChatBubble inherits Rectangle {
+    in property <ChatMessage> message;
+    border-radius: Theme.radius;
+    background: message.from-user ? Theme.user-message : Theme.artemis-message;
+    VerticalLayout {
+        padding: 10px; spacing: 4px;
+        Text { text: root.message.from-user ? "Você" : "ARTEMIS"; color: Theme.text; font-weight: 650; }
+        Text { text: root.message.body; color: Theme.text; wrap: word-wrap; }
+    }
+}
+
+component ChatPanel inherits Rectangle {
+    in property <[ChatMessage]> messages;
+    in-out property <length> scroll-position;
+    width: 330px;
+    VerticalLayout {
+        spacing: Theme.gap;
+        Heading { text: "Conversa"; }
+        if root.messages.length == 0: Caption { text: "Nenhuma mensagem carregada"; }
+        view := ScrollView {
+            vertical-scrollbar-policy: always-off;
+            horizontal-scrollbar-policy: always-off;
+            content-y <=> root.scroll-position;
+            VerticalLayout {
+                width: view.visible-width; spacing: 8px; alignment: start;
+                for message in root.messages: ChatBubble { message: message; }
+            }
+        }
+    }
+}
+
+component ChatInput inherits Rectangle {
+    in-out property <string> draft;
+    in property <bool> has-text;
+    in property <bool> chat-open;
+    in property <bool> can-send;
+    in property <bool> sending;
+    in property <bool> admission-waiting;
+    callback toggle();
+    callback send();
+    callback cancel-send();
+    callback new-chat();
+    callback task();
+    callback toggle-voice();
+    in property <bool> voice-enabled;
+    in property <bool> can-voice;
+    height: 54px;
+    background: Theme.composer;
+    border-radius: 14px;
+    border-color: Theme.chrome-edge;
+    border-width: 1px;
+    HorizontalLayout {
+        padding: 7px; spacing: 7px;
+        Button { width: 40px; icon: @image-url("assets/chat.svg"); primary: root.chat-open; accessible-label: root.chat-open ? "Recolher conversa" : "Expandir conversa"; clicked => root.toggle(); }
+        Button { width: 32px; text: "+"; accessible-label: "Nova conversa"; enabled: !root.sending; clicked => root.new-chat(); }
+        Button { width: 36px; icon: @image-url("assets/workspace.svg"); accessible-label: "Abrir tarefa no Workspace"; enabled: !root.sending; clicked => root.task(); }
+        Button { width: 40px; icon: @image-url("assets/clip.svg"); enabled: false; accessible-label: "Anexar arquivo indisponível"; }
+        LineEdit { text <=> root.draft; enabled: !root.sending; placeholder-text: "Mensagem para ARTEMIS"; horizontal-stretch: 1; accepted => { if root.can-send && root.has-text { root.send(); } } }
+        Button { width: 40px; icon: @image-url("assets/mic.svg"); accessible-label: root.voice-enabled ? "Desativar microfone" : "Ativar microfone"; enabled: root.voice-enabled || root.can-voice; primary: root.voice-enabled; clicked => root.toggle-voice(); }
+        Button { width: 40px; icon: root.admission-waiting ? @image-url("assets/close.svg") : root.sending ? @image-url("assets/pending.svg") : root.has-text ? @image-url("assets/send.svg") : @image-url("assets/voice.svg"); accessible-label: root.admission-waiting ? "Cancelar envio em espera" : root.sending ? "Enviando" : root.has-text ? "Enviar mensagem" : "Voz indisponível"; enabled: root.admission-waiting || (root.has-text && root.can-send && !root.sending); primary: self.enabled; clicked => { if root.admission-waiting {root.cancel-send();} else {root.send();} } }
+    }
+}
+
+component LibraryBrowser inherits HorizontalLayout {
+    in-out property <bool> projects;
+    in property <[string]> entries;
+    in property <string> detail;
+    in property <bool> connected;
+    callback open(string);
+    spacing: Theme.gap;
+    VerticalLayout {
+        width: 190px; spacing: 8px; alignment: start;
+        Button { height: 36px; icon: @image-url("assets/history.svg"); text: "Histórico"; primary: !root.projects; clicked => { root.projects = false; } }
+        Button { height: 36px; icon: @image-url("assets/projects.svg"); text: "Projetos"; primary: root.projects; clicked => { root.projects = true; } }
+        if root.entries.length == 0: Caption { text: root.connected ? "Nenhum registro carregado" : "Core desconectado"; }
+        if root.entries.length > 0: listing := ScrollView {
+            height: 225px;
+            VerticalLayout {
+                width: listing.visible-width;
+                spacing: 4px;
+                for entry in root.entries: Button { text: entry; enabled: root.connected; clicked => root.open(entry); }
+            }
+        }
+    }
+    SettingsBlock {
+        horizontal-stretch: 1;
+        label: root.projects ? "Projetos" : "Histórico";
+        detail: root.detail == "" ? "Selecione um registro." : root.detail;
+        accent: root.projects ? Theme.knowledge : Theme.text;
+    }
+}
+
+component SettingsNavigation inherits VerticalLayout {
+    in-out property <int> category;
+    width: 160px; spacing: 8px; alignment: start;
+    for label[index] in ["Personalização", "Modelos", "Áudio", "Biblioteca"]: Button {
+        height: 36px; text: label; primary: root.category == index;
+        icon: index == 0 ? @image-url("assets/profile.svg") : index == 1 ? @image-url("assets/models.svg") : index == 2 ? @image-url("assets/audio.svg") : @image-url("assets/library.svg");
+        clicked => { root.category = index; }
+    }
+}
+
+component SettingsShell inherits HorizontalLayout {
+    in-out property <int> category;
+    in-out property <bool> projects;
+    in-out property <string> selected-model;
+    in property <[string]> model-rows;
+    in property <[string]> chat-models;
+    in property <[string]> chat-rows;
+    in property <[string]> project-rows;
+    in property <string> library-detail;
+    in property <bool> connected;
+    in property <bool> sending;
+    in property <bool> local-provider;
+    in property <[ModelSlot]> model-slots;
+    in property <string> model-mode;
+    in property <string> resource-policy;
+    in property <string> execution-regime;
+    in property <string> transition-status;
+    in property <bool> settings-pending;
+    in-out property <string> context-scope;
+    in-out property <string> context-key;
+    in-out property <string> skill-scope;
+    in-out property <string> skill-id;
+    in property <[string]> specialists;
+    in-out property <string> selected-specialist;
+    in property <string> context-used;
+    in property <string> skill-detail;
+    callback choose-skill(string, string);
+    callback change-setting(string, string);
+    callback assign-model(string, string);
+    in property <string> core-detail;
+    in property <string> core-capabilities;
+    in property <string> notice;
+    callback reconnect();
+    callback open-entry(bool, string);
+    padding: 22px; spacing: 22px;
+    SettingsNavigation { category <=> root.category; }
+    ScrollView {
+        horizontal-stretch: 1;
+        VerticalLayout {
+            spacing: Theme.gap; padding-right: 14px; alignment: start;
+            if root.category == 0: VerticalLayout {
+                spacing: Theme.gap;
+                Heading { text: "Personalização"; }
+                SettingsBlock { label: root.connected ? "Core conectado" : "Core desconectado"; detail: root.connected ? root.core-detail : root.notice; }
+                Button { text: "Reconectar ao Core"; clicked => root.reconnect(); }
+                SettingsBlock { label: "Recursos informados pelo Core"; detail: root.core-capabilities; }
+                SettingsBlock { label: "Comunicação"; detail: "Nome, idioma, tom e estilo · perfil desconectado"; }
+                SettingsBlock { label: "Comportamento"; detail: "Objetividade e detalhamento · perfil desconectado"; }
+                SettingsBlock { label: "Instruções pessoais"; detail: "Edição indisponível"; }
+            }
+            if root.category == 1: VerticalLayout {
+                spacing: 16px;
+                Caption { text: "Provedores"; }
+                HorizontalLayout {
+                    spacing: 10px;
+                    alignment: start;
+                    ProviderCard { width: 200px; label: "LM Studio"; kind: "Local"; connected: root.connected && root.local-provider; status: !root.connected ? "Core desconectado" : root.local-provider ? "Cadastrado" : "Sem modelos"; }
+                }
+                Rectangle { height: 10px; }
+                Caption { text: root.execution-regime + (root.transition-status == "" ? "" : " · " + root.transition-status); }
+                HorizontalLayout {
+                    spacing: 8px; alignment: start;
+                    Button { text: "Automático"; primary: root.model-mode == "automatic"; enabled: root.connected && !root.settings-pending && !root.sending; clicked => root.change-setting("model_mode", "automatic"); }
+                    Button { text: "Manual"; primary: root.model-mode == "manual"; enabled: root.connected && !root.settings-pending && !root.sending; clicked => root.change-setting("model_mode", "manual"); }
+                }
+                HorizontalLayout {
+                    spacing: 8px; alignment: start;
+                    Button { text: "Responsivo"; primary: root.resource-policy == "RESPONSIVE"; enabled: root.connected && !root.settings-pending && !root.sending; clicked => root.change-setting("resource_policy", "RESPONSIVE"); }
+                    Button { text: "Econômico"; primary: root.resource-policy == "ECONOMICAL"; enabled: root.connected && !root.settings-pending && !root.sending; clicked => root.change-setting("resource_policy", "ECONOMICAL"); }
+                }
+                Caption { text: "MoM"; }
+                for row in Math.ceil(root.model-slots.length / 2): HorizontalLayout {
+                    spacing: 12px;
+                    MoMAssignmentCard { label: root.model-slots[row * 2].label; models: root.chat-models; selected: root.model-slots[row * 2].selected; available: root.connected && !root.settings-pending && !root.sending && root.model-slots[row * 2].available; choose(value) => root.assign-model(root.model-slots[row * 2].id, value); }
+                    if row * 2 + 1 < root.model-slots.length: MoMAssignmentCard {
+                        label: root.model-slots[row * 2 + 1].label; models: root.chat-models;
+                        selected: root.model-slots[row * 2 + 1].selected;
+                        available: root.connected && !root.settings-pending && !root.sending && root.model-slots[row * 2 + 1].available;
+                        choose(value) => root.assign-model(root.model-slots[row * 2 + 1].id, value);
+                    }
+                }
+            }
+            if root.category == 2: VerticalLayout {
+                spacing: Theme.gap;
+                Heading { text: "Áudio"; }
+                AudioBlock { label: "Saída"; }
+                AudioBlock { label: "Microfone"; }
+                AudioBlock { label: "Voz da ARTEMIS"; detail: "Prévia e configuração de voz indisponíveis"; }
+            }
+            if root.category == 3: VerticalLayout {
+                spacing: Theme.gap;
+                Heading { text: "Biblioteca"; }
+                LibraryBrowser {
+                    projects <=> root.projects;
+                    connected: root.connected;
+                    entries: root.projects ? root.project-rows : root.chat-rows;
+                    detail: root.library-detail;
+                    open(id) => root.open-entry(root.projects, id);
+                }
+                Caption { text: "Contexto do envio"; }
+                if root.context-used != "": Caption { text: root.context-used; }
+                if root.specialists.length > 1: ComboBox {
+                    model: root.specialists; current-value <=> root.selected-specialist;
+                    enabled: !root.sending;
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    LineEdit { text <=> root.context-scope; placeholder-text: "Escopo da memória"; enabled: !root.sending; }
+                    LineEdit { text <=> root.context-key; placeholder-text: "Chave da memória"; enabled: !root.sending; }
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    LineEdit { text <=> root.skill-scope; placeholder-text: "Escopo da Skill"; enabled: !root.sending; }
+                    LineEdit { text <=> root.skill-id; placeholder-text: "ID da Skill"; enabled: !root.sending; }
+                    Button { text: "Vincular Skill"; enabled: root.connected && !root.sending; clicked => root.choose-skill(root.skill-scope, root.skill-id); }
+                    if root.skill-detail != "": Button { text: "Remover Skill"; enabled: !root.sending; clicked => root.choose-skill("", ""); }
+                }
+                if root.skill-detail != "": Caption { text: root.skill-detail; }
+            }
+        }
+    }
+}
+
+
+
+export component AppShell inherits Window {
+    title: "Synapse";
+    no-frame: true;
+    resize-border-width: 5px;
+    icon: @image-url("assets/synapse.svg");
+    min-width: 860px; min-height: 590px;
+    preferred-width: 1100px; preferred-height: 720px;
+    background: root.presence-visible ? black : Theme.background;
+    default-font-size: 15px;
+    in-out property <bool> settings-open;
+    in-out property <bool> chat-open;
+    in-out property <bool> console-open;
+    out property <bool> presence-visible: !root.console-open && !root.settings-open;
+    in property <bool> window-maximized;
+    in-out property <int> category;
+    in-out property <bool> projects;
+    in-out property <string> draft;
+    out property <bool> has-text: draft != "";
+    in property <bool> runtime-connected;
+    in property <string> presence-state: "idle";
+    in property <string> core-detail;
+    in property <string> core-capabilities;
+    in property <float> voice-level;
+    in property <bool> voice-enabled;
+    in property <bool> voice-supported;
+    in property <[ChatMessage]> messages;
+    in-out property <length> chat-scroll-position;
+    in-out property <string> selected-model;
+    in property <[string]> model-rows;
+    in property <bool> local-provider;
+    in property <[ModelSlot]> model-slots;
+    callback assign-model(string, string);
+    in property <[string]> chat-models;
+    in property <[string]> chat-rows;
+    in property <[string]> project-rows;
+    in property <string> library-detail;
+    in property <string> notice: "Core desconectado";
+    in property <[string]> specialists;
+    in-out property <string> selected-specialist: "Automático";
+    in property <string> context-used;
+    in property <string> event-output;
+    in property <string> cli-output;
+    in property <string> model-mode;
+    in property <string> resource-policy;
+    in property <string> execution-regime;
+    in property <string> transition-status;
+    in property <bool> settings-pending;
+    in-out property <string> context-scope;
+    in-out property <string> context-key;
+    in-out property <string> skill-scope;
+    in-out property <string> skill-id;
+    in property <string> skill-detail;
+    callback choose-skill(string, string);
+    in property <bool> model-ready;
+    in property <bool> task-swarm-ready;
+    in property <bool> swarm-confirmation;
+    in-out property <bool> graph-open;
+    in-out property <string> graph-id;
+    in-out property <string> graph-objective;
+    in-out property <string> graph-tasks;
+    in property <string> loaded-graph-id;
+    in property <string> graph-state;
+    in property <string> graph-summary;
+    in property <string> graph-details;
+    in property <string> graph-error;
+    in property <bool> graph-pending;
+    callback graph-action(string);
+    callback swarm-task();
+    callback withdraw-swarm();
+    callback change-setting(string, string);
+    in property <string> route-detail;
+    in property <bool> sending;
+    in property <bool> admission-waiting;
+    in-out property <string> task-root;
+    in property <bool> task-busy;
+    in property <bool> task-approve-ready;
+    in property <bool> task-execute-ready;
+    property <bool> notifications-open;
+    callback navigate(bool);
+    callback toggle-chat();
+    callback reconnect();
+    callback command(string);
+    callback send-message();
+    callback cancel-message();
+    callback new-chat();
+    callback plan-task();
+    callback approve-task();
+    callback execute-task();
+    callback cancel-task();
+    callback toggle-voice();
+    pure callback presence-frame(string, int, float) -> image;
+    callback open-entry(bool, string);
+    callback minimize-window();
+    callback maximize-window();
+    VerticalLayout {
+        TopBar {
+            connected: root.runtime-connected; console-open: root.console-open; maximized: root.window-maximized;
+            notifications => { root.notifications-open = !root.notifications-open; }
+            home => { root.console-open = false; }
+            minimize => root.minimize-window();
+            maximize => root.maximize-window();
+            close => { root.close(); }
+        }
+        if root.console-open: Workspace {
+            vertical-stretch: 1; connected: root.runtime-connected;
+            notice: root.route-detail == "" ? root.notice : root.notice + " · " + root.route-detail; output: root.cli-output;
+            objective <=> root.draft; task-root <=> root.task-root;
+            task-busy: root.task-busy; approve-ready: root.task-approve-ready; execute-ready: root.task-execute-ready;
+            graph-open <=> root.graph-open;
+            graph-id <=> root.graph-id; graph-objective <=> root.graph-objective; graph-tasks <=> root.graph-tasks;
+            loaded-graph-id: root.loaded-graph-id; graph-state: root.graph-state; graph-summary: root.graph-summary;
+            graph-details: root.graph-details; graph-error: root.graph-error; graph-pending: root.graph-pending;
+            graph-action(action) => root.graph-action(action);
+            swarm-ready: root.task-swarm-ready; swarm-confirmation: root.swarm-confirmation;
+            swarm-task => root.swarm-task(); withdraw-swarm => root.withdraw-swarm();
+            plan-task => root.plan-task(); approve-task => root.approve-task(); execute-task => root.execute-task(); cancel-task => root.cancel-task();
+            reconnect => root.reconnect(); command(input) => root.command(input);
+        }
+        if !root.console-open && root.notifications-open: SettingsBlock { label: "Notificações"; detail: "Canal de notificações desconectado"; }
+        if !root.console-open: HorizontalLayout {
+            vertical-stretch: 1;
+            GlobalSidebar { settings: root.settings-open; console-open: root.console-open; navigate(settings) => root.navigate(settings); }
+            if root.settings-open: SettingsShell {
+                category <=> root.category; projects <=> root.projects; horizontal-stretch: 1;
+                selected-model <=> root.selected-model;
+                model-mode: root.model-mode; resource-policy: root.resource-policy; execution-regime: root.execution-regime;
+                transition-status: root.transition-status; settings-pending: root.settings-pending;
+                change-setting(field, value) => root.change-setting(field, value);
+                context-scope <=> root.context-scope; context-key <=> root.context-key;
+                context-used: root.context-used; specialists: root.specialists; selected-specialist <=> root.selected-specialist;
+                skill-scope <=> root.skill-scope; skill-id <=> root.skill-id; skill-detail: root.skill-detail;
+                choose-skill(scope, id) => root.choose-skill(scope, id);
+                model-rows: root.model-rows; chat-models: root.chat-models;
+                local-provider: root.local-provider;
+                model-slots: root.model-slots; assign-model(slot, model) => root.assign-model(slot, model);
+                chat-rows: root.chat-rows; project-rows: root.project-rows;
+                library-detail: root.library-detail; connected: root.runtime-connected; sending: root.sending || root.task-busy;
+                core-detail: root.core-detail; core-capabilities: root.core-capabilities; notice: root.notice;
+                reconnect => root.reconnect();
+                open-entry(projects, id) => root.open-entry(projects, id);
+            }
+            if root.presence-visible: VerticalLayout {
+                horizontal-stretch: 1;
+                HorizontalLayout {
+                    vertical-stretch: 1;
+                    Presence {
+                        active: root.runtime-connected; state: root.presence-state; voice-level: root.voice-level; notice: root.route-detail == "" ? root.notice : root.notice + " · " + root.route-detail; horizontal-stretch: 1;
+                        presence-frame(state, frame, level) => root.presence-frame(state, frame, level);
+                    }
+                    if root.chat-open: ChatPanel { messages: root.messages; scroll-position <=> root.chat-scroll-position; }
+                }
+                Rectangle {
+                    height: 66px;
+                    ChatInput {
+                        width: min(620px, parent.width - 48px);
+                        x: (parent.width - self.width) / 2; y: 2px;
+                        draft <=> root.draft; has-text: root.has-text; chat-open: root.chat-open;
+                        can-send: root.runtime-connected && root.model-ready && !root.sending && !root.task-busy;
+                        sending: root.sending || root.task-busy;
+                        admission-waiting: root.admission-waiting;
+                        cancel-send => root.cancel-message();
+                        voice-enabled: root.voice-enabled;
+                        can-voice: root.voice-supported && root.runtime-connected && root.model-ready && !root.sending && !root.task-busy;
+                        toggle-voice => root.toggle-voice();
+                        toggle => root.toggle-chat(); send => root.send-message();
+                        new-chat => root.new-chat();
+                        task => { root.console-open = true; }
+                    }
+                }
+            }
+        }
+    }
+}

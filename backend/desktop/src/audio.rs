@@ -1,5 +1,6 @@
 //! In-memory device audio. Capture is delivered only as bounded 16 kHz mono frames.
 #[cfg(windows)]
+#[path = "audio/windows.rs"]
 mod windows;
 #[cfg(windows)]
 pub use windows::Audio;

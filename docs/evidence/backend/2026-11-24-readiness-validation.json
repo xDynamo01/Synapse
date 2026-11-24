@@ -1,0 +1,104 @@
+{
+  "version": 1,
+  "date": "2026-11-24",
+  "scope": "Windows software; reboot test explicitly waived by user",
+  "pass": true,
+  "source_stable_during_gate": true,
+  "package_source_inventory_matches_current": true,
+  "suites": {
+    "core": {
+      "pass": true,
+      "elapsed_ms": 272035,
+      "passed_framework_tests": 141
+    },
+    "python": {
+      "pass": true,
+      "elapsed_ms": 10549,
+      "passed_framework_tests": null,
+      "executed": 47,
+      "passed": 45,
+      "skipped": 2
+    },
+    "slint": {
+      "pass": true,
+      "elapsed_ms": 133436,
+      "passed_framework_tests": 23
+    },
+    "distribution": {
+      "pass": true,
+      "elapsed_ms": 12116,
+      "passed_framework_tests": null,
+      "executed": 10,
+      "passed": 10
+    },
+    "native": {
+      "pass": true,
+      "elapsed_ms": 315437,
+      "passed_framework_tests": 9
+    }
+  },
+  "model_evals": {
+    "cases": 5,
+    "pass": true,
+    "model": "qwen2.5-coder-7b-instruct",
+    "context_tokens": 32768
+  },
+  "installed_acceptance": {
+    "clean_install": "18bbe81bd140e7f2c932939c2d07b5cf34bc81038f8749cdb9a9e11d06eb84ca",
+    "update": "66de6910a81dfbfa7b2160315442e899a56a168ca4eee8877f37321228a87afe",
+    "migrated_schema": 16,
+    "candidate_sha256": "66de6910a81dfbfa7b2160315442e899a56a168ca4eee8877f37321228a87afe",
+    "previous_fixture_sha256": "18bbe81bd140e7f2c932939c2d07b5cf34bc81038f8749cdb9a9e11d06eb84ca",
+    "installed_core_sha256": "9aa0ef6f0791fbbe8b9fdbab1f538198d16c602ba903da2187b203427fecb4b0",
+    "installed_checker_sha256": "746b19e096cf1cab86afb704ed974763961452ba0470a945c54b974602f0e6a0",
+    "platform": "windows",
+    "bundled_worker": true,
+    "bundled_lpac_json_mission": true,
+    "clean_configuration": true,
+    "data_preserved": true,
+    "program_rollback": "downgrade_rejected_then_backup_restore_rollback",
+    "tamper_rejected": true
+  },
+  "source_tree_sha256": "016def353fea0190195999b584cb1ccc4e0c55a0f962f1a54c3c34ae7195f7c4",
+  "delivered_exe_sha256": "6d9e824950563f6048d2257c4c3c9323d47f8e27235bebddf6ea78814bedc9df",
+  "reboot_test": {
+    "status": "not_run",
+    "reason": "explicit_user_waiver",
+    "date": "2026-11-24"
+  },
+  "limits": [
+    "Windows only",
+    "No new microphone/audio playback acceptance",
+    "No automated native human approval clicks",
+    "No universal model or project accuracy guarantee"
+  ],
+  "active_profile_acceptance": {
+    "migration": "15_to_16",
+    "pass": true,
+    "history_preserved": true,
+    "integrity": "ok",
+    "backup": "windows_dpapi_current_user"
+  },
+  "post_gate_format_normalization": {
+    "path": "backend/core/src/planner.rs",
+    "change": "removed one trailing empty line only; prior gate hash reconstructed and matched",
+    "final_binaries_revalidated": [
+      "installed acceptance",
+      "model evals 5/5",
+      "boundary evals 16/16",
+      "worker cross-version 3/3",
+      "delivered executable startup"
+    ]
+  },
+  "pre_push_gate": {
+    "pass": true,
+    "source_stable": true,
+    "report": "2026-11-24-pre-push-gate.json",
+    "core": 141,
+    "python_passed": 45,
+    "python_skipped": 2,
+    "slint": 23,
+    "distribution": 10,
+    "native": 9
+  }
+}

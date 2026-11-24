@@ -1,7 +1,8 @@
 import hashlib
 import json
 
-VERSION = 4
+VERSION = 5
+SUPPORTED_VERSIONS = (4, 5)
 MAX_LINE = 65536
 MAX_CONTENT = 32768
 MAX_MESSAGES = 64
@@ -21,7 +22,7 @@ def digest(request):
 def validate(request):
     if not isinstance(request, dict) or set(request) != {"version", "request_id", "model_id", "endpoint", "messages", "generation", "purpose", "digest"}:
         raise ValueError("invalid_request")
-    if type(request["version"]) is not int or request["version"] != VERSION:
+    if type(request["version"]) is not int or request["version"] not in SUPPORTED_VERSIONS:
         raise ValueError("unsupported_version")
     if request["purpose"] not in ("conversation", "learning", "mission_plan", "mission_generate", "mission_review", "translation"):
         raise ValueError("invalid_request")

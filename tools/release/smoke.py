@@ -12,6 +12,13 @@ from package import verify
 
 def smoke(target):
     executable = target / ("synapse-backend.exe" if os.name == "nt" else "synapse-backend")
+    environment = os.environ.copy()
+    runtime = target / "runtime/python.exe"
+    if runtime.is_file():
+        environment["SYNAPSE_PYTHON_EXECUTABLE"] = str(runtime)
+    environment["PYTHONDONTWRITEBYTECODE"] = "1"
+    environment.pop("PYTHONPATH", None)
+    environment.pop("PYTHONHOME", None)
     commands = [
         {"type": "capabilities_list"},
         {"type": "events_read", "after": 0, "limit": 5},
@@ -27,6 +34,7 @@ def smoke(target):
             [executable, "--state-dir", Path(directory) / "state", "--workspace", workspace],
             input="".join(json.dumps(request) + "\n" for request in requests),
             cwd=directory,
+            env=environment,
             capture_output=True,
             encoding="utf-8",
             timeout=30,

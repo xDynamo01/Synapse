@@ -1,47 +1,55 @@
 use crate::contracts::{CoreError, CoreResult};
-use rusqlite::{Connection, Transaction, TransactionBehavior, params};
+use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use serde::Serialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
-    fs::{File, OpenOptions},
     path::{Path, PathBuf},
     time::Duration,
 };
 
 /// Sole authoritative SQLite connection. Workers must never receive it or its path.
+pub(crate) const SCHEMA_VERSION:u32=16;
+
 pub(crate) struct Store {
     connection: Connection,
-    _ownership_lock: File,
+    _ownership_lock: crate::privacy::GuardedFile,
+    _state_guard: crate::privacy::DirectoryGuard,
+    _database_guard: crate::privacy::GuardedFile,
     pub(crate) state_dir: PathBuf,
 }
 impl Store {
     pub(crate) fn open(state_dir: &Path, workspace_root: &Path) -> CoreResult<Self> {
-        std::fs::create_dir_all(state_dir)
-            .map_err(|_| CoreError::new("storage_error", "Cannot create state directory"))?;
+        crate::privacy::directory(state_dir)?;
+        if state_dir.join(".restore-incomplete").exists(){return Err(CoreError::new("state_restore_incomplete","Finish or inspect the interrupted restore before opening Core"));}
         let canonical_state = state_dir
             .canonicalize()
             .map_err(|_| CoreError::new("storage_error", "Cannot resolve state directory"))?;
-        let ownership_lock = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .open(canonical_state.join(".synapse-core.lock"))
-            .map_err(|_| CoreError::new("storage_error", "Cannot open state lock"))?;
+        let state_guard=crate::privacy::pin_directory(&canonical_state)?;
+        let ownership_lock = crate::privacy::lock_file(&canonical_state.join(".synapse-core.lock"))?;
         ownership_lock.try_lock().map_err(|_| {
             CoreError::new(
                 "state_in_use",
                 "State directory is owned by another Core process",
             )
         })?;
-        let mut connection = Connection::open(canonical_state.join("core.sqlite3"))?;
+        let database=canonical_state.join("core.sqlite3");
+        let database_guard=if database.exists(){crate::privacy::regular_file(&database)?}else{crate::privacy::new_file(&database)?};
+        for name in ["core.sqlite3-wal","core.sqlite3-shm"] {
+            let path=canonical_state.join(name);
+            if path.exists(){let _checked=crate::privacy::regular_file(&path)?;}
+        }
+        let mut connection = Connection::open(database)?;
+        for name in [".synapse-core.lock","core.sqlite3","core.sqlite3-wal","core.sqlite3-shm"] {
+            let path=canonical_state.join(name);if path.exists(){crate::privacy::protect(&path,false)?;}
+        }
         connection.busy_timeout(Duration::from_secs(5))?;
         connection.pragma_update(None, "foreign_keys", "ON")?;
         connection.pragma_update(None, "journal_mode", "WAL")?;
         connection.pragma_update(None, "synchronous", "FULL")?;
         let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let version: u32 = tx.pragma_query_value(None, "user_version", |r| r.get(0))?;
-        if version > 15 {
+        if version > SCHEMA_VERSION {
             return Err(CoreError::new(
                 "unsupported_storage_version",
                 "Database schema is newer than this Core",
@@ -205,6 +213,33 @@ CREATE INDEX voice_translation_session ON voice_translation_jobs(session_id);
 PRAGMA user_version=15;",
             )?;
         }
+        if version < 16 {
+            crate::intake::migrate(&tx)?;
+            crate::orchestration::migrate(&tx)?;
+            crate::task_graph::migrate(&tx)?;
+            crate::self_change::acknowledge(&tx)?;
+            crate::operational_store::migrate(&tx)?;
+            tx.execute_batch("CREATE TABLE IF NOT EXISTS schema_migrations(version INTEGER PRIMARY KEY,recipe TEXT NOT NULL,applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP); INSERT OR IGNORE INTO schema_migrations(version,recipe) VALUES(16,'synapse-readiness-v1'); PRAGMA user_version=16;")?;
+        }
+
+        // A numeric version alone is not evidence of a compatible database.
+        // Check the executable's required shapes before recovery mutates state.
+        for sql in [
+            "SELECT version,recipe FROM schema_migrations WHERE version=16",
+            "SELECT id,chat_id,parent_id,mission_id,route,model_id,request,result FROM input_records LIMIT 0",
+            "SELECT id,settings FROM orchestration_profiles LIMIT 0",
+            "SELECT job_id,status,endpoint_hash,lease_hash FROM model_reservations LIMIT 0",
+            "SELECT id,principal,context,proposal,digest,state,review_digest,approver,executor FROM self_changes LIMIT 0",
+            "SELECT scope_id,budget,usage,started_ms,last_seen_ms FROM operational_budgets LIMIT 0",
+            "SELECT attempt_id,scope_id,job_id,status,metrics,snapshot FROM operational_attempts LIMIT 0",
+        ] {
+            tx.prepare(sql).map_err(|_| CoreError::new("incompatible_storage_schema","Required schema shape is missing; restore a compatible snapshot"))?;
+        }
+        let recipe:Option<String>=tx.query_row("SELECT recipe FROM schema_migrations WHERE version=16",[],|r|r.get(0)).optional()?;
+        if recipe.as_deref()!=Some("synapse-readiness-v1") {
+            return Err(CoreError::new("incompatible_storage_schema","Storage migration identity is missing or unknown"));
+        }
+
         tx.execute("UPDATE learning_jobs SET status=CASE WHEN attempts<3 THEN 'queued' ELSE 'failed' END,error='worker_interrupted' WHERE status='running'", [])?;
         let recorded: String = tx.query_row(
             "SELECT value FROM metadata WHERE key='workspace_root'",
@@ -234,10 +269,14 @@ PRAGMA user_version=15;",
         crate::checks::interrupt(&tx)?;
         crate::mission_run::interrupt(&tx)?;
         crate::integration::interrupt(&tx)?;
+        crate::orchestration::recover(&tx)?;
+        crate::orchestration::acknowledge(&tx, &canonical_state.join("model-ownership"))?;
         tx.commit()?;
         Ok(Self {
             connection,
             _ownership_lock: ownership_lock,
+            _state_guard: state_guard,
+            _database_guard: database_guard,
             state_dir: canonical_state,
         })
     }
@@ -289,7 +328,7 @@ pub(crate) fn events_read(tx: &Transaction<'_>, after: u64, limit: u32) -> CoreR
     for row in rows {
         let (cursor, kind, payload) = row?;
         events.push(
-            json!({"cursor":cursor,"kind":kind,"payload":serde_json::from_str::<Value>(&payload)?}),
+            json!({"version":1,"cursor":cursor,"kind":kind,"payload":serde_json::from_str::<Value>(&payload)?}),
         );
     }
     Ok(

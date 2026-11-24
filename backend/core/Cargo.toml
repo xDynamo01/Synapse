@@ -19,6 +19,10 @@ path = "src/bin/image_decoder.rs"
 name = "synapse-page-analyzer"
 path = "src/bin/page_analyzer.rs"
 
+[[bin]]
+name = "synapse-maintenance"
+path = "src/bin/maintenance.rs"
+
 [dependencies]
 base64 = "=0.22.1"
 image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg"] }

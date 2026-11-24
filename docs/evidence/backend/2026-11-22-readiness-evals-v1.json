@@ -1,0 +1,229 @@
+{
+  "version": 1,
+  "dataset": "core-local-boundaries-v1",
+  "dataset_sha256": "d1f7ec5a9acfa8f4a883d3d5904ee266331d86439bf2ad5bff00f3ea8542c03a",
+  "artifact_sha256": "18e88dc6d57490489b688714d1fc222a272c15a1687fdd503c9d795698b884c3",
+  "configuration": "Windows local Core; no provider/model; disposable state",
+  "baseline": {
+    "version": 1,
+    "expected_failures": 0,
+    "expected_cases": 16
+  },
+  "thresholds": {
+    "false_positives": 0,
+    "false_negatives": 0,
+    "canary_leaks": 0
+  },
+  "model_evals": "NOT RUN",
+  "distribution_acceptance": "NOT RUN",
+  "status": "PASS",
+  "classes": {
+    "memory": {
+      "cases": 3,
+      "positive_denominator": 1,
+      "negative_denominator": 2,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "false_positive_rate": 0.0,
+      "false_negative_rate": 0.0
+    },
+    "replanning": {
+      "cases": 3,
+      "positive_denominator": 1,
+      "negative_denominator": 2,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "false_positive_rate": 0.0,
+      "false_negative_rate": 0.0
+    },
+    "routing": {
+      "cases": 3,
+      "positive_denominator": 1,
+      "negative_denominator": 2,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "false_positive_rate": 0.0,
+      "false_negative_rate": 0.0
+    },
+    "tools": {
+      "cases": 4,
+      "positive_denominator": 1,
+      "negative_denominator": 3,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "false_positive_rate": 0.0,
+      "false_negative_rate": 0.0
+    },
+    "validation": {
+      "cases": 3,
+      "positive_denominator": 1,
+      "negative_denominator": 2,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "false_positive_rate": 0.0,
+      "false_negative_rate": 0.0
+    }
+  },
+  "cases": [
+    {
+      "id": "route-write",
+      "class": "routing",
+      "label": "positive",
+      "expected": true,
+      "observed": true,
+      "pass": true,
+      "canary_leak": false,
+      "latency_ms": 27.878
+    },
+    {
+      "id": "route-ambiguous-continuation",
+      "class": "routing",
+      "label": "ambiguous",
+      "expected": false,
+      "observed": false,
+      "pass": true,
+      "canary_leak": false,
+      "latency_ms": 26.428
+    },
+    {
+      "id": "route-unknown-capability",
+      "class": "routing",
+      "label": "negative",
+      "expected": false,
+      "observed": false,
+      "pass": true,
+      "canary_leak": false,
+      "latency_ms": 27.045
+    },
+    {
+      "id": "memory-explicit",
+      "class": "memory",
+      "label": "positive",
+      "expected": true,
+      "observed": true,
+      "pass": true,
+      "canary_leak": false,
+      "latency_ms": 26.539
+    },
+    {
+      "id": "memory-other-project",
+      "class": "memory",
+      "label": "negative",
+      "expected": false,
+      "observed": false,
+      "pass": true,
+      "canary_leak": false,
+      "latency_ms": 26.003
+    },
+    {
+      "id": "memory-missing-reference",
+      "class": "memory",
+      "label": "ambiguous",
+      "expected": false,
+      "observed": false,
+      "pass": true,
+      "canary_leak": false,
+      "latency_ms": 25.086
+    },
+    {
+      "id": "tool-exact-read",
+      "class": "tools",
+      "label": "positive",
+      "expected": true,
+      "observed": true,
+      "pass": true,
+      "canary_leak": false,
+      "latency_ms": 28.206
+    },
+    {
+      "id": "tool-undeclared-path",
+      "class": "tools",
+      "label": "negative",
+      "expected": false,
+      "observed": false,
+      "pass": true,
+      "canary_leak": false,
+      "latency_ms": 26.173
+    },
+    {
+      "id": "tool-other-mission",
+      "class": "tools",
+      "label": "negative",
+      "expected": false,
+      "observed": false,
+      "pass": true,
+      "canary_leak": false,
+      "latency_ms": 24.041
+    },
+    {
+      "id": "tool-revoked",
+      "class": "tools",
+      "label": "negative",
+      "expected": false,
+      "observed": false,
+      "pass": true,
+      "canary_leak": false,
+      "latency_ms": 25.221
+    },
+    {
+      "id": "validation-health",
+      "class": "validation",
+      "label": "positive",
+      "expected": true,
+      "observed": true,
+      "pass": true,
+      "canary_leak": false,
+      "latency_ms": 26.918
+    },
+    {
+      "id": "validation-forged-role",
+      "class": "validation",
+      "label": "negative",
+      "expected": false,
+      "observed": false,
+      "pass": true,
+      "canary_leak": false,
+      "latency_ms": 12.734
+    },
+    {
+      "id": "validation-unknown-command",
+      "class": "validation",
+      "label": "negative",
+      "expected": false,
+      "observed": false,
+      "pass": true,
+      "canary_leak": false,
+      "latency_ms": 12.092
+    },
+    {
+      "id": "replan-clarify-unbound",
+      "class": "replanning",
+      "label": "ambiguous",
+      "expected": true,
+      "observed": true,
+      "pass": true,
+      "canary_leak": false,
+      "latency_ms": 25.846
+    },
+    {
+      "id": "replan-foreign-mission",
+      "class": "replanning",
+      "label": "negative",
+      "expected": false,
+      "observed": false,
+      "pass": true,
+      "canary_leak": false,
+      "latency_ms": 25.179
+    },
+    {
+      "id": "replan-foreign-conversation",
+      "class": "replanning",
+      "label": "negative",
+      "expected": false,
+      "observed": false,
+      "pass": true,
+      "canary_leak": false,
+      "latency_ms": 26.045
+    }
+  ]
+}

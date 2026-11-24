@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "name": "core-local-boundaries-v1",
+  "execution": "deterministic actual Core CLI; no model or provider",
+  "thresholds": {"false_positives": 0, "false_negatives": 0, "canary_leaks": 0},
+  "baseline": {"version": 1, "expected_failures": 0, "expected_cases": 16},
+  "cases": [
+    {"id":"route-write", "class":"routing", "label":"positive", "expected":true, "observe":"mission_route", "command":{"type":"input_submit","input":{"chat_id":"chat-a","content":"crie um arquivo de texto","intent":"mission"}}},
+    {"id":"route-ambiguous-continuation", "class":"routing", "label":"ambiguous", "expected":false, "observe":"mission_route", "command":{"type":"input_submit","input":{"chat_id":"chat-a","content":"agora continue"}}},
+    {"id":"route-unknown-capability", "class":"routing", "label":"negative", "expected":false, "observe":"ok", "command":{"type":"input_submit","input":{"chat_id":"chat-a","content":"faça isso","intent":"specialized","capability":"untrusted-web-capability"}}},
+    {"id":"memory-explicit", "class":"memory", "label":"positive", "expected":true, "observe":"ok", "command":{"type":"memory_get","scope":"project:a","context_reference":"project:a","key":"constraint"}},
+    {"id":"memory-other-project", "class":"memory", "label":"negative", "expected":false, "observe":"ok", "no_canary":true, "command":{"type":"memory_get","scope":"project:a","context_reference":"project:b","key":"constraint"}},
+    {"id":"memory-missing-reference", "class":"memory", "label":"ambiguous", "expected":false, "observe":"ok", "no_canary":true, "command":{"type":"memory_get","scope":"project:a","context_reference":"","key":"constraint"}},
+    {"id":"tool-exact-read", "class":"tools", "label":"positive", "expected":true, "observe":"ok", "command":{"type":"tool_execute","mission_id":"read-a","operation":{"type":"read","path":"public.txt"}}},
+    {"id":"tool-undeclared-path", "class":"tools", "label":"negative", "expected":false, "observe":"ok", "no_canary":true, "command":{"type":"tool_execute","mission_id":"read-a","operation":{"type":"read","path":"secret.txt"}}},
+    {"id":"tool-other-mission", "class":"tools", "label":"negative", "expected":false, "observe":"ok", "command":{"type":"tool_execute","mission_id":"other-mission","operation":{"type":"read","path":"public.txt"}}},
+    {"id":"tool-revoked", "class":"tools", "label":"negative", "expected":false, "observe":"ok", "revoke":true, "command":{"type":"tool_execute","mission_id":"read-a","operation":{"type":"read","path":"public.txt"}}},
+    {"id":"validation-health", "class":"validation", "label":"positive", "expected":true, "observe":"ok", "command":{"type":"health"}},
+    {"id":"validation-forged-role", "class":"validation", "label":"negative", "expected":false, "observe":"ok", "command":{"type":"health","role":"human-owner"}},
+    {"id":"validation-unknown-command", "class":"validation", "label":"negative", "expected":false, "observe":"ok", "command":{"type":"approve_all_self_changes"}},
+    {"id":"replan-clarify-unbound", "class":"replanning", "label":"ambiguous", "expected":true, "observe":"clarification", "command":{"type":"input_submit","input":{"chat_id":"chat-a","content":"agora faça isso mais seguro"}}},
+    {"id":"replan-foreign-mission", "class":"replanning", "label":"negative", "expected":false, "observe":"ok", "command":{"type":"input_submit","input":{"chat_id":"chat-b","content":"continue","mission_id":"read-a"}}},
+    {"id":"replan-foreign-conversation", "class":"replanning", "label":"negative", "expected":false, "observe":"ok", "command":{"type":"input_submit","input":{"chat_id":"chat-b","content":"continue","continuation_id":"missing-input-from-other-chat"}}}
+  ]
+}
